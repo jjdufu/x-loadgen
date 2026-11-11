@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "x-loadgen-bin/x-loadgen",
+    "x-loadgen-bin/x-loadgen-mockgw",
     "x-loadgen-libs/x-loadgen-crypto",
     "x-loadgen-libs/x-loadgen-core",
     "x-loadgen-libs/x-loadgen-sdk",
@@ -18,6 +19,7 @@ license = "MIT"
 x-loadgen-crypto = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-crypto" }
 x-loadgen-core = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-core" }
 x-loadgen-sdk = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-sdk" }
+x-loadgen-mockgw = { version = "0.1.0", path = "x-loadgen-bin/x-loadgen-mockgw" }
 
 anyhow = "1.0"
 base64 = "0.22"

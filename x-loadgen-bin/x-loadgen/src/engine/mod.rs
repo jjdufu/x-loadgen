@@ -3,6 +3,7 @@
 mod cluster;
 mod execute;
 mod limits;
+mod mazbri;
 mod metrics;
 mod scheduler;
 mod supervisor;
@@ -11,6 +12,8 @@ mod transport;
 mod windows;
 pub mod worker;
 
+#[cfg(test)]
+mod mazbri_tests;
 #[cfg(test)]
 mod tests;
 

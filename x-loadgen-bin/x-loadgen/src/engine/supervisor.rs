@@ -839,7 +839,6 @@ fn build_plan(snapshot: &RunSnapshot) -> ExecutePlan {
             weight: as_u64(tenant.weight).max(1),
             value: TenantChoice {
                 name: tenant.name.clone(),
-                needs_token: false,
             },
         })
         .collect();
@@ -851,7 +850,6 @@ fn build_plan(snapshot: &RunSnapshot) -> ExecutePlan {
             .expected_reasons
             .clone()
             .unwrap_or_default(),
-        token: None,
     }
 }
 

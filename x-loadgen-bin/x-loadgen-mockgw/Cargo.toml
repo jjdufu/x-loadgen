@@ -1,0 +1,33 @@
+[package]
+name = "x-loadgen-mockgw"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Local mock of the mazbri gateway client contract, used by x-loadgen tests and end-to-end checks."
+
+[lib]
+name = "x_loadgen_mockgw"
+path = "src/lib.rs"
+
+[[bin]]
+name = "x-loadgen-mockgw"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+x-loadgen-core = { workspace = true }
+x-loadgen-sdk = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+
+[lints]
+workspace = true

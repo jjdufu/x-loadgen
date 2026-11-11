@@ -470,3 +470,132 @@ async fn processes_two_request_once_finishes_without_stop() {
     assert_eq!(in_flight, 0);
     let _ = child.kill();
 }
+
+const MP_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
+const MP_BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
+const MP_TENANT_UUID: &str = "1a2b3c4d-0000-4000-8000-00000000c003";
+
+/// Gateway view of the encrypted tenant used by the multi-process test.
+fn mazbri_mock_config() -> x_loadgen_mockgw::MockConfig {
+    x_loadgen_mockgw::MockConfig {
+        tenants: vec![x_loadgen_mockgw::MockTenant {
+            api_key: "ak-mp".into(),
+            encryption_mode: "full".into(),
+            tenant_id: Some(MP_TENANT_UUID.into()),
+            tenant_key_base64: Some(MP_TENANT_KEY.into()),
+            key_version: Some("1".into()),
+            suite: Some("suite/tenant-chacha20".into()),
+            binding_kid: Some("kid-mp".into()),
+            binding_alg: Some("hmac-sha256".into()),
+            binding_verify_key: Some(MP_BINDING_KEY.into()),
+            ..x_loadgen_mockgw::MockTenant::default()
+        }],
+        ..x_loadgen_mockgw::MockConfig::default()
+    }
+}
+
+/// Client view of the same tenant, as entered on the target page.
+fn mazbri_target_payload(gateway: &str) -> Value {
+    json!({
+        "name": "mazbri-mp",
+        "protocol": "mazbri",
+        "gateway_base_url": gateway,
+        "tenants": [{
+            "name": "sealed",
+            "api_key": "ak-mp",
+            "encryption_mode": "full",
+            "tenant_id": MP_TENANT_UUID,
+            "tenant_key_base64": MP_TENANT_KEY,
+            "key_version": "1",
+            "suite": "suite/tenant-chacha20",
+            "binding_kid": "kid-mp",
+            "binding_alg": "hmac-sha256",
+            "binding_key": MP_BINDING_KEY
+        }],
+        "products": [{
+            "name": "echo",
+            "product_id": "P-ECHO",
+            "path": "/upstream/echo",
+            "method": "POST",
+            "body_json": {"seq": "{{seq}}"},
+            "expect_checks_json": [{"path": "echo.product_id", "eq": "P-ECHO"}]
+        }]
+    })
+}
+
+/// Two worker processes against the mock mazbri gateway with full encryption
+/// and HMAC request binding: each worker exchanges its own token, every
+/// request is sealed, signed, opened, and judged on the decrypted response.
+#[tokio::test]
+async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_successful() {
+    let gateway = x_loadgen_mockgw::MockGateway::start("127.0.0.1:0", &mazbri_mock_config())
+        .await
+        .expect("mock gateway");
+
+    let tmp = TempDir::new("mazbri-mp");
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let (created, target) = post_json(
+        &http,
+        &format!("{base}/api/v1/targets"),
+        &mazbri_target_payload(&gateway.base_url()),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{target}");
+    let request_count = 12_u64;
+    let (created, template) = post_json(
+        &http,
+        &format!("{base}/api/v1/templates"),
+        &mp_request_template(
+            "tmpl-mazbri-mp",
+            target["id"].as_str().unwrap(),
+            request_count,
+            40,
+        ),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{template}");
+    let (created, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({"template_id": template["id"], "mode": "once"}),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{run}");
+    assert_eq!(run["processes"], 2);
+    let id = run["id"].as_str().unwrap().to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let counters = loop {
+        let (_, body) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        let (_, counters) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
+        let run_status = body["status"].as_str().unwrap_or_default().to_string();
+        if run_status == "finished" {
+            break counters;
+        }
+        assert!(
+            !matches!(run_status.as_str(), "failed" | "interrupted" | "stopped"),
+            "encrypted run ended as {run_status}: {body} {counters}"
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "encrypted processes=2 run stayed at {run_status}: {counters}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(counters["samples"], request_count, "{counters}");
+    assert_eq!(counters["success"], request_count, "{counters}");
+    assert_eq!(counters["failure"], 0, "{counters}");
+    let stats = gateway.stats();
+    assert_eq!(stats.tokens_issued, 2, "one token per worker process");
+    assert_eq!(stats.bindings_verified, request_count);
+    assert_eq!(stats.envelopes_opened, request_count);
+    assert_eq!(stats.responses_sealed, request_count);
+    let _ = child.kill();
+    gateway.stop().await;
+}

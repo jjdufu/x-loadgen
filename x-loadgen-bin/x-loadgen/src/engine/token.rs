@@ -1,4 +1,4 @@
-//! Single-flight plaintext token refresh with exponential backoff.
+//! Single-flight access-token refresh with exponential backoff.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6,14 +6,14 @@ use std::time::{Duration, Instant};
 use futures::future::BoxFuture;
 use tokio::sync::Mutex;
 
-/// Cached plaintext token and the instant at which it should be refreshed.
+/// Cached access token and the instant at which it should be refreshed.
 #[derive(Debug, Clone)]
 pub struct CachedToken {
     pub value: String,
     pub expires_at: Instant,
 }
 
-/// Failure to obtain a plaintext token.
+/// Failure to obtain an access token.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("token refresh failed: {0}")]
 pub struct TokenError(pub String);
@@ -105,6 +105,21 @@ impl TokenBroker {
                 state.cached = None;
                 Err(err)
             }
+        }
+    }
+}
+
+impl TokenBroker {
+    /// Drop `token` from the cache (e.g. after the gateway answered 401) so the
+    /// next [`TokenBroker::get`] refreshes. A newer cached token is kept.
+    pub async fn invalidate(&self, token: &str) {
+        let mut state = self.state.lock().await;
+        if state
+            .cached
+            .as_ref()
+            .is_some_and(|cached| cached.value == token)
+        {
+            state.cached = None;
         }
     }
 }

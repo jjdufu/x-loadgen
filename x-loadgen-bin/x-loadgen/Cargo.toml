@@ -42,5 +42,8 @@ tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 
+[dev-dependencies]
+x-loadgen-mockgw = { workspace = true }
+
 [lints]
 workspace = true

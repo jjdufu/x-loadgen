@@ -126,13 +126,9 @@ fn plan() -> Arc<ExecutePlan> {
         }],
         tenants: vec![Weighted {
             weight: 1,
-            value: TenantChoice {
-                name: "t".into(),
-                needs_token: false,
-            },
+            value: TenantChoice { name: "t".into() },
         }],
         expected_reasons: Vec::new(),
-        token: None,
     })
 }
 
@@ -314,7 +310,6 @@ async fn two_engines_do_not_share_metrics_or_queues() {
         }],
         tenants: vec![],
         expected_reasons: Vec::new(),
-        token: None,
     });
     let right = EngineHandle::start(right_cfg, right_exec, right_sink.clone()).expect("right");
     let left_snap = left.join().await.expect("left join");
@@ -344,7 +339,7 @@ async fn two_engines_do_not_share_metrics_or_queues() {
 }
 
 #[tokio::test]
-async fn plaintext_token_single_flight_and_continues_after_refresh_failure() {
+async fn token_broker_single_flights_and_backs_off_after_failure() {
     let attempts = Arc::new(AtomicUsize::new(0));
     let attempts_cb = Arc::clone(&attempts);
     let broker = Arc::new(TokenBroker::with_backoff(
@@ -353,14 +348,10 @@ async fn plaintext_token_single_flight_and_continues_after_refresh_failure() {
             async move {
                 let n = attempts_cb.fetch_add(1, Ordering::SeqCst) + 1;
                 tokio::time::sleep(Duration::from_millis(30)).await;
-                if n == 1 {
-                    Ok(CachedToken {
-                        value: "tok-1".into(),
-                        expires_at: Instant::now() + Duration::from_secs(60),
-                    })
-                } else {
-                    Err(TokenError("refresh down".into()))
-                }
+                Ok(CachedToken {
+                    value: format!("tok-{n}"),
+                    expires_at: Instant::now() + Duration::from_secs(60),
+                })
             }
         }),
         Duration::from_millis(80),
@@ -371,54 +362,33 @@ async fn plaintext_token_single_flight_and_continues_after_refresh_failure() {
         let broker = Arc::clone(&broker);
         joins.push(tokio::spawn(async move { broker.get().await }));
     }
-    let mut ok = 0;
     for join in joins {
-        if join.await.expect("join").is_ok() {
-            ok += 1;
-        }
+        assert_eq!(join.await.expect("join").expect("token"), "tok-1");
     }
-    assert_eq!(ok, 8);
     assert_eq!(
         broker.refresh_count().await,
         1,
         "concurrent get must single-flight"
     );
+    broker.invalidate("tok-other").await;
+    assert_eq!(broker.get().await.expect("cached"), "tok-1");
+    broker.invalidate("tok-1").await;
+    assert_eq!(broker.get().await.expect("refreshed"), "tok-2");
 
-    // Expire by constructing a broker that fails the next refresh.
-    let fail_broker = Arc::new(TokenBroker::with_backoff(
+    let failing = TokenBroker::with_backoff(
         box_refresh(|| async { Err(TokenError("down".into())) }),
         Duration::from_millis(40),
-    ));
-    assert!(fail_broker.get().await.is_err());
-    assert!(fail_broker.get().await.is_err());
-    // Two gets: first refresh fails, second is inside backoff (no second call...
-    // actually second may also increment if backoff expired). At least worker continues:
-    let token_plan = Arc::new(ExecutePlan {
-        products: vec![Weighted {
-            weight: 1,
-            value: ProductChoice {
-                product_id: "P1".into(),
-                product_name: None,
-            },
-        }],
-        tenants: vec![Weighted {
-            weight: 1,
-            value: TenantChoice {
-                name: "plain".into(),
-                needs_token: true,
-            },
-        }],
-        expected_reasons: Vec::new(),
-        token: Some(Arc::clone(&fail_broker)),
-    });
-    let executor = Arc::new(MockExecutor::new(Duration::ZERO));
-    let mut cfg = config(12, 4, Duration::ZERO);
-    cfg.plan = token_plan;
-    let handle = EngineHandle::start(cfg, executor, Arc::new(NullSink)).expect("start");
-    let snap = handle.join().await.expect("join");
-    assert_eq!(snap.samples, 12);
-    assert_eq!(snap.failure, 12);
-    assert_eq!(snap.success, 0);
+    );
+    assert!(failing.get().await.is_err());
+    assert!(failing.get().await.is_err());
+    assert_eq!(
+        failing.refresh_count().await,
+        1,
+        "a get inside the backoff window must not call refresh again"
+    );
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert!(failing.get().await.is_err());
+    assert_eq!(failing.refresh_count().await, 2);
 }
 
 #[test]

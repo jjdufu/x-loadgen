@@ -178,6 +178,25 @@ pub struct Tenant {
 }
 
 impl Tenant {
+    /// View the stored tenant as SDK settings (used by the mazbri executor).
+    #[must_use]
+    pub fn settings(&self) -> TenantSettings<'_> {
+        TenantSettings {
+            encryption_mode: self.encryption_mode.as_str(),
+            tenant_id: self.tenant_id.as_deref(),
+            tenant_key_base64: self.tenant_key_base64.as_deref(),
+            key_version: self.key_version.as_deref(),
+            suite: self.suite.as_deref(),
+            data_alg: self.data_alg.as_deref(),
+            mac_alg: self.mac_alg.as_deref(),
+            require_signature: self.require_signature,
+            allow_insecure: self.allow_insecure,
+            binding_kid: self.binding_kid.as_deref(),
+            binding_alg: self.binding_alg.as_deref(),
+            binding_key: self.binding_key.as_deref(),
+        }
+    }
+
     /// Drop key material so the value is safe to return in a list.
     #[must_use]
     pub fn redacted(mut self) -> Self {

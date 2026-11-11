@@ -10,8 +10,9 @@ use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method};
 use serde_json::Value;
 
-use crate::db::targets::{Product, TargetDetail};
+use crate::db::targets::{PROTOCOL_HTTP, PROTOCOL_MAZBRI, Product, TargetDetail};
 use crate::db::templates::Template;
+use crate::engine::mazbri::MazbriTenant;
 use crate::engine::metrics::unix_now_ms;
 use crate::expect::{FieldCheck, Judge, TransportExpect, judge};
 use crate::http::{HttpClientOptions, build_http_client};
@@ -43,7 +44,6 @@ pub struct RequestCtx {
     pub product_id: String,
     pub product_name: Option<String>,
     pub tenant_name: Option<String>,
-    pub token: Option<String>,
 }
 
 /// Result of a single executed request (no scheduling or metrics).
@@ -63,7 +63,7 @@ pub struct ExecOutcome {
     pub body: Option<Value>,
 }
 
-/// Executes one HTTP (or mock) request.
+/// Executes one request (HTTP, mazbri gateway, or a test mock).
 pub trait RequestExecutor: Send + Sync {
     /// Run a single request.
     fn execute<'a>(
@@ -90,28 +90,40 @@ pub fn pick_weighted<T>(seed: u64, items: &[Weighted<T>]) -> Option<&T> {
     items.get(index).map(|item| &item.value)
 }
 
-/// HTTP executor built from a run snapshot. The client is reused across windows.
+/// Executor built from a run snapshot. The client (and, for mazbri targets,
+/// each tenant's token cache and gateway session) is reused across windows.
+///
+/// - `http` targets call `{base}{product.path}` directly, with the tenant's
+///   optional `api_key` as `X-API-KEY`.
+/// - `mazbri` targets exchange the tenant `api_key` for a bearer token and send
+///   every product as a [`x_loadgen_sdk::GatewayRequest`] to `/api/v1/gateway`,
+///   sealed and signed per the tenant settings; the response is decoded before
+///   it is timed and judged.
 pub struct HttpExecutor {
-    client: Client,
-    base_url: String,
-    include_request_id: bool,
+    pub(super) client: Client,
+    pub(super) base_url: String,
+    pub(super) include_request_id: bool,
+    mazbri: bool,
     products: HashMap<String, PreparedProduct>,
     tenants: HashMap<String, PreparedTenant>,
 }
 
-struct PreparedProduct {
-    method: Method,
-    path: String,
-    query: Vec<(String, String)>,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-    timeout: Option<Duration>,
-    transport: TransportExpect,
-    checks: Vec<FieldCheck>,
+pub(super) struct PreparedProduct {
+    pub(super) product_id: String,
+    pub(super) method: Method,
+    pub(super) path: String,
+    pub(super) query: Vec<(String, String)>,
+    pub(super) headers: Vec<(String, String)>,
+    pub(super) body: Option<String>,
+    pub(super) body_is_json: bool,
+    pub(super) timeout: Option<Duration>,
+    pub(super) transport: TransportExpect,
+    pub(super) checks: Vec<FieldCheck>,
 }
 
-struct PreparedTenant {
-    api_key: Option<String>,
+enum PreparedTenant {
+    Http { api_key: Option<String> },
+    Mazbri(Box<MazbriTenant>),
 }
 
 impl HttpExecutor {
@@ -147,18 +159,36 @@ impl HttpExecutor {
             products.insert(product.product_id.clone(), prepared);
         }
         let mut tenants = HashMap::new();
-        for tenant in &target.tenants {
-            tenants.insert(
-                tenant.name.clone(),
-                PreparedTenant {
-                    api_key: tenant.api_key.clone(),
-                },
-            );
+        match target.protocol.as_str() {
+            PROTOCOL_HTTP => {
+                for tenant in &target.tenants {
+                    let api_key = tenant.api_key.clone().filter(|key| !key.trim().is_empty());
+                    tenants.insert(tenant.name.clone(), PreparedTenant::Http { api_key });
+                }
+            }
+            PROTOCOL_MAZBRI => {
+                if target.tenants.is_empty() {
+                    bail!("a mazbri target needs at least one tenant");
+                }
+                let skew = Duration::from_secs(
+                    u64::try_from(template.token_refresh_skew_secs.max(0)).unwrap_or(0),
+                );
+                for tenant in &target.tenants {
+                    let prepared =
+                        MazbriTenant::new(&client, &target.gateway_base_url, tenant, skew)?;
+                    tenants.insert(
+                        tenant.name.clone(),
+                        PreparedTenant::Mazbri(Box::new(prepared)),
+                    );
+                }
+            }
+            other => bail!("unsupported target protocol {other:?}"),
         }
         Ok(Self {
             client,
             base_url: target.gateway_base_url.clone(),
             include_request_id: template.include_request_id,
+            mazbri: target.protocol == PROTOCOL_MAZBRI,
             products,
             tenants,
         })
@@ -200,18 +230,23 @@ fn prepare_product(product: &Product, default_timeout_secs: i64) -> Result<Prepa
         _ => Vec::new(),
     };
     Ok(PreparedProduct {
+        product_id: product.product_id.clone(),
         method,
         path: product.path.clone(),
         query: flatten_pairs(product.query_json.as_ref()),
         headers: flatten_pairs(product.headers_json.as_ref()),
         body: product.body_json.as_ref().map(render_body_template),
+        body_is_json: product
+            .body_json
+            .as_ref()
+            .is_some_and(|value| !value.is_string()),
         timeout,
         transport,
         checks,
     })
 }
 
-fn flatten_pairs(value: Option<&Value>) -> Vec<(String, String)> {
+pub(super) fn flatten_pairs(value: Option<&Value>) -> Vec<(String, String)> {
     let Some(Value::Object(map)) = value else {
         return Vec::new();
     };
@@ -234,7 +269,7 @@ fn render_body_template(value: &Value) -> String {
     }
 }
 
-fn apply_seq(template: &str, index: u64) -> String {
+pub(super) fn apply_seq(template: &str, index: u64) -> String {
     template.replace("{{seq}}", &index.to_string())
 }
 
@@ -253,7 +288,7 @@ fn urlencoding_lite(value: &str) -> String {
     out
 }
 
-fn join_url(base: &str, path: &str) -> String {
+pub(super) fn join_url(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     if path.starts_with("http://") || path.starts_with("https://") {
         return path.to_string();
@@ -291,9 +326,31 @@ impl HttpExecutor {
                 None,
             );
         };
-        let request = self.build_request(ctx, product);
+        let tenant = ctx
+            .tenant_name
+            .as_ref()
+            .and_then(|name| self.tenants.get(name));
         let request_id = request_id_for(self.include_request_id, ctx);
-        let request = attach_identity(request, ctx, &self.tenants, request_id.as_deref(), product);
+        let api_key = match tenant {
+            Some(PreparedTenant::Mazbri(mazbri)) => {
+                return mazbri.execute(self, ctx, product, request_id).await;
+            }
+            Some(PreparedTenant::Http { api_key }) => api_key.as_deref(),
+            None if self.mazbri => {
+                return failed_outcome(
+                    started,
+                    started,
+                    0,
+                    request_id,
+                    Some("config".into()),
+                    Some("no mazbri tenant selected for this request".into()),
+                    None,
+                );
+            }
+            None => None,
+        };
+        let request = self.build_request(ctx, product);
+        let request = attach_identity(request, api_key, request_id.as_deref());
         let sent = Instant::now();
         match request.send().await {
             Ok(response) => classify_response(started, sent, request_id, product, response).await,
@@ -339,18 +396,10 @@ fn request_id_for(include: bool, ctx: &RequestCtx) -> Option<String> {
 
 fn attach_identity(
     mut request: reqwest::RequestBuilder,
-    ctx: &RequestCtx,
-    tenants: &HashMap<String, PreparedTenant>,
+    api_key: Option<&str>,
     request_id: Option<&str>,
-    _product: &PreparedProduct,
 ) -> reqwest::RequestBuilder {
-    if let Some(token) = ctx.token.as_ref() {
-        request = request.bearer_auth(token);
-    }
-    if let Some(name) = ctx.tenant_name.as_ref()
-        && let Some(tenant) = tenants.get(name)
-        && let Some(api_key) = tenant.api_key.as_ref()
-    {
+    if let Some(api_key) = api_key {
         request = request.header("X-API-KEY", api_key);
     }
     if let Some(id) = request_id {
@@ -422,7 +471,7 @@ async fn classify_response(
     outcome
 }
 
-fn failed_outcome(
+pub(super) fn failed_outcome(
     start_unix_ms: i64,
     end_unix_ms: i64,
     latency_us: i64,
@@ -447,11 +496,11 @@ fn failed_outcome(
     }
 }
 
-fn elapsed_us(started: Instant) -> i64 {
+pub(super) fn elapsed_us(started: Instant) -> i64 {
     i64::try_from(started.elapsed().as_micros()).unwrap_or(i64::MAX)
 }
 
-fn apply_judge(outcome: &mut ExecOutcome, judgement: Judge) {
+pub(super) fn apply_judge(outcome: &mut ExecOutcome, judgement: Judge) {
     match judgement {
         Judge::Met => {
             outcome.expected = !outcome.transport_ok;
