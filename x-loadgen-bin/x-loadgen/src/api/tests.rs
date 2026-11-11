@@ -225,6 +225,40 @@ async fn login_cookie_and_bearer_and_password_change() {
 }
 
 #[tokio::test]
+async fn restart_after_password_change_does_not_recreate_password_file() {
+    let tmp = TempDir::new("restart");
+    let (base, shutdown) = start(&tmp.path, false).await;
+    let client = client();
+    let file_token = read_admin_passwd(&tmp.paths().admin_passwd()).expect("file token");
+    let (status, _, body) = login_with(&client, &base, &file_token).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let session = body["token"].as_str().expect("session token").to_string();
+    let new_token = "changed-password-restart";
+    let change = client
+        .post(format!("{base}/api/v1/auth/password"))
+        .header(
+            reqwest::header::COOKIE,
+            format!("{SESSION_COOKIE}={session}"),
+        )
+        .json(&serde_json::json!({"old_token": file_token, "new_token": new_token}))
+        .send()
+        .await
+        .expect("change");
+    assert!(change.status().is_success());
+    shutdown.send(()).ok();
+
+    let (base, shutdown) = start(&tmp.path, false).await;
+    assert!(
+        !tmp.paths().admin_passwd().exists(),
+        "restart must not recreate admin.passwd once a password hash is stored"
+    );
+    let (new_status, _, new_body) = login_with(&client, &base, new_token).await;
+    assert!(new_status.is_success());
+    assert_eq!(new_body["must_change_password"], false);
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
 async fn reset_passwd_revokes_old_secret_and_requires_change_again() {
     let tmp = TempDir::new("reset");
     let (base, shutdown) = start(&tmp.path, false).await;

@@ -30,7 +30,7 @@ use super::templates::{
 };
 
 use super::error::ApiError;
-use crate::auth::{ensure_admin_passwd, password_file_log_line};
+use crate::auth::{ensure_admin_passwd, load_auth_state, password_file_log_line};
 use crate::cli::ServeArgs;
 use crate::db::{DataPaths, open_central};
 
@@ -161,14 +161,18 @@ pub fn prepare(args: ServeArgs) -> Result<PreparedServer> {
     let _addr = parse_listen(&args.listen)?;
     let paths = DataPaths::new(args.data_dir);
     require_writable_data_dir(&paths)?;
+    let conn = open_central(&paths)?;
     if args.no_auth {
         info!("authentication disabled (--no-auth)");
+    } else if load_auth_state(&conn)?.password_hash.is_some() {
+        // The bootstrap file is deleted on password change; a restart must not
+        // bring it back. `reset-passwd` is the only way to issue a new one.
+        info!("admin password already changed; admin.passwd is not recreated");
     } else {
         let path = paths.admin_passwd();
         ensure_admin_passwd(&paths)?;
         info!("{}", password_file_log_line(&path));
     }
-    let conn = open_central(&paths)?;
     crate::db::runs::mark_stale_runs_interrupted(&conn)?;
     let state = AppState::new(
         paths,
