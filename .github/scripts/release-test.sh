@@ -3,6 +3,9 @@
 # 用法：.github/scripts/release-test.sh（CI 的 scripts 任务也会执行）
 set -euo pipefail
 
+# 与运行环境隔离：CI 里的 GITHUB_* 会改变输出位置和链接格式，各用例按需显式设置。
+unset GITHUB_OUTPUT GITHUB_REPOSITORY GITHUB_SERVER_URL NOTES_FILE
+
 SRC="$(git rev-parse --show-toplevel)"
 SCRIPT="${SRC}/.github/scripts/release.sh"
 WORK="$(mktemp -d)"
@@ -42,7 +45,7 @@ commit() {
 
 plan() {
     local dir="$1"
-    (cd "$dir" && env -u GITHUB_OUTPUT -u GITHUB_REPOSITORY -u NOTES_FILE "$SCRIPT" plan)
+    (cd "$dir" && "$SCRIPT" plan)
 }
 
 expect() {
@@ -149,7 +152,17 @@ check "CHANGELOG Bug Fixes" grep -q '^\* 修复多进程不结束 (' "${r}/CHANG
 check "CHANGELOG 不收 docs/refactor" bash -c "! grep -q '整理调度\|补充说明' '${r}/CHANGELOG.md'"
 check "非法版本被拒绝" bash -c "cd '$r' && ! '$SCRIPT' apply 1.2 2>/dev/null"
 
-# 6. release 提交本身不触发下一次发版。
+# 6. 在 Actions 中（设置了 GITHUB_REPOSITORY）标题带 compare 链接，条目带提交链接。
+r6="$(new_repo linked)"
+git -C "$r6" tag -a v0.1.0 -m v0.1.0
+commit "$r6" "fix: 链接格式"
+(cd "$r6" && GITHUB_REPOSITORY=jjdufu/x-loadgen "$SCRIPT" plan >/dev/null)
+check "Actions 下标题带 compare 链接" grep -q '^## \[0.1.1\](https://github.com/jjdufu/x-loadgen/compare/v0.1.0...v0.1.1) (' "${r6}/.git/release-notes.md"
+check "Actions 下条目带提交链接" grep -q '^\* 链接格式 (\[[0-9a-f]\{7\}\](https://github.com/jjdufu/x-loadgen/commit/[0-9a-f]\{40\}))$' "${r6}/.git/release-notes.md"
+(cd "$r6" && out="$(mktemp)" && GITHUB_OUTPUT="$out" "$SCRIPT" plan >/dev/null && grep -qx 'version=0.1.1' "$out" && rm -f "$out")
+check "GITHUB_OUTPUT 写入结果" test "$?" -eq 0
+
+# 7. release 提交本身不触发下一次发版。
 git -C "$r" add -A && git -C "$r" commit -qm "chore(release): v0.1.1 [skip ci]"
 git -C "$r" tag -a v0.1.1 -m v0.1.1
 expect "release 提交之后" "$r" "release=false version=0.1.1 bump=none"
