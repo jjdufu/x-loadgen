@@ -108,6 +108,7 @@ Node、pnpm 走 `setup-node` 的 pnpm 缓存，cargo 走 `Swatinem/rust-cache`�
 - 仓库还没有任何 `vX.Y.Z` tag 时，按 `Cargo.toml` 的当前版本做首次发版，与提交类型无关。
 - 发版流程：`.github/scripts/release.sh` 计算版本，改写 `Cargo.toml`（workspace 版本和内部依赖版本）、`Cargo.lock`、`web/package.json`、`deploy/config/.env.example`、`deploy/README.md`，把本次的 Features / Bug Fixes 等段落置顶写入 `CHANGELOG.md`；以 `github-actions[bot]` 提交 `chore(release): vX.Y.Z [skip ci]`，打附注 tag `vX.Y.Z` 并推回 `main`；amd64 与 arm64 原生 runner 分别构建仓库根 `Dockerfile`，合并推送 `dex2all/x-loadgen:X.Y.Z` 与 `:latest`，校验两种架构都在；最后创建 GitHub Release，内容为 CHANGELOG 段落和 `docker pull` 命令。
 - release 提交不会再触发发版：用 `GITHUB_TOKEN` 推送的提交和 tag 不触发任何 workflow，提交信息又带 `[skip ci]`，`release.sh` 也不把 `chore(release)` 计入下一次发版。
+- 提交信息（标题和正文）里不要出现 `[skip ci]`、`[ci skip]`、`[no ci]`、`[skip actions]`、`[actions skip]` 或 `skip-checks: true`：GitHub 会因此跳过这次 push 的全部 workflow，CI 和发版都不会运行。只有发版流程自己的 release 提交带 `[skip ci]`。
 - CI 跑完时如果 `main` 已经有更新的提交，本次不发版，交给新提交对应的那次运行。
 - 某个任务失败（例如推送 Docker Hub 超时）时，在 Actions 页面点 “Re-run failed jobs”；已完成的 tag 与版本号会被沿用，不会重复升版本。
 - 需要的仓库 secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（对 `dex2all/x-loadgen` 有推送权限）。
