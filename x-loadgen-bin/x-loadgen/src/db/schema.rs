@@ -17,14 +17,6 @@ CREATE TABLE IF NOT EXISTS auth_state (
   updated_at    INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-  id           TEXT PRIMARY KEY,
-  token_hash   TEXT NOT NULL UNIQUE,
-  created_at   INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL,
-  expires_at   INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS targets (
   id                   TEXT PRIMARY KEY,
   name                 TEXT NOT NULL UNIQUE,

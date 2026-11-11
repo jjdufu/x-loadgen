@@ -44,6 +44,7 @@ pub fn open_central(paths: &DataPaths) -> Result<Connection> {
         .with_context(|| format!("open central database {}", path.display()))?;
     apply_pragmas(&conn)?;
     migrate(&conn, CENTRAL_SCHEMA_V1, "central")?;
+    drop_legacy_sessions(&conn)?;
     Ok(conn)
 }
 
@@ -148,6 +149,14 @@ pub fn unix_now_ms() -> Result<u64, SystemTimeError> {
         u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
             .unwrap_or(u64::MAX),
     )
+}
+
+/// Older v1 databases had a `sessions` table. It is unused and is dropped
+/// in place without bumping `user_version`.
+fn drop_legacy_sessions(conn: &Connection) -> Result<()> {
+    conn.execute_batch("DROP TABLE IF EXISTS sessions")
+        .context("drop leftover sessions table")?;
+    Ok(())
 }
 
 fn migrate(conn: &Connection, ddl: &str, label: &str) -> Result<()> {
@@ -466,5 +475,58 @@ mod tests {
         assert_eq!(n, 2);
         assert_eq!(sample_count(&conn), 2);
         assert!(!path.exists(), "imported dump should be removed");
+    }
+
+    #[test]
+    fn leftover_sessions_table_is_dropped_without_bumping_user_version() {
+        let tmp = TempDir::new("legacy-sessions");
+        let paths = tmp.paths();
+        paths.ensure().expect("data dir");
+        {
+            let conn = Connection::open(paths.central_db()).expect("open raw");
+            conn.execute_batch(
+                "CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at INTEGER NOT NULL,
+                    last_seen_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+                CREATE TABLE auth_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    password_hash TEXT,
+                    must_change INTEGER NOT NULL DEFAULT 1,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO auth_state (id, password_hash, must_change, updated_at)
+                    VALUES (1, 'kept', 0, 1);
+                INSERT INTO sessions (id, token_hash, created_at, last_seen_at, expires_at)
+                    VALUES ('s', 'h', 1, 1, 1);",
+            )
+            .expect("seed leftover schema");
+            conn.pragma_update(None, "user_version", 1)
+                .expect("set user_version");
+        }
+        let conn = open_central(&paths).expect("open_central");
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 1);
+        let sessions: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count sessions table");
+        assert_eq!(sessions, 0, "sessions table must be dropped");
+        let hash: String = conn
+            .query_row(
+                "SELECT password_hash FROM auth_state WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("auth_state kept");
+        assert_eq!(hash, "kept");
     }
 }

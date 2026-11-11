@@ -2,7 +2,7 @@
   <div class="login">
     <el-card class="box">
       <h2>修改口令</h2>
-      <p class="hint">新口令不少于 16 位，且不能与当前口令相同。完成前无法进入业务页。</p>
+      <p class="hint">新口令不少于 24 个字符，仅限可打印 ASCII（不含空格、引号、分号、逗号和反斜杠），且不能与当前口令相同。完成前无法进入业务页。口令不会自动过期，改密后旧口令立即失效。</p>
       <el-form @submit.prevent="submit">
         <el-form-item label="当前口令">
           <el-input v-model="oldToken" type="password" show-password />
@@ -30,8 +30,8 @@ const newToken = ref("");
 const loading = ref(false);
 
 async function submit(): Promise<void> {
-  if (newToken.value.length < 16) {
-    ElMessage.error("新口令至少 16 位");
+  if (newToken.value.length < 24) {
+    ElMessage.error("新口令至少 24 个字符");
     return;
   }
   loading.value = true;

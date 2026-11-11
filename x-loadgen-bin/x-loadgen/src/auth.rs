@@ -1,26 +1,31 @@
-//! Admin password file, token verification, and session records.
+//! Admin password file, login-token verification, and an in-memory token cache.
+//!
+//! The login token is the only credential. It never expires on its own and
+//! changes only when the password is changed or `reset-passwd` is run. The
+//! token is stored on disk as an argon2id hash (or, before the first change,
+//! as plaintext in `admin.passwd`). After the first successful argon2
+//! verification, subsequent requests compare the presented token with the
+//! cached plaintext in constant time.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, ensure};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Argon2, password_hash::rand_core::OsRng};
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::db::{DataPaths, unix_now_ms};
 
-/// Session cookie name (`HttpOnly`, `Path=/`, `SameSite=Lax`, no `Secure`).
-pub const SESSION_COOKIE: &str = "x_loadgen_session";
+/// Auth cookie name (`HttpOnly`, `Path=/`, `SameSite=Lax`, no `Secure`, no
+/// `Max-Age`). The cookie holds the login token itself.
+pub const AUTH_COOKIE: &str = "x_loadgen_token";
 
 /// Minimum length of a changed password token.
-pub const MIN_NEW_TOKEN_LEN: usize = 16;
-
-/// Session lifetime used when issuing and refreshing sessions.
-pub const SESSION_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+pub const MIN_NEW_TOKEN_LEN: usize = 24;
 
 /// Log line for the password file (path only, never the token).
 #[must_use]
@@ -59,8 +64,8 @@ pub fn ensure_admin_passwd(paths: &DataPaths) -> Result<String> {
     Ok(token)
 }
 
-/// Overwrite `admin.passwd`, clear the stored hash, require a new change, and
-/// drop every session.
+/// Overwrite `admin.passwd`, clear the stored hash, and require a new change.
+/// A running server picks this up on the next request via `auth_state.updated_at`.
 ///
 /// # Errors
 ///
@@ -73,7 +78,6 @@ pub fn reset_passwd(paths: &DataPaths) -> Result<()> {
     write_admin_passwd(&paths.admin_passwd(), &token, true)?;
     let conn = crate::db::open_central(paths)?;
     replace_auth_state(&conn, None, true)?;
-    delete_all_sessions(&conn)?;
     Ok(())
 }
 
@@ -157,19 +161,20 @@ pub fn verify_password(token: &str, hash: &str) -> Result<bool> {
     }
 }
 
-/// SHA-256 hex digest of a session token (stored in `sessions.token_hash`).
-#[must_use]
-pub fn session_token_hash(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
-    hex_encode(&digest)
-}
-
 /// Current admin authentication row (`id = 1`), if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthState {
     pub password_hash: Option<String>,
     pub must_change: bool,
     pub updated_at: i64,
+}
+
+impl AuthState {
+    /// `true` when the bootstrap token is still in force and must be changed.
+    #[must_use]
+    pub fn must_change_password(&self) -> bool {
+        self.password_hash.is_none() || self.must_change
+    }
 }
 
 /// Load `auth_state`, or a default "must change" row when the table is empty.
@@ -248,6 +253,10 @@ pub fn current_credential(paths: &DataPaths, state: &AuthState) -> Result<Creden
 
 /// Check a presented login/old token against the current credential.
 ///
+/// Bootstrap tokens are compared in constant time against the file. Hashed
+/// tokens run argon2id. Prefer [`TokenCache::verify`] on the request path so
+/// argon2 runs only once until the password changes.
+///
 /// # Errors
 ///
 /// Returns an error if hash verification fails internally.
@@ -258,108 +267,79 @@ pub fn verify_credential(presented: &str, credential: &Credential) -> Result<boo
     }
 }
 
-/// Create a new session and return the raw session token (not the hash).
+/// In-memory cache of a successfully verified login token.
 ///
-/// # Errors
-///
-/// Returns an error if a row cannot be inserted.
-pub fn issue_session(conn: &Connection) -> Result<String> {
-    let token = random_token()?;
-    let hash = session_token_hash(&token);
-    let now = i64::try_from(unix_now_ms()?).unwrap_or(i64::MAX);
-    let expires = now.saturating_add(SESSION_TTL_MS);
-    let id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO sessions (id, token_hash, created_at, last_seen_at, expires_at)
-         VALUES (?1, ?2, ?3, ?3, ?4)",
-        params![id, hash, now, expires],
-    )
-    .context("insert session")?;
-    Ok(token)
+/// The password is never stored on disk in a weaker form. After the first
+/// successful argon2 verification, later checks compare against this cached
+/// value in constant time. The cache is keyed by the stored hash and
+/// `auth_state.updated_at`, so a `reset-passwd` from another process is
+/// noticed on the next request. [`TokenCache::invalidate`] is used after an
+/// in-process password change.
+#[derive(Clone, Default)]
+pub struct TokenCache {
+    inner: Arc<Mutex<Option<CachedToken>>>,
 }
 
-/// A session that has been looked up and is still valid.
-#[derive(Debug, Clone)]
-pub struct Session {
-    pub id: String,
-    pub expires_at: i64,
+struct CachedToken {
+    token: String,
+    password_hash: String,
+    updated_at: i64,
 }
 
-/// Look up a session by the raw token, refresh `last_seen_at` when valid.
-///
-/// # Errors
-///
-/// Returns an error if the query or update fails. Expired or unknown tokens
-/// yield `Ok(None)`.
-pub fn touch_session(conn: &Connection, token: &str) -> Result<Option<Session>> {
-    let hash = session_token_hash(token);
-    let now = i64::try_from(unix_now_ms()?).unwrap_or(i64::MAX);
-    let session = conn
-        .query_row(
-            "SELECT id, expires_at FROM sessions WHERE token_hash = ?1",
-            params![hash],
-            |row| {
-                Ok(Session {
-                    id: row.get(0)?,
-                    expires_at: row.get(1)?,
-                })
-            },
-        )
-        .optional()
-        .context("lookup session")?;
-    let Some(session) = session else {
-        return Ok(None);
-    };
-    if session.expires_at <= now {
-        conn.execute("DELETE FROM sessions WHERE id = ?1", params![session.id])
-            .context("delete expired session")?;
-        return Ok(None);
+impl TokenCache {
+    /// Empty cache.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
-    let expires = now.saturating_add(SESSION_TTL_MS);
-    conn.execute(
-        "UPDATE sessions SET last_seen_at = ?1, expires_at = ?2 WHERE id = ?3",
-        params![now, expires, session.id],
-    )
-    .context("refresh session")?;
-    Ok(Some(session))
-}
 
-/// Delete one session by the raw token (logout).
-///
-/// # Errors
-///
-/// Returns an error if the statement fails.
-pub fn delete_session(conn: &Connection, token: &str) -> Result<()> {
-    let hash = session_token_hash(token);
-    conn.execute("DELETE FROM sessions WHERE token_hash = ?1", params![hash])
-        .context("delete session")?;
-    Ok(())
-}
-
-/// Delete every session except `keep_id` (if any).
-///
-/// # Errors
-///
-/// Returns an error if the statement fails.
-pub fn delete_other_sessions(conn: &Connection, keep_id: Option<&str>) -> Result<()> {
-    if let Some(id) = keep_id {
-        conn.execute("DELETE FROM sessions WHERE id != ?1", params![id])
-            .context("delete other sessions")?;
-    } else {
-        delete_all_sessions(conn)?;
+    /// Drop any cached token. Called after an in-process password change.
+    pub fn invalidate(&self) {
+        *self.lock() = None;
     }
-    Ok(())
-}
 
-/// Delete every session.
-///
-/// # Errors
-///
-/// Returns an error if the statement fails.
-pub fn delete_all_sessions(conn: &Connection) -> Result<()> {
-    conn.execute("DELETE FROM sessions", [])
-        .context("delete all sessions")?;
-    Ok(())
+    /// Verify `presented` against `credential`.
+    ///
+    /// Bootstrap credentials always compare against the file (cheap, no
+    /// argon2). Hash credentials use the cache when `updated_at` and the hash
+    /// still match; otherwise argon2 runs and a successful result is stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored hash is malformed.
+    pub fn verify(
+        &self,
+        presented: &str,
+        credential: &Credential,
+        updated_at: i64,
+    ) -> Result<bool> {
+        match credential {
+            Credential::Bootstrap(expected) => Ok(tokens_equal(presented, expected)),
+            Credential::Hash(hash) => {
+                if let Some(cached) = self.lock().as_ref()
+                    && cached.updated_at == updated_at
+                    && cached.password_hash == *hash
+                {
+                    return Ok(tokens_equal(presented, &cached.token));
+                }
+                let ok = verify_password(presented, hash)?;
+                if ok {
+                    *self.lock() = Some(CachedToken {
+                        token: presented.to_string(),
+                        password_hash: hash.clone(),
+                        updated_at,
+                    });
+                }
+                Ok(ok)
+            }
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<CachedToken>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// Recoverable failures when changing the admin token.
@@ -374,6 +354,11 @@ pub enum ChangePasswordError {
         /// Required minimum length.
         min: usize,
     },
+    /// `new_token` contains characters that are not allowed.
+    #[error(
+        "new token must be printable ASCII without whitespace, quotes, semicolons, commas or backslashes"
+    )]
+    InvalidChars,
     /// `new_token` equals `old_token`.
     #[error("new token must differ from the old token")]
     SameAsOld,
@@ -382,9 +367,38 @@ pub enum ChangePasswordError {
     Other(#[from] anyhow::Error),
 }
 
-/// Change the admin token: write the hash, delete `admin.passwd`, drop other sessions.
+/// Validate a candidate new token against the length, charset, and "different
+/// from old" rules. The initial bootstrap token (64 hex characters) already
+/// satisfies these rules; they apply only when the user sets a new token.
+///
+/// # Errors
+///
+/// Returns a [`ChangePasswordError`] variant describing the failed rule.
+pub fn validate_new_token(new_token: &str, old_token: &str) -> Result<(), ChangePasswordError> {
+    if new_token.len() < MIN_NEW_TOKEN_LEN {
+        return Err(ChangePasswordError::TooShort {
+            min: MIN_NEW_TOKEN_LEN,
+        });
+    }
+    if !new_token.chars().all(is_allowed_token_char) {
+        return Err(ChangePasswordError::InvalidChars);
+    }
+    if tokens_equal(old_token, new_token) {
+        return Err(ChangePasswordError::SameAsOld);
+    }
+    Ok(())
+}
+
+/// A new token may use printable ASCII (`0x21`–`0x7E`) except `"`, `;`, `,`
+/// and `\`, which would break cookies or `Authorization` headers.
+fn is_allowed_token_char(c: char) -> bool {
+    c.is_ascii_graphic() && !matches!(c, '"' | ';' | ',' | '\\')
+}
+
+/// Change the admin token: write the argon2id hash and delete `admin.passwd`.
 ///
 /// If the password file cannot be deleted, the database is left unchanged.
+/// The caller must invalidate any in-memory [`TokenCache`].
 ///
 /// # Errors
 ///
@@ -394,21 +408,13 @@ pub fn change_password(
     conn: &mut Connection,
     old_token: &str,
     new_token: &str,
-    keep_session_id: Option<&str>,
 ) -> Result<(), ChangePasswordError> {
     let state = load_auth_state(conn)?;
     let credential = current_credential(paths, &state)?;
     if !verify_credential(old_token, &credential)? {
         return Err(ChangePasswordError::IncorrectOld);
     }
-    if new_token.len() < MIN_NEW_TOKEN_LEN {
-        return Err(ChangePasswordError::TooShort {
-            min: MIN_NEW_TOKEN_LEN,
-        });
-    }
-    if tokens_equal(old_token, new_token) {
-        return Err(ChangePasswordError::SameAsOld);
-    }
+    validate_new_token(new_token, old_token)?;
     let hash = hash_password(new_token)?;
     let tx = conn.transaction().context("begin password change")?;
     replace_auth_state(&tx, Some(&hash), false)?;
@@ -422,21 +428,20 @@ pub fn change_password(
         })?;
     }
     tx.commit().context("commit password change")?;
-    delete_other_sessions(conn, keep_session_id)?;
     Ok(())
 }
 
-/// Format a `Set-Cookie` value for a new session (no `Secure`).
+/// Format a `Set-Cookie` value that stores the login token (no `Secure`, no
+/// `Max-Age`: a browser session cookie). The token itself does not expire.
 #[must_use]
-pub fn session_cookie(token: &str) -> String {
-    let max_age = SESSION_TTL_MS / 1000;
-    format!("{SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={max_age}")
+pub fn auth_cookie(token: &str) -> String {
+    format!("{AUTH_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax")
 }
 
-/// Format a `Set-Cookie` value that clears the session cookie.
+/// Format a `Set-Cookie` value that clears the auth cookie.
 #[must_use]
-pub fn clear_session_cookie() -> String {
-    format!("{SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0")
+pub fn clear_auth_cookie() -> String {
+    format!("{AUTH_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0")
 }
 
 fn set_mode_600(path: &Path) -> Result<()> {
@@ -466,8 +471,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_admin_passwd, hash_password, password_file_log_line, random_token, tokens_equal,
-        verify_password,
+        AUTH_COOKIE, ChangePasswordError, Credential, MIN_NEW_TOKEN_LEN, TokenCache, auth_cookie,
+        change_password, clear_auth_cookie, ensure_admin_passwd, hash_password, load_auth_state,
+        password_file_log_line, random_token, tokens_equal, validate_new_token, verify_password,
     };
     use crate::db::DataPaths;
     use std::fs;
@@ -544,5 +550,139 @@ mod tests {
         assert!(hash.contains("argon2id"));
         assert!(verify_password("sixteen-chars-ok", &hash).expect("ok"));
         assert!(!verify_password("sixteen-chars-no", &hash).expect("no"));
+    }
+
+    #[test]
+    fn validate_new_token_enforces_length_charset_and_difference() {
+        let old = "aaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(old.len(), MIN_NEW_TOKEN_LEN);
+        let too_short = "a".repeat(MIN_NEW_TOKEN_LEN - 1);
+        assert!(matches!(
+            validate_new_token(&too_short, old),
+            Err(ChangePasswordError::TooShort { min: 24 })
+        ));
+        assert!(matches!(
+            validate_new_token("aaaaaaaaaaaaaaaaaaaaaaa;", old),
+            Err(ChangePasswordError::InvalidChars)
+        ));
+        assert!(matches!(
+            validate_new_token("aaaaaaaaaaaaaaaaaaaaaaa ", old),
+            Err(ChangePasswordError::InvalidChars)
+        ));
+        assert!(matches!(
+            validate_new_token("aaaaaaaaaaaaaaaaaaaaaaa\"", old),
+            Err(ChangePasswordError::InvalidChars)
+        ));
+        assert!(matches!(
+            validate_new_token(old, old),
+            Err(ChangePasswordError::SameAsOld)
+        ));
+        validate_new_token("bbbbbbbbbbbbbbbbbbbbbbbb", old).expect("ok");
+        validate_new_token("changed-password-ok-24ch", old).expect("ok");
+    }
+
+    #[test]
+    fn auth_cookie_is_session_cookie_without_max_age_or_secure() {
+        let cookie = auth_cookie("tok");
+        assert!(
+            cookie.starts_with(&format!("{AUTH_COOKIE}=tok;")),
+            "{cookie}"
+        );
+        assert!(cookie.contains("HttpOnly"), "{cookie}");
+        assert!(cookie.contains("Path=/"), "{cookie}");
+        assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+        let lower = cookie.to_ascii_lowercase();
+        assert!(!lower.contains("secure"), "{cookie}");
+        assert!(!lower.contains("max-age"), "{cookie}");
+        assert!(!lower.contains("expires="), "{cookie}");
+        let clear = clear_auth_cookie();
+        assert!(clear.contains("Max-Age=0"), "{clear}");
+    }
+
+    #[test]
+    fn token_cache_compares_cached_value_and_invalidates_on_hash_change() {
+        let cache = TokenCache::new();
+        let token = "twenty-four-chars-token!!";
+        let hash = hash_password(token).expect("hash");
+        assert!(
+            cache
+                .verify(token, &Credential::Hash(hash.clone()), 1)
+                .expect("first")
+        );
+        assert!(
+            !cache
+                .verify(
+                    "wrong-token-xxxxxxxxxxxx",
+                    &Credential::Hash(hash.clone()),
+                    1
+                )
+                .expect("wrong")
+        );
+        assert!(
+            cache
+                .verify(token, &Credential::Hash(hash.clone()), 1)
+                .expect("cached")
+        );
+        cache.invalidate();
+        let other = "another-twenty-four-tok!!";
+        let hash2 = hash_password(other).expect("hash2");
+        assert!(
+            !cache
+                .verify(token, &Credential::Hash(hash2.clone()), 2)
+                .expect("stale")
+        );
+        assert!(
+            cache
+                .verify(other, &Credential::Hash(hash2), 2)
+                .expect("new")
+        );
+    }
+
+    #[test]
+    fn token_cache_bootstrap_compares_against_the_file_token() {
+        let cache = TokenCache::new();
+        let expected = "bootstrap-token-value-24ch";
+        let credential = Credential::Bootstrap(expected.to_string());
+        assert!(cache.verify(expected, &credential, 0).expect("match"));
+        assert!(!cache.verify("other", &credential, 0).expect("mismatch"));
+    }
+
+    #[test]
+    fn change_password_rejects_bad_input_and_stores_hash() {
+        let tmp = TempDir::new("change");
+        let paths = tmp.paths();
+        let old = ensure_admin_passwd(&paths).expect("bootstrap");
+        let mut conn = crate::db::open_central(&paths).expect("db");
+
+        let err = change_password(&paths, &mut conn, &old, "short").expect_err("short");
+        assert!(matches!(err, ChangePasswordError::TooShort { min: 24 }));
+
+        let err = change_password(&paths, &mut conn, &old, "aaaaaaaaaaaaaaaaaaaaaaa;")
+            .expect_err("charset");
+        assert!(matches!(err, ChangePasswordError::InvalidChars));
+
+        let err = change_password(
+            &paths,
+            &mut conn,
+            "not-the-old-token-at-all!!",
+            "changed-password-ok-24ch",
+        )
+        .expect_err("old");
+        assert!(matches!(err, ChangePasswordError::IncorrectOld));
+
+        let new = "changed-password-ok-24ch";
+        change_password(&paths, &mut conn, &old, new).expect("change");
+        assert!(
+            !paths.admin_passwd().exists(),
+            "admin.passwd must be deleted"
+        );
+        let state = load_auth_state(&conn).expect("state");
+        assert!(!state.must_change);
+        let hash = state.password_hash.expect("hash");
+        assert!(verify_password(new, &hash).expect("verify new"));
+        assert!(!verify_password(&old, &hash).expect("verify old"));
+
+        let err = change_password(&paths, &mut conn, new, new).expect_err("same");
+        assert!(matches!(err, ChangePasswordError::SameAsOld));
     }
 }

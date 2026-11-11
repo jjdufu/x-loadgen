@@ -7,10 +7,10 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
-use super::server::{AppState, session_token_from_headers};
+use super::server::{AppState, authenticate};
 use crate::auth::{
-    ChangePasswordError, change_password, clear_session_cookie, current_credential, delete_session,
-    issue_session, load_auth_state, session_cookie, touch_session, verify_credential,
+    ChangePasswordError, auth_cookie, change_password, clear_auth_cookie, current_credential,
+    load_auth_state,
 };
 
 /// Login request body.
@@ -19,7 +19,7 @@ pub struct LoginRequest {
     pub token: String,
 }
 
-/// Login response body. `token` is the new session token (also set as a cookie).
+/// Login response body. `token` is the same login token (also set as a cookie).
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
@@ -41,6 +41,10 @@ pub struct PasswordRequest {
 }
 
 /// `POST /api/v1/auth/login`.
+///
+/// Verifies the login token and sets an `HttpOnly` cookie that holds the same
+/// token. The token does not expire; it only changes when the password is
+/// changed or reset.
 ///
 /// # Errors
 ///
@@ -65,45 +69,37 @@ pub async fn login(
     let db = state.lock_db()?;
     let auth_state = load_auth_state(&db)?;
     let credential = current_credential(&state.paths, &auth_state)?;
-    if !verify_credential(&body.token, &credential)? {
+    if !state
+        .token_cache
+        .verify(&body.token, &credential, auth_state.updated_at)?
+    {
         return Err(ApiError::unauthorized("invalid token"));
     }
-    let session_token = issue_session(&db)?;
-    let must_change_password = auth_state.password_hash.is_none() || auth_state.must_change;
-    let cookie = session_cookie(&session_token);
+    let cookie = auth_cookie(&body.token);
     let body = LoginResponse {
-        token: session_token,
-        must_change_password,
+        token: body.token,
+        must_change_password: auth_state.must_change_password(),
     };
     Ok((StatusCode::OK, [(header::SET_COOKIE, cookie)], Json(body)).into_response())
 }
 
 /// `POST /api/v1/auth/logout`.
 ///
-/// # Errors
-///
-/// Returns 500 if the session cannot be deleted.
-pub async fn logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    if let Some(token) = session_token_from_headers(&headers) {
-        let db = state.lock_db()?;
-        delete_session(&db, &token)?;
-    }
-    Ok((
+/// Clears the auth cookie. The login token itself stays valid.
+pub async fn logout() -> Response {
+    (
         StatusCode::OK,
-        [(header::SET_COOKIE, clear_session_cookie())],
+        [(header::SET_COOKIE, clear_auth_cookie())],
         Json(serde_json::json!({"ok": true})),
     )
-        .into_response())
+        .into_response()
 }
 
 /// `GET /api/v1/auth/me`.
 ///
 /// # Errors
 ///
-/// Returns 401 when authentication is required but no valid session is present,
+/// Returns 401 when authentication is required but no valid token is present,
 /// or 500 on storage failure.
 pub async fn me(
     State(state): State<AppState>,
@@ -115,54 +111,47 @@ pub async fn me(
             must_change_password: false,
         }));
     }
-    let token = session_token_from_headers(&headers)
-        .ok_or_else(|| ApiError::unauthorized("missing session"))?;
-    let db = state.lock_db()?;
-    let session = touch_session(&db, &token)?;
-    if session.is_none() {
-        return Err(ApiError::unauthorized("invalid or expired session"));
-    }
-    let auth_state = load_auth_state(&db)?;
+    let auth_state = authenticate(&state, &headers)?;
     Ok(Json(MeResponse {
         auth_required: true,
-        must_change_password: auth_state.password_hash.is_none() || auth_state.must_change,
+        must_change_password: auth_state.must_change_password(),
     }))
 }
 
 /// `POST /api/v1/auth/password`.
 ///
+/// On success the auth cookie is replaced with the new token. The previous
+/// token is rejected immediately.
+///
 /// # Errors
 ///
-/// Returns 401 when the old token is wrong, 400 when the new token is invalid,
-/// or 500 when the password file cannot be deleted or the hash cannot be stored.
+/// Returns 401 when the caller is unauthenticated or the old token is wrong,
+/// 400 when the new token is invalid, or 500 when the password file cannot be
+/// deleted or the hash cannot be stored.
 pub async fn password(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<PasswordRequest>,
-) -> Result<Json<MeResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     if state.no_auth {
         return Err(ApiError::bad_request(
             "auth_disabled",
             "password change is not used when the server is started with --no-auth",
         ));
     }
-    let token = session_token_from_headers(&headers)
-        .ok_or_else(|| ApiError::unauthorized("missing session"))?;
+    // The caller must already present the current token (cookie or Bearer).
+    authenticate(&state, &headers)?;
     let mut db = state.lock_db()?;
-    let session = touch_session(&db, &token)?
-        .ok_or_else(|| ApiError::unauthorized("invalid or expired session"))?;
-    change_password(
-        &state.paths,
-        &mut db,
-        &body.old_token,
-        &body.new_token,
-        Some(&session.id),
-    )
-    .map_err(map_change_error)?;
-    Ok(Json(MeResponse {
+    change_password(&state.paths, &mut db, &body.old_token, &body.new_token)
+        .map_err(map_change_error)?;
+    drop(db);
+    state.token_cache.invalidate();
+    let cookie = auth_cookie(&body.new_token);
+    let body = MeResponse {
         auth_required: true,
         must_change_password: false,
-    }))
+    };
+    Ok((StatusCode::OK, [(header::SET_COOKIE, cookie)], Json(body)).into_response())
 }
 
 fn map_change_error(err: ChangePasswordError) -> ApiError {
@@ -171,6 +160,10 @@ fn map_change_error(err: ChangePasswordError) -> ApiError {
         ChangePasswordError::TooShort { min } => ApiError::bad_request(
             "invalid_request",
             format!("new token must be at least {min} characters"),
+        ),
+        ChangePasswordError::InvalidChars => ApiError::bad_request(
+            "invalid_request",
+            "new token must be printable ASCII without whitespace, quotes, semicolons, commas or backslashes",
         ),
         ChangePasswordError::SameAsOld => ApiError::bad_request(
             "invalid_request",

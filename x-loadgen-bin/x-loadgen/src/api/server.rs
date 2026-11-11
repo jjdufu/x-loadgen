@@ -19,7 +19,7 @@ use super::runs::{
     list_runs, patch_traffic, resume_run, stop_run,
 };
 pub use super::state::AppState;
-pub(crate) use super::state::{require_ready_auth, session_token_from_headers};
+pub(crate) use super::state::{authenticate, require_ready_auth};
 use super::targets::{
     create_product, create_target, create_tenant, delete_product, delete_target, delete_tenant,
     generate_binding_keypair, get_product, get_target, get_tenant, list_products, list_targets,
