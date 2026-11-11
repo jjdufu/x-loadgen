@@ -15,4 +15,3 @@ pub mod log;
 pub mod num;
 pub mod report;
 pub mod signal;
-pub mod template;

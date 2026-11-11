@@ -66,7 +66,6 @@ CREATE TABLE IF NOT EXISTS target_products (
   target_id             TEXT NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
   name                  TEXT NOT NULL,
   product_id            TEXT NOT NULL,
-  channel_code          TEXT,
   path                  TEXT NOT NULL,
   method                TEXT NOT NULL,
   weight                INTEGER NOT NULL DEFAULT 1,
@@ -75,9 +74,6 @@ CREATE TABLE IF NOT EXISTS target_products (
   query_json            TEXT,
   headers_json          TEXT,
   body_json             TEXT,
-  body_image_dir        TEXT,
-  body_image_field      TEXT,
-  body_image_name_field TEXT,
   expect_transport      TEXT,
   expect_checks_json    TEXT,
   UNIQUE(target_id, name)

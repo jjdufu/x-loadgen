@@ -2856,7 +2856,6 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
  "url",
 ]
 
@@ -3513,7 +3512,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
- "tower-http",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

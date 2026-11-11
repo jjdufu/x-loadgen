@@ -77,8 +77,6 @@ pub struct TenantInput {
 pub struct ProductInput {
     pub name: String,
     pub product_id: String,
-    #[serde(default)]
-    pub channel_code: Option<String>,
     pub path: String,
     pub method: String,
     #[serde(default = "default_weight")]
@@ -93,12 +91,6 @@ pub struct ProductInput {
     pub headers_json: Option<Value>,
     #[serde(default)]
     pub body_json: Option<Value>,
-    #[serde(default)]
-    pub body_image_dir: Option<String>,
-    #[serde(default)]
-    pub body_image_field: Option<String>,
-    #[serde(default)]
-    pub body_image_name_field: Option<String>,
     #[serde(default)]
     pub expect_transport: Option<String>,
     #[serde(default)]
@@ -214,7 +206,6 @@ pub struct Product {
     pub target_id: String,
     pub name: String,
     pub product_id: String,
-    pub channel_code: Option<String>,
     pub path: String,
     pub method: String,
     pub weight: i64,
@@ -223,9 +214,6 @@ pub struct Product {
     pub query_json: Option<Value>,
     pub headers_json: Option<Value>,
     pub body_json: Option<Value>,
-    pub body_image_dir: Option<String>,
-    pub body_image_field: Option<String>,
-    pub body_image_name_field: Option<String>,
     pub expect_transport: Option<String>,
     pub expect_checks_json: Option<Value>,
 }
@@ -633,9 +621,8 @@ pub fn delete_tenant(
 pub fn list_products(conn: &Connection, target_id: &str) -> Result<Vec<Product>, StoreError> {
     ensure_target(conn, target_id)?;
     let mut stmt = conn.prepare(
-        "SELECT id, target_id, name, product_id, channel_code, path, method, weight,
+        "SELECT id, target_id, name, product_id, path, method, weight,
                 qps_limit, timeout_secs, query_json, headers_json, body_json,
-                body_image_dir, body_image_field, body_image_name_field,
                 expect_transport, expect_checks_json
          FROM target_products WHERE target_id = ?1 ORDER BY name",
     )?;
@@ -866,17 +853,15 @@ fn insert_product_row(
 ) -> Result<(), StoreError> {
     conn.execute(
         "INSERT INTO target_products (
-            id, target_id, name, product_id, channel_code, path, method, weight,
+            id, target_id, name, product_id, path, method, weight,
             qps_limit, timeout_secs, query_json, headers_json, body_json,
-            body_image_dir, body_image_field, body_image_name_field,
             expect_transport, expect_checks_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             id,
             target_id,
             input.name.trim(),
             input.product_id.trim(),
-            opt_str(input.channel_code.as_deref()),
             input.path.trim(),
             input.method.trim().to_ascii_uppercase(),
             input.weight,
@@ -885,9 +870,6 @@ fn insert_product_row(
             json_text(input.query_json.as_ref())?,
             json_text(input.headers_json.as_ref())?,
             json_text(input.body_json.as_ref())?,
-            opt_str(input.body_image_dir.as_deref()),
-            opt_str(input.body_image_field.as_deref()),
-            opt_str(input.body_image_name_field.as_deref()),
             opt_str(input.expect_transport.as_deref()),
             json_text(input.expect_checks_json.as_ref())?,
         ],
@@ -901,20 +883,16 @@ fn product_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         target_id: row.get(1)?,
         name: row.get(2)?,
         product_id: row.get(3)?,
-        channel_code: row.get(4)?,
-        path: row.get(5)?,
-        method: row.get(6)?,
-        weight: row.get(7)?,
-        qps_limit: row.get(8)?,
-        timeout_secs: row.get(9)?,
-        query_json: parse_json_cell(row.get(10)?)?,
-        headers_json: parse_json_cell(row.get(11)?)?,
-        body_json: parse_json_cell(row.get(12)?)?,
-        body_image_dir: row.get(13)?,
-        body_image_field: row.get(14)?,
-        body_image_name_field: row.get(15)?,
-        expect_transport: row.get(16)?,
-        expect_checks_json: parse_json_cell(row.get(17)?)?,
+        path: row.get(4)?,
+        method: row.get(5)?,
+        weight: row.get(6)?,
+        qps_limit: row.get(7)?,
+        timeout_secs: row.get(8)?,
+        query_json: parse_json_cell(row.get(9)?)?,
+        headers_json: parse_json_cell(row.get(10)?)?,
+        body_json: parse_json_cell(row.get(11)?)?,
+        expect_transport: row.get(12)?,
+        expect_checks_json: parse_json_cell(row.get(13)?)?,
     })
 }
 
