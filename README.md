@@ -70,36 +70,27 @@ gunzip -c x-loadgen-0.1.0.tar.gz | docker load
 
 不要在 o50 上用本仓库 Dockerfile 构建。
 
-## 用 deploy/ 启动 compose
+## 用 deploy/ 部署
 
-默认桥接网络。容器内监听 `0.0.0.0:8757`，数据卷挂到容器内 `/data`。镜像以 tini 作为 PID 1。
-
-```bash
-cd /workspace/rust-proj/x-loadgen/deploy
-cp env.example .env   # 按需修改
-mkdir -p data && sudo chown 10001:10001 data
-docker compose --env-file .env up -d
-```
-
-浏览器打开 `http://127.0.0.1:8757`。宿主机数据目录必须对 uid 10001 可写。`X_LOADGEN_HOST_BIND=127.0.0.1:` 时只有本机可访问 8757。联调可在 `.env` 里设 `X_LOADGEN_NO_AUTH=1`。
-
-端口、数据目录、host 网络切换和镜像分发的细节见 `deploy/README.md`。本 compose 独立启动，不写入 mazbri-max 的编排。
-
-停止（保留镜像）：
+`deploy/` 是独立的 Compose 工程，布局与 mazbri 中间件的单组件工程一致（`config/compose.yml`、`config/.env`、`scripts/*.sh`、`lib/common.sh`、`common/base.yml`，运行期数据在 `data/ logs/ backups/`）。脚本由自身位置推导路径，目录可以改名或整体拷到任意位置，在任意工作目录下调用。
 
 ```bash
-cd /workspace/rust-proj/x-loadgen/deploy
-docker compose down
+deploy/scripts/start.sh      # 首次从 config/.env.example 生成 config/.env；等待 healthy，打印访问地址和 admin.passwd 路径
+deploy/scripts/status.sh
+deploy/scripts/backup.sh     # 一致性备份 data/ 到 deploy/backups/
+deploy/scripts/stop.sh       # 或 down.sh（删容器与网络，数据保留）
 ```
+
+默认桥接网络，容器内监听 `0.0.0.0:8757`，宿主机发布 `0.0.0.0:8757`（`config/.env` 里 `X_LOADGEN_BIND=127.0.0.1` 则只开本机）。容器以执行者的 uid:gid 运行，数据目录归执行者。联调可设 `X_LOADGEN_NO_AUTH=1`。端口、资源、host 网络切换、备份恢复和镜像分发见 `deploy/README.md`。本工程独立启动，不写入 mazbri-max 的编排。
 
 ## 登录与改密
 
-默认鉴权开启时，首次启动会在 `/data/admin.passwd` 写入初始口令（文件模式 600）。打开页面进入登录页，提交该口令后必须立即改密：新口令至少 16 个字符，且不能与旧口令相同。改密完成前，业务 API 返回 403（`password_change_required`）。
+默认鉴权开启时，首次启动会在数据目录（容器内 `/data`，宿主机 `deploy/data/`）的 `admin.passwd` 写入初始口令（文件模式 600）。打开页面进入登录页，提交该口令后必须立即改密：新口令至少 16 个字符，且不能与旧口令相同。改密完成前，业务 API 返回 403（`password_change_required`）。
 
-重置口令（容器内）：
+改密后 `admin.passwd` 被删除，服务重启也不会再生成。重置口令：
 
 ```bash
-docker compose exec x-loadgen x-loadgen reset-passwd --data-dir /data
+deploy/scripts/reset-passwd.sh   # 在容器内执行 x-loadgen reset-passwd，只打印口令文件路径
 ```
 
 会话 cookie 名为 `x_loadgen_session`（HttpOnly，SameSite=Lax）。用 curl 调用 API 时带上 cookie，例如：
@@ -203,4 +194,4 @@ cargo run -p x-loadgen-mockgw -- --listen 0.0.0.0:18080 --config /tmp/mockgw.jso
 
 配置字段与页面上的租户字段同名，另有 `binding_verify_key`（HMAC 密钥或签名公钥 PEM）和故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置（例如登记页面生成的公钥），`GET /__mock/stats` 查看已签发 token、已验签与已解封的计数，`GET /__mock/health` 做存活检查。
 
-容器内的 x-loadgen 访问宿主机上的 mock 网关时，`gateway_base_url` 填宿主机在 docker 桥接网络上的地址，例如 `http://172.17.0.1:18080`。
+容器内的 x-loadgen 访问宿主机上的 mock 网关时，`gateway_base_url` 填宿主机的局域网 IP，或 `${STACK}-x-loadgen-net` 网络的网关地址，例如 `http://<宿主机IP>:18080`。

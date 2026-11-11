@@ -1,0 +1,10 @@
+# 通过 extends 复用的公共服务配置（与 mazbri 部署方案一致）
+services:
+  base:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"

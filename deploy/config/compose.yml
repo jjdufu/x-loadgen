@@ -1,0 +1,54 @@
+# x-loadgen 独立 compose 工程：由 scripts/*.sh 以 --project-directory config 调用，路径全部相对本文件
+name: ${STACK:-mazbri}-x-loadgen
+services:
+  x-loadgen:
+    extends:
+      file: ../common/base.yml
+      service: base
+    image: x-loadgen:${X_LOADGEN_VERSION?}
+    container_name: ${STACK:-mazbri}-x-loadgen
+    # 以执行者 uid:gid 运行，data/ logs/ 属主与执行者一致（lib/common.sh 导出 RUN_UID/RUN_GID）
+    user: "${RUN_UID:-10001}:${RUN_GID:-10001}"
+    # 默认桥接；切 host：加 network_mode: host 并删除 ports，其余不变
+    ports:
+      - '${X_LOADGEN_BIND?}:${X_LOADGEN_PORT?}:8757'
+    volumes:
+      - ../data:/data
+      # 进程日志写 /data/logs，单独落到工程 logs/（备份不含日志）
+      - ../logs:/data/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '${LG_CPUS:-4}'
+          memory: ${LG_MEM:-4G}
+        reservations:
+          cpus: '${LG_CPUS_RESERVE:-0.5}'
+          memory: ${LG_MEM_RESERVE:-256M}
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 任意 uid 运行时镜像内无对应账户，HOME 指向数据目录
+      HOME: /data
+      X_LOADGEN_LISTEN: 0.0.0.0:8757
+      X_LOADGEN_DATA_DIR: /data
+      X_LOADGEN_NO_AUTH: ${X_LOADGEN_NO_AUTH:-0}
+      X_LOADGEN_MAX_QPS: ${X_LOADGEN_MAX_QPS:-}
+      X_LOADGEN_MAX_CONCURRENCY: ${X_LOADGEN_MAX_CONCURRENCY:-}
+    ulimits:
+      nofile:
+        soft: ${LG_NOFILE:-262144}
+        hard: ${LG_NOFILE:-262144}
+      core:
+        soft: 0
+        hard: 0
+    # tini 为 PID 1，SIGTERM 转给 serve：停投、排空、写检查点
+    stop_signal: SIGTERM
+    stop_grace_period: ${X_LOADGEN_STOP_GRACE:-120s}
+    healthcheck:
+      test: ["CMD", "x-loadgen", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+networks:
+  default:
+    name: ${STACK:-mazbri}-x-loadgen-net

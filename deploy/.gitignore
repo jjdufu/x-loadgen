@@ -1,1 +1,7 @@
-.env
+# 运行期数据全部留在工程目录内（相对路径），但绝不入库
+data/
+logs/
+backups/
+# 本机配置由 config/.env.example 生成，可能含本机地址与上限，不入库
+config/.env
+config/.env.local

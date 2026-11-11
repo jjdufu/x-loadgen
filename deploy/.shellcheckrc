@@ -1,0 +1,3 @@
+# shellcheck 从脚本所在目录解析 source 指令里的相对路径
+source-path=SCRIPTDIR
+external-sources=true

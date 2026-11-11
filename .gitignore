@@ -47,6 +47,5 @@ node_modules/
 .pnpm-store/
 dist/
 
-# Runtime data (SQLite, logs, admin.passwd, dumps)
+# Runtime data (SQLite, logs, admin.passwd, dumps); deploy/ has its own .gitignore
 /data/
-/deploy/data/

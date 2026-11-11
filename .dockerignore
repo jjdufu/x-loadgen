@@ -7,7 +7,7 @@ target
 **/.pnpm-store
 **/dist
 reports
-deploy/data
+deploy
 /data
 **/*.passwd
 **/*.log
