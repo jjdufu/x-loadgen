@@ -9,7 +9,7 @@
 
 ## 启动
 
-在 box 上先按仓库根 `README.md` 构建镜像 `x-loadgen:0.3.0`。然后：
+在 box 上先按仓库根 `README.md` 构建镜像 `x-loadgen:0.1.0`。然后：
 
 ```bash
 cd /workspace/rust-proj/x-loadgen/deploy
@@ -46,9 +46,9 @@ docker compose exec x-loadgen x-loadgen reset-passwd --data-dir /data
 镜像只在 box 本地构建。拷到其它主机：
 
 ```bash
-docker save x-loadgen:0.3.0 | gzip > x-loadgen-0.3.0.tar.gz
+docker save x-loadgen:0.1.0 | gzip > x-loadgen-0.1.0.tar.gz
 # 在目标主机
-gunzip -c x-loadgen-0.3.0.tar.gz | docker load
+gunzip -c x-loadgen-0.1.0.tar.gz | docker load
 ```
 
 不要在 o50 上用本仓库 Dockerfile 构建。本 compose 独立启动，不写入 mazbri-max 的 `up.sh` 或平台编排。

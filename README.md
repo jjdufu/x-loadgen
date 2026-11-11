@@ -4,7 +4,7 @@
 
 仓库位于 `/workspace/rust-proj/x-loadgen`，与 `mazbri-max` 在 `rust-proj` 下并列。
 
-- 版本：见仓库根 `Cargo.toml` 的 `[workspace.package]`（当前为 0.3.0）
+- 版本：见仓库根 `Cargo.toml` 的 `[workspace.package]`（当前为 0.1.0）
 - 布局：Cargo workspace，成员 crate 位于 `x-loadgen-bin/x-loadgen`，二进制名 `x-loadgen`
 - 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3），发布时嵌入二进制
 - SDK：path 依赖 `../mazbri-max/mazbri-libs/mazbri-sdk` 与 `../mazbri-max/mazbri-libs/mazbri-core`（经同目录下的 `mazbri-crypto`）
@@ -43,7 +43,7 @@ cargo build --release
 
 ## 在 box 上构建镜像
 
-镜像名 `x-loadgen`，标签为版本号（当前为 `0.3.0`）。只在 box 本地构建。构建必须用 BuildKit 把并列的 `mazbri-libs` 作为额外 context 传入，以保持 `Cargo.toml` 中的 path 依赖。
+镜像名 `x-loadgen`，标签为版本号（当前为 `0.1.0`）。只在 box 本地构建。构建必须用 BuildKit 把并列的 `mazbri-libs` 作为额外 context 传入，以保持 `Cargo.toml` 中的 path 依赖。
 
 ```bash
 cd /workspace/rust-proj/x-loadgen
@@ -52,7 +52,7 @@ export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 DOCKER_BUILDKIT=1 docker build \
   --file Dockerfile \
   --build-context libs=../mazbri-max/mazbri-libs \
-  --tag x-loadgen:${X_LOADGEN_VERSION:-0.3.0} \
+  --tag x-loadgen:${X_LOADGEN_VERSION:-0.1.0} \
   --build-arg CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
   .
 ```
@@ -60,9 +60,9 @@ DOCKER_BUILDKIT=1 docker build \
 `.dockerignore` 会排除 `.cargo`、`target`、`node_modules`、`.git` 和数据目录。构建走 crates.io sparse。拷到其它主机使用 `docker save` / `docker load`：
 
 ```bash
-docker save x-loadgen:0.3.0 | gzip > x-loadgen-0.3.0.tar.gz
+docker save x-loadgen:0.1.0 | gzip > x-loadgen-0.1.0.tar.gz
 # 在目标主机
-gunzip -c x-loadgen-0.3.0.tar.gz | docker load
+gunzip -c x-loadgen-0.1.0.tar.gz | docker load
 ```
 
 不要在 o50 上用本仓库 Dockerfile 构建。
@@ -114,7 +114,7 @@ curl -c /tmp/xlg.cookie -b /tmp/xlg.cookie \
   http://127.0.0.1:8757/api/v1/auth/password
 ```
 
-健康检查：`GET /health` 或 `x-loadgen health`，成功时返回 `{"ok":true,"version":"0.3.0"}`。
+健康检查：`GET /health` 或 `x-loadgen health`，成功时返回 `{"ok":true,"version":"0.1.0"}`。
 
 ## 在页面里配置并启动任务
 
