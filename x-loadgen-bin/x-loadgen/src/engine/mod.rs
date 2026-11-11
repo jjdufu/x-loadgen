@@ -1,22 +1,28 @@
 //! Streaming load-test engine: scheduler, metrics, token refresh, and execution.
 
 mod execute;
+mod limits;
 mod metrics;
 mod scheduler;
+mod supervisor;
 mod token;
 mod transport;
+mod windows;
 
 #[cfg(test)]
 mod tests;
 
 pub use execute::{ExecutePlan, ProductChoice, TenantChoice};
+pub use limits::{TrafficShare, check_caps, sum_traffic};
 pub use metrics::{
     CounterSnapshot, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink, unix_now_ms,
 };
 pub use scheduler::{LiveTraffic, WindowPlan, run_window};
+pub use supervisor::{StopKind, Supervisor};
 pub use token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 pub use transport::{
-    ExecOutcome, RequestCtx, RequestExecutor, Weighted, mix_request_seed, pick_weighted,
+    ExecOutcome, HttpExecutor, RequestCtx, RequestExecutor, Weighted, mix_request_seed,
+    pick_weighted,
 };
 
 use std::sync::Arc;
@@ -99,6 +105,42 @@ impl EngineHandle {
         })
     }
 
+    /// Start a window using caller-owned traffic, metrics, and cancellation.
+    ///
+    /// The histogram must already exist on `metrics`.
+    #[must_use]
+    pub fn start_with(
+        config: EngineConfig,
+        executor: Arc<dyn RequestExecutor>,
+        sink: Arc<dyn SampleSink>,
+        traffic: Arc<LiveTraffic>,
+        metrics: Arc<Metrics>,
+        cancel: CancellationToken,
+    ) -> Self {
+        let window = WindowPlan {
+            model: config.model,
+            requests: config.requests,
+            duration: config.duration,
+            warmup: config.warmup,
+            ramp: config.ramp,
+            execute: config.plan,
+        };
+        let join = tokio::spawn(run_window(
+            window,
+            Arc::clone(&traffic),
+            Arc::clone(&metrics),
+            cancel.clone(),
+            executor,
+            sink,
+        ));
+        Self {
+            cancel,
+            traffic,
+            metrics,
+            join: Some(join),
+        }
+    }
+
     /// Change the target QPS for subsequent deliveries. In-flight requests are not interrupted.
     pub fn set_qps(&self, qps: u64) {
         self.traffic.qps.store(qps, Ordering::Relaxed);
@@ -138,6 +180,10 @@ impl EngineHandle {
 
 impl Drop for EngineHandle {
     fn drop(&mut self) {
-        self.cancel.cancel();
+        // After `join` has been taken the window is finished; do not cancel a
+        // token that may be shared with later loop windows.
+        if self.join.is_some() {
+            self.cancel.cancel();
+        }
     }
 }

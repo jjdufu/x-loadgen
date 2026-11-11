@@ -14,4 +14,5 @@ pub mod expect;
 pub mod http;
 pub mod log;
 pub mod num;
+pub mod signal;
 pub mod template;

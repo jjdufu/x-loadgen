@@ -81,7 +81,7 @@ fn default_mode_total() -> String {
 }
 
 /// Stored template as returned by the API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Template {
     pub id: String,
     pub name: String,

@@ -3,18 +3,21 @@
 mod dump;
 pub mod error;
 mod paths;
+pub mod runs;
 mod schema;
 pub mod targets;
 pub mod templates;
 mod writer;
 
-pub use dump::{MAGIC, VERSION, import_pending_dir, import_pending_file, write_pending};
+pub use dump::{
+    MAGIC, VERSION, import_pending_dir, import_pending_file, list_pending, write_pending,
+};
 pub use error::StoreError;
 pub use paths::DataPaths;
 pub use schema::USER_VERSION;
 pub use writer::{
     CheckpointUpdate, DEFAULT_BATCH_SIZE, DEFAULT_CAPACITY, DEFAULT_CHECKPOINT_INTERVAL,
-    DEFAULT_FLUSH_INTERVAL, DetailWriter, Sample, WriterConfig,
+    DEFAULT_FLUSH_INTERVAL, DetailWriter, Sample, WriterConfig, WriterHandle,
 };
 
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};

@@ -55,7 +55,7 @@ pub struct Metrics {
 }
 
 /// Values that can be read without locking the histogram.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CounterSnapshot {
     pub samples: u64,
     pub success: u64,
@@ -211,6 +211,35 @@ impl Metrics {
         Ok(())
     }
 
+    /// Overlay counters from a checkpoint so a resumed run continues the totals.
+    pub fn restore_counters(&self, snapshot: CounterSnapshot) {
+        self.samples.store(snapshot.samples, Ordering::Relaxed);
+        self.success.store(snapshot.success, Ordering::Relaxed);
+        self.failure.store(snapshot.failure, Ordering::Relaxed);
+        self.expected.store(snapshot.expected, Ordering::Relaxed);
+        self.bytes.store(snapshot.bytes, Ordering::Relaxed);
+        self.dropped_details
+            .store(snapshot.dropped_details, Ordering::Relaxed);
+    }
+
+    /// Percentiles of the current-window histogram, in microseconds.
+    #[must_use]
+    pub fn percentiles_us(&self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+        let hist = self
+            .histogram
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if hist.is_empty() {
+            return (None, None, None, None);
+        }
+        (
+            Some(hist.value_at_quantile(0.50)),
+            Some(hist.value_at_quantile(0.95)),
+            Some(hist.value_at_quantile(0.99)),
+            Some(hist.max()),
+        )
+    }
+
     /// Reset the current-window histogram (used at a loop window boundary).
     /// Counters are left untouched.
     pub fn reset_window_histogram(&self) {
@@ -270,6 +299,12 @@ pub trait SampleSink: Send + Sync {
 impl SampleSink for crate::db::DetailWriter {
     fn try_send(&self, sample: Sample) -> bool {
         crate::db::DetailWriter::try_send(self, sample)
+    }
+}
+
+impl SampleSink for crate::db::WriterHandle {
+    fn try_send(&self, sample: Sample) -> bool {
+        crate::db::WriterHandle::try_send(self, sample)
     }
 }
 

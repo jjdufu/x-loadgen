@@ -1,21 +1,25 @@
 //! HTTP listener and shared application state.
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use axum::extract::State;
-use axum::http::{HeaderMap, header};
-use axum::routing::{get, post};
+use axum::http::HeaderMap;
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use rusqlite::Connection;
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tracing::info;
 
 use super::auth::{login, logout, me, password};
+use super::runs::{
+    create_run, delete_run_handler, get_run, get_stats, get_timeline, get_timeseries, get_windows,
+    list_runs, patch_traffic, resume_run, stop_run,
+};
+pub use super::state::AppState;
+pub(crate) use super::state::{require_ready_auth, session_token_from_headers};
 use super::targets::{
     create_product, create_target, create_tenant, delete_product, delete_target, delete_tenant,
     get_product, get_target, get_tenant, list_products, list_targets, list_tenants, update_product,
@@ -26,40 +30,9 @@ use super::templates::{
 };
 
 use super::error::ApiError;
-use crate::auth::{
-    SESSION_COOKIE, ensure_admin_passwd, load_auth_state, password_file_log_line, touch_session,
-};
+use crate::auth::{ensure_admin_passwd, password_file_log_line};
 use crate::cli::ServeArgs;
 use crate::db::{DataPaths, open_central};
-
-/// Shared state for the HTTP API.
-#[derive(Clone)]
-pub struct AppState {
-    /// Data directory used by this process.
-    pub paths: DataPaths,
-    db: Arc<Mutex<Connection>>,
-    /// When true, requests skip session checks.
-    pub no_auth: bool,
-    /// Optional global QPS cap from `serve`.
-    pub max_qps: Option<u64>,
-    /// Optional global concurrency cap from `serve`.
-    pub max_concurrency: Option<u64>,
-}
-
-impl AppState {
-    /// Lock the central database connection.
-    ///
-    /// # Errors
-    ///
-    /// Returns an internal error if the mutex was poisoned; the guard is still
-    /// recovered so the process can continue serving.
-    pub fn lock_db(&self) -> Result<MutexGuard<'_, Connection>, ApiError> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
-    }
-}
 
 /// Build the router used by `serve` and by tests.
 pub fn router(state: AppState) -> Router {
@@ -101,6 +74,15 @@ pub fn router(state: AppState) -> Router {
                 .put(update_template)
                 .delete(delete_template),
         )
+        .route("/api/v1/runs", get(list_runs).post(create_run))
+        .route("/api/v1/runs/{id}", get(get_run).delete(delete_run_handler))
+        .route("/api/v1/runs/{id}/stats", get(get_stats))
+        .route("/api/v1/runs/{id}/timeseries", get(get_timeseries))
+        .route("/api/v1/runs/{id}/timeline", get(get_timeline))
+        .route("/api/v1/runs/{id}/windows", get(get_windows))
+        .route("/api/v1/runs/{id}/stop", post(stop_run))
+        .route("/api/v1/runs/{id}/resume", post(resume_run))
+        .route("/api/v1/runs/{id}/traffic", patch(patch_traffic))
         .with_state(state)
 }
 
@@ -117,7 +99,16 @@ pub async fn run(args: ServeArgs) -> Result<()> {
         .with_context(|| format!("bind {}", prepared.listen))?;
     let addr = listener.local_addr().context("local address")?;
     info!(%addr, "x-loadgen listening");
+    let state = prepared.state.clone();
     axum::serve(listener, router(prepared.state))
+        .with_graceful_shutdown(async move {
+            crate::signal::wait_exit_signal().await;
+            info!("shutdown signal received; stopping running tasks");
+            state
+                .supervisor
+                .stop_all(crate::engine::StopKind::Signal)
+                .await;
+        })
         .await
         .context("http server")
 }
@@ -147,13 +138,14 @@ pub fn prepare(args: ServeArgs) -> Result<PreparedServer> {
         info!("{}", password_file_log_line(&path));
     }
     let conn = open_central(&paths)?;
-    let state = AppState {
+    crate::db::runs::mark_stale_runs_interrupted(&conn)?;
+    let state = AppState::new(
         paths,
-        db: Arc::new(Mutex::new(conn)),
-        no_auth: args.no_auth,
-        max_qps: args.max_qps,
-        max_concurrency: args.max_concurrency,
-    };
+        conn,
+        args.no_auth,
+        args.max_qps,
+        args.max_concurrency,
+    );
     Ok(PreparedServer {
         listen: args.listen,
         state,
@@ -178,10 +170,15 @@ pub async fn spawn(
         .with_context(|| format!("bind {}", prepared.listen))?;
     let addr = listener.local_addr().context("local address")?;
     let (tx, rx) = oneshot::channel();
+    let state = prepared.state.clone();
     let handle = tokio::spawn(async move {
         axum::serve(listener, router(prepared.state))
             .with_graceful_shutdown(async move {
                 let _ = rx.await;
+                state
+                    .supervisor
+                    .stop_all(crate::engine::StopKind::Signal)
+                    .await;
             })
             .await
             .context("http server")?;
@@ -191,38 +188,6 @@ pub async fn spawn(
     // the first poll of the listener (usually unnecessary, but keeps tests quiet).
     tokio::time::sleep(Duration::from_millis(10)).await;
     Ok((addr, tx, handle))
-}
-
-/// Read the session token from a `Cookie` or `Authorization: Bearer` header.
-#[must_use]
-pub fn session_token_from_headers(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        let rest = value
-            .strip_prefix("Bearer ")
-            .or_else(|| value.strip_prefix("bearer "));
-        if let Some(token) = rest {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
-        }
-    }
-    let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
-    for part in cookies.split(';') {
-        let part = part.trim();
-        if let Some(value) = part.strip_prefix(SESSION_COOKIE)
-            && let Some(value) = value.strip_prefix('=')
-        {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -237,31 +202,15 @@ async fn meta(
     headers: HeaderMap,
 ) -> Result<Json<MetaResponse>, ApiError> {
     require_ready_auth(&state, &headers)?;
+    let totals = state.supervisor.running_totals();
     Ok(Json(MetaResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         auth_required: !state.no_auth,
         max_qps: state.max_qps,
         max_concurrency: state.max_concurrency,
-        running_qps: 0,
-        running_concurrency: 0,
+        running_qps: totals.qps,
+        running_concurrency: totals.concurrency,
     }))
-}
-
-pub(crate) fn require_ready_auth(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    if state.no_auth {
-        return Ok(());
-    }
-    let token = session_token_from_headers(headers)
-        .ok_or_else(|| ApiError::unauthorized("missing session"))?;
-    let db = state.lock_db()?;
-    if touch_session(&db, &token)?.is_none() {
-        return Err(ApiError::unauthorized("invalid or expired session"));
-    }
-    let auth_state = load_auth_state(&db)?;
-    if auth_state.password_hash.is_none() || auth_state.must_change {
-        return Err(ApiError::password_change_required());
-    }
-    Ok(())
 }
 
 #[derive(Serialize)]

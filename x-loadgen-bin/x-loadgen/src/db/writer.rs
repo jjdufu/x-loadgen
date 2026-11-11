@@ -84,6 +84,31 @@ pub struct CheckpointUpdate {
     pub histogram_blob: Option<Vec<u8>>,
 }
 
+/// Cloneable enqueue handle. Dropping it does not close the write thread.
+#[derive(Clone)]
+pub struct WriterHandle {
+    tx: Option<SyncSender<Sample>>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl WriterHandle {
+    /// Enqueue a sample without waiting. Matches [`DetailWriter::try_send`].
+    #[must_use]
+    pub fn try_send(&self, sample: Sample) -> bool {
+        let Some(tx) = self.tx.as_ref() else {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return false;
+        };
+        match tx.try_send(sample) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+}
+
 /// Per-worker sample writer. The hot path is only [`DetailWriter::try_send`].
 pub struct DetailWriter {
     tx: Option<SyncSender<Sample>>,
@@ -197,6 +222,15 @@ impl DetailWriter {
     #[must_use]
     pub fn written_details(&self) -> u64 {
         self.written.load(Ordering::Relaxed)
+    }
+
+    /// A cloneable, non-blocking sender used as a [`crate::engine::SampleSink`].
+    #[must_use]
+    pub fn handle(&self) -> WriterHandle {
+        WriterHandle {
+            tx: self.tx.clone(),
+            dropped: Arc::clone(&self.dropped),
+        }
     }
 
     /// Replace the payload used by the next checkpoint write.

@@ -110,7 +110,7 @@ pub struct TargetSummary {
 }
 
 /// Target detail including plaintext credentials.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetDetail {
     pub id: String,
     pub name: String,
@@ -127,7 +127,7 @@ pub struct TargetDetail {
 }
 
 /// A tenant attached to a target.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: String,
     pub target_id: String,
@@ -163,7 +163,7 @@ impl Tenant {
 }
 
 /// A product attached to a target.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
     pub id: String,
     pub target_id: String,
