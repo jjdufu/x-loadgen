@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS targets (
   id                   TEXT PRIMARY KEY,
   name                 TEXT NOT NULL UNIQUE,
+  protocol             TEXT NOT NULL DEFAULT 'http',
   gateway_base_url     TEXT NOT NULL,
   client_cert          TEXT,
   client_key           TEXT,
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS target_tenants (
   binding_kid       TEXT,
   binding_alg       TEXT,
   binding_key       TEXT,
+  binding_public_key TEXT,
   UNIQUE(target_id, name)
 );
 

@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde::{Deserialize, Serialize};
 
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
@@ -166,6 +167,50 @@ pub async fn delete_tenant(
     let db = state.lock_db()?;
     targets::delete_tenant(&db, &id, &tid)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Body of `POST /api/v1/targets/:id/tenants/:tid/binding-keypair`.
+#[derive(Debug, Deserialize)]
+pub struct KeypairRequest {
+    /// Signature algorithm from the request-binding closed set (not HMAC).
+    pub alg: String,
+    /// Key id registered on the mazbri side; defaults to the tenant's current `binding_kid`.
+    #[serde(default)]
+    pub kid: Option<String>,
+}
+
+/// Response of the key pair endpoint: only public material.
+#[derive(Debug, Serialize)]
+pub struct KeypairResponse {
+    pub binding_kid: Option<String>,
+    pub binding_alg: Option<String>,
+    pub public_key_pem: String,
+}
+
+/// `POST /api/v1/targets/:id/tenants/:tid/binding-keypair`
+///
+/// Generates a key pair, stores the private key in the tenant row, and
+/// returns the public key PEM for registration on the mazbri side.
+///
+/// # Errors
+///
+/// Returns 400 for a non-mazbri target, an HMAC/unknown algorithm, or a
+/// missing kid; 404 when missing; 401/403 when unauthorized.
+pub async fn generate_binding_keypair(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, tid)): Path<(String, String)>,
+    Json(input): Json<KeypairRequest>,
+) -> Result<Json<KeypairResponse>, ApiError> {
+    require_ready_auth(&state, &headers)?;
+    let db = state.lock_db()?;
+    let tenant =
+        targets::generate_tenant_keypair(&db, &id, &tid, &input.alg, input.kid.as_deref())?;
+    Ok(Json(KeypairResponse {
+        binding_kid: tenant.binding_kid,
+        binding_alg: tenant.binding_alg,
+        public_key_pem: tenant.binding_public_key.unwrap_or_default(),
+    }))
 }
 
 /// `GET /api/v1/targets/:id/products`

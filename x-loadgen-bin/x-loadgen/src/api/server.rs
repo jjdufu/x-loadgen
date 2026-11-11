@@ -22,8 +22,8 @@ pub use super::state::AppState;
 pub(crate) use super::state::{require_ready_auth, session_token_from_headers};
 use super::targets::{
     create_product, create_target, create_tenant, delete_product, delete_target, delete_tenant,
-    get_product, get_target, get_tenant, list_products, list_targets, list_tenants, update_product,
-    update_target, update_tenant,
+    generate_binding_keypair, get_product, get_target, get_tenant, list_products, list_targets,
+    list_tenants, update_product, update_target, update_tenant,
 };
 use super::templates::{
     create_template, delete_template, get_template, list_templates, update_template,
@@ -55,6 +55,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/targets/{id}/tenants/{tid}",
             get(get_tenant).put(update_tenant).delete(delete_tenant),
+        )
+        .route(
+            "/api/v1/targets/{id}/tenants/{tid}/binding-keypair",
+            post(generate_binding_keypair),
         )
         .route(
             "/api/v1/targets/{id}/products",

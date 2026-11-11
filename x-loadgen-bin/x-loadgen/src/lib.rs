@@ -6,7 +6,6 @@
 
 pub mod api;
 pub mod auth;
-pub mod binding;
 pub mod cli;
 pub mod db;
 pub mod engine;

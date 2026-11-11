@@ -12,8 +12,6 @@ use crate::cli::ServeArgs;
 use crate::db::{DataPaths, Sample, insert_samples, open_worker_connection};
 
 const API_KEY: &str = "SECRET-API-KEY-AAAA-REPORT";
-const TENANT_KEY: &str = "SECRET-TENANT-KEY-BBBB-REPORT";
-const BINDING_KEY: &str = "SECRET-BINDING-KEY-CCCC-REPORT";
 const CLIENT_KEY: &str = "SECRET-CLIENT-KEY-DDDD-REPORT";
 
 struct TempDir {
@@ -100,9 +98,7 @@ fn target_payload(gateway: &str, name: &str) -> Value {
             "name": "plain",
             "weight": 1,
             "api_key": API_KEY,
-            "encryption_mode": "none",
-            "tenant_key_base64": TENANT_KEY,
-            "binding_key": BINDING_KEY
+            "encryption_mode": "none"
         }],
         "products": [{
             "name": "probe",
@@ -149,7 +145,7 @@ async fn wait_status(client: &reqwest::Client, base: &str, id: &str, want: &[&st
 }
 
 fn assert_no_secrets(text: &str) {
-    for secret in [API_KEY, TENANT_KEY, BINDING_KEY, CLIENT_KEY] {
+    for secret in [API_KEY, CLIENT_KEY] {
         assert!(!text.contains(secret), "secret leaked in output: {secret}");
     }
 }
@@ -246,8 +242,6 @@ async fn report_and_run_detail_redact_secrets_but_target_detail_does_not() {
     assert_eq!(target["client_key"], CLIENT_KEY);
     let tenant = &target["tenants"][0];
     assert_eq!(tenant["api_key"], API_KEY);
-    assert_eq!(tenant["tenant_key_base64"], TENANT_KEY);
-    assert_eq!(tenant["binding_key"], BINDING_KEY);
 
     let forbidden = [
         "summary.json",

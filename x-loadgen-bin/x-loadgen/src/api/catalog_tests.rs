@@ -12,8 +12,10 @@ use crate::cli::ServeArgs;
 
 const API_KEY_NONE: &str = "secret-api-key-alpha";
 const API_KEY_FULL: &str = "secret-api-key-omega";
-const TENANT_KEY: &str = "c2VjcmV0LXRlbmFudC1rZXktMTIzNA==";
-const BINDING_KEY: &str = "secret-binding-key-xyz";
+/// Base64 of the 32-byte key `x-loadgen-test-tenant-key-32byte`.
+const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
+/// Base64 of `x-loadgen-binding-key` (HMAC request binding key).
+const BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const CLIENT_KEY: &str = "-----BEGIN SECRET KEY-----";
 
 struct TempDir {
@@ -76,6 +78,7 @@ async fn body(response: reqwest::Response) -> Value {
 fn target_payload() -> Value {
     json!({
         "name": "lab-gateway",
+        "protocol": "mazbri",
         "gateway_base_url": "https://10.0.0.8:8443",
         "client_key": CLIENT_KEY,
         "insecure_skip_verify": true,
@@ -95,6 +98,7 @@ fn target_payload() -> Value {
                 "tenant_id": "t-1001",
                 "tenant_key_base64": TENANT_KEY,
                 "key_version": "1",
+                "suite": "suite/tenant-default-2026-11",
                 "binding_kid": "kid-1",
                 "binding_alg": "hmac-sha256",
                 "binding_key": BINDING_KEY
@@ -179,6 +183,7 @@ async fn create_target_shows_secrets_in_detail_but_not_in_lists() {
     let client = client();
     let detail = create_target(&client, &base).await;
     assert_eq!(detail["name"], "lab-gateway");
+    assert_eq!(detail["protocol"], "mazbri");
     assert_eq!(detail["client_key"], CLIENT_KEY);
     let tenants = detail["tenants"].as_array().expect("tenants");
     assert_eq!(tenants.len(), 2);
@@ -373,6 +378,301 @@ async fn unauthenticated_writes_and_detail_are_rejected() {
         .await
         .expect("detail");
     assert_eq!(detail.status(), reqwest::StatusCode::UNAUTHORIZED);
+    shutdown.send(()).ok();
+}
+
+async fn post_status(client: &reqwest::Client, url: &str, payload: &Value) -> reqwest::StatusCode {
+    client
+        .post(url)
+        .json(payload)
+        .send()
+        .await
+        .expect("post")
+        .status()
+}
+
+#[tokio::test]
+async fn mazbri_tenants_are_validated_against_the_client_contract() {
+    let tmp = TempDir::new("validate");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+    let target = create_target(&client, &base).await;
+    let target_id = target["id"].as_str().expect("id");
+    let url = format!("{base}/api/v1/targets/{target_id}/tenants");
+    let tenant = |extra: Value| {
+        let mut value = json!({
+            "name": "t",
+            "api_key": "k",
+            "encryption_mode": "request",
+            "tenant_id": "t-2002",
+            "tenant_key_base64": TENANT_KEY,
+            "key_version": "2"
+        });
+        for (key, field) in extra.as_object().expect("object") {
+            value[key] = field.clone();
+        }
+        value
+    };
+    let rejected = [
+        json!({}),
+        json!({"suite": "suite/unknown"}),
+        json!({"data_alg": "aes-128-ecb"}),
+        json!({"suite": "suite/tenant-default-2026-11", "tenant_key_base64": "c2hvcnQ="}),
+        json!({"suite": "suite/tenant-default-2026-11", "api_key": ""}),
+        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "hmac-sha1", "binding_key": BINDING_KEY}),
+        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "hmac-sha256", "binding_key": "not base64!"}),
+        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "ed25519", "binding_key": BINDING_KEY}),
+        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "ed25519"}),
+        json!({"encryption_mode": "partial", "suite": "suite/tenant-chacha20"}),
+    ];
+    for (index, extra) in rejected.into_iter().enumerate() {
+        let mut payload = tenant(extra);
+        payload["name"] = json!(format!("bad-{index}"));
+        assert_eq!(
+            post_status(&client, &url, &payload).await,
+            reqwest::StatusCode::BAD_REQUEST,
+            "case {index} should be rejected"
+        );
+    }
+    let accepted = [
+        json!({"suite": "suite/gm-sm4-hmac-sm3"}),
+        json!({"encryption_mode": "full", "suite": "suite/tenant-chacha20"}),
+        json!({"data_alg": "aes-128-ecb", "mac_alg": "hmac-md5", "allow_insecure": true}),
+        json!({"data_alg": "sm4-cbc-pkcs7", "mac_alg": "hmac-sha256", "binding_kid": "k1", "binding_alg": "hmac-sm3", "binding_key": BINDING_KEY}),
+        json!({"encryption_mode": "none", "tenant_key_base64": null, "binding_kid": "k1", "binding_alg": "hmac-sha512", "binding_key": BINDING_KEY}),
+    ];
+    for (index, extra) in accepted.into_iter().enumerate() {
+        let mut payload = tenant(extra);
+        payload["name"] = json!(format!("good-{index}"));
+        assert_eq!(
+            post_status(&client, &url, &payload).await,
+            reqwest::StatusCode::CREATED,
+            "case {index} should be accepted"
+        );
+    }
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn binding_keypair_is_stored_on_the_tenant_and_only_the_public_key_is_returned() {
+    let tmp = TempDir::new("keypair");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+    let target = create_target(&client, &base).await;
+    let target_id = target["id"].as_str().expect("id");
+    let tenant = target["tenants"]
+        .as_array()
+        .expect("tenants")
+        .iter()
+        .find(|tenant| tenant["name"] == "encrypted")
+        .expect("encrypted");
+    let tid = tenant["id"].as_str().expect("tid");
+    let url = format!("{base}/api/v1/targets/{target_id}/tenants/{tid}/binding-keypair");
+
+    assert_eq!(
+        post_status(&client, &url, &json!({"alg": "hmac-sha256"})).await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post_status(&client, &url, &json!({"alg": "rsa-oaep-sha256"})).await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    for alg in ["ed25519", "ecdsa-p256-sha256", "sm2-sign"] {
+        let response = client
+            .post(&url)
+            .json(&json!({"alg": alg, "kid": format!("kid-{alg}")}))
+            .send()
+            .await
+            .expect("keypair");
+        assert_eq!(response.status(), reqwest::StatusCode::OK, "{alg}");
+        let text = response.text().await.expect("text");
+        assert!(
+            !text.contains("PRIVATE KEY"),
+            "keypair response leaked a private key"
+        );
+        let generated: Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(generated["binding_alg"], alg);
+        assert_eq!(generated["binding_kid"], format!("kid-{alg}"));
+        let public = generated["public_key_pem"].as_str().expect("public");
+        assert!(public.starts_with("-----BEGIN PUBLIC KEY-----"), "{alg}");
+
+        let stored = body(
+            client
+                .get(format!("{base}/api/v1/targets/{target_id}/tenants/{tid}"))
+                .send()
+                .await
+                .expect("tenant"),
+        )
+        .await;
+        assert_eq!(stored["binding_alg"], alg);
+        assert_eq!(stored["binding_public_key"], public);
+        assert!(
+            stored["binding_key"]
+                .as_str()
+                .is_some_and(|pem| pem.starts_with("-----BEGIN PRIVATE KEY-----"))
+        );
+    }
+
+    let listed = body(
+        client
+            .get(format!("{base}/api/v1/targets/{target_id}/tenants"))
+            .send()
+            .await
+            .expect("list"),
+    )
+    .await;
+    let listed_text = listed.to_string();
+    assert!(!listed_text.contains("PRIVATE KEY"));
+    assert!(listed_text.contains("BEGIN PUBLIC KEY"));
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn http_targets_only_take_plaintext_tenants() {
+    let tmp = TempDir::new("http");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+    let target = create_target(&client, &base).await;
+    let target_id = target["id"].as_str().expect("id");
+    let http_target = client
+        .post(format!("{base}/api/v1/targets"))
+        .json(&json!({
+            "name": "plain-http",
+            "gateway_base_url": "http://127.0.0.1:9",
+            "tenants": [{"name": "anon"}]
+        }))
+        .send()
+        .await
+        .expect("http target");
+    assert_eq!(http_target.status(), reqwest::StatusCode::CREATED);
+    let http_detail = body(http_target).await;
+    assert_eq!(http_detail["protocol"], "http");
+    let http_id = http_detail["id"].as_str().expect("id");
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/targets/{http_id}/tenants"),
+            &json!({
+                "name": "sealed",
+                "api_key": "k",
+                "encryption_mode": "full",
+                "suite": "suite/tenant-chacha20"
+            }),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/targets"),
+            &json!({"name": "odd", "protocol": "grpc", "gateway_base_url": "http://h"}),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+
+    let mut to_http = target.clone();
+    to_http["protocol"] = json!("http");
+    to_http.as_object_mut().expect("object").remove("tenants");
+    to_http.as_object_mut().expect("object").remove("products");
+    let switched = client
+        .put(format!("{base}/api/v1/targets/{target_id}"))
+        .json(&to_http)
+        .send()
+        .await
+        .expect("switch protocol");
+    assert_eq!(switched.status(), reqwest::StatusCode::BAD_REQUEST);
+    let keyed_target = body(
+        client
+            .post(format!("{base}/api/v1/targets"))
+            .json(&json!({
+                "name": "keyed-http",
+                "gateway_base_url": "http://127.0.0.1:9",
+                "tenants": [{"name": "anon", "api_key": "k"}]
+            }))
+            .send()
+            .await
+            .expect("http target"),
+    )
+    .await;
+    let keyed_id = keyed_target["id"].as_str().expect("id");
+    let keyed_tenant = keyed_target["tenants"][0]["id"].as_str().expect("tid");
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/targets/{keyed_id}/tenants/{keyed_tenant}/binding-keypair"),
+            &json!({"alg": "ed25519", "kid": "k"}),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn resaving_a_target_keeps_tenant_ids_and_generated_public_keys() {
+    let tmp = TempDir::new("resave");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+    let target = create_target(&client, &base).await;
+    let target_id = target["id"].as_str().expect("id");
+    let tid = target["tenants"]
+        .as_array()
+        .expect("tenants")
+        .iter()
+        .find(|tenant| tenant["name"] == "encrypted")
+        .and_then(|tenant| tenant["id"].as_str())
+        .expect("tid");
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/targets/{target_id}/tenants/{tid}/binding-keypair"),
+            &json!({"alg": "rsa-pkcs1v15-sign-sha256"}),
+        )
+        .await,
+        reqwest::StatusCode::OK,
+        "kid falls back to the tenant's binding_kid"
+    );
+    let detail = body(
+        client
+            .get(format!("{base}/api/v1/targets/{target_id}"))
+            .send()
+            .await
+            .expect("detail"),
+    )
+    .await;
+    let saved = client
+        .put(format!("{base}/api/v1/targets/{target_id}"))
+        .json(&detail)
+        .send()
+        .await
+        .expect("resave");
+    assert_eq!(saved.status(), reqwest::StatusCode::OK);
+    let resaved = body(saved).await;
+    let kept = resaved["tenants"]
+        .as_array()
+        .expect("tenants")
+        .iter()
+        .find(|tenant| tenant["name"] == "encrypted")
+        .expect("encrypted");
+    assert_eq!(kept["id"], tid, "re-saving the form keeps tenant ids");
+    assert!(kept["binding_public_key"].is_string());
+
+    let mut changed = kept.clone();
+    changed["binding_alg"] = json!("hmac-sha256");
+    changed["binding_key"] = json!(BINDING_KEY);
+    let updated = client
+        .put(format!("{base}/api/v1/targets/{target_id}/tenants/{tid}"))
+        .json(&changed)
+        .send()
+        .await
+        .expect("switch to hmac");
+    assert_eq!(updated.status(), reqwest::StatusCode::OK);
+    assert!(body(updated).await["binding_public_key"].is_null());
+
     shutdown.send(()).ok();
 }
 

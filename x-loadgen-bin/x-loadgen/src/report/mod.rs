@@ -377,4 +377,35 @@ mod tests {
         assert!(!json_text.contains("binding_key"));
         assert!(!json_text.contains("tenant_key_base64"));
     }
+
+    #[test]
+    fn generated_binding_private_key_is_redacted_but_public_key_and_algorithms_stay() {
+        let private_pem =
+            "-----BEGIN PRIVATE KEY-----\nTUMwMDAxUFJJVkFURQ==\n-----END PRIVATE KEY-----\n";
+        let public_pem = "-----BEGIN PUBLIC KEY-----\nTUMwMDAxUFVCTElD\n-----END PUBLIC KEY-----\n";
+        let snapshot = json!({
+            "target": {
+                "name": "gw",
+                "protocol": "mazbri",
+                "tenants": [{
+                    "name": "t1",
+                    "api_key": "SECRET-API-KEY-EEEE",
+                    "encryption_mode": "full",
+                    "suite": "suite/gm-sm4-hmac-sm3",
+                    "tenant_key_base64": "U0VDUkVULVRFTkFOVC1LRVktRkZGRg==",
+                    "binding_kid": "kid-1",
+                    "binding_alg": "sm2-sign",
+                    "binding_key": private_pem,
+                    "binding_public_key": public_pem
+                }]
+            }
+        });
+        let secrets = collect_secrets(&snapshot);
+        let redacted = redact_value(snapshot).to_string();
+        assert!(!contains_any_secret(&redacted, &secrets), "{redacted}");
+        assert!(!redacted.contains("PRIVATE KEY"));
+        assert!(redacted.contains("BEGIN PUBLIC KEY"));
+        assert!(redacted.contains("sm2-sign"));
+        assert!(redacted.contains("suite/gm-sm4-hmac-sm3"));
+    }
 }
