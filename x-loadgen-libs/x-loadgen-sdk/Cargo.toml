@@ -1,0 +1,18 @@
+[package]
+name = "x-loadgen-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "mazbri gateway client contract: token exchange, request sealing, binding headers and response decoding"
+
+[dependencies]
+x-loadgen-core = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

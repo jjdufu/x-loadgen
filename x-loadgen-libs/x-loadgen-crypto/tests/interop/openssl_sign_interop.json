@@ -1,0 +1,26 @@
+{
+  "_note": "由 OpenSSL 3.5 生成的公钥与签名（不含私钥），用于互通验签测试；ecdsa 签名已转 IEEE P1363 r||s。",
+  "message_b64": "UE9TVAovYXBpL3YxL2dhdGV3YXkKMTcwMDAwMDAwMApvcGVuc3NsLWludGVyb3Atbm9uY2UtMDAwMQp7ImhlbGxvIjoid29ybGQifQ==",
+  "cases": [
+    {
+      "alg": "rsa-pkcs1v15-sign-sha256",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5UZHwjrnsK7c+bFcgqJ9\nI4BTMfykgRfHFTr1delYsttQw72yP74Ql3/e27xCXbSwogEHiK4UxyNTozSV89nE\ni56m268eOSZCEy1LJTE7q/N5sIELoqj04GpEaAOd5c9QiCxPKFQuFLQWDp2xk6M0\nIZq6o5PEe7mjKGj3NgRV5yeSS/knkI+rlFEvuzsyNo4iOH27Kr6TLXYc+BMJ3bAw\n6iHwOUBhz2u9pUGwyx+RP1daEopyd5rGKFVYomDRRPyxG+hVjHPFTxRzZ9Dp6nkq\nHpYEdO/tdjf97QNd2d8bgs8tD96DxJUi9/Tb0tKezR1fHhx2VvFdpjyNlJE8Ff0g\nMQIDAQAB\n-----END PUBLIC KEY-----\n",
+      "signature_b64": "EA09LgxByWxjOEGJx3qVWTcS/VriLysTPQB8IFpmng978yFJ7XcX43xXwSFY0i8GZp1tXO52xKkMtSbxtoF3NQQ3ojaz2r9k3Dwt3pp/nLwrvxvZy/Y2A3FUys07uRXmQEdE+TQFU5Ye4rjA82TYQTOyDhx5B87rhPB9UQX8dHX11tMbKrlTnm6qT/nCBK8bNQzFuimxitKl6MIPWHFZTyhfL4KwzUpMXdXro+ej9wTBZfbkpIR5eIutprSoi7RC/vIL7IVqFQFo1UCeJneLnqVv9Dqe3ucyBqLaZK/u0NxCGCdTeyqiFXl+AzX7k8ed+aQcRsMV6ppppu6rWWyqUw=="
+    },
+    {
+      "alg": "ecdsa-p256-sha256",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERQnlBxudghMMqa5KGqOSi9gKU1zt\nwhkhEKiz74GlU8NK92M8tMPiYTS4JurlZ3NT1PsrhNvLMOsct/Nfmb8OrA==\n-----END PUBLIC KEY-----\n",
+      "signature_b64": "OJfSQ5P9BX2tNTvVXlCCm8FyfjelH9ojjeE6UCty1FjOKGbm6jYmvckN0w6ezWhpMmm9Bz2iulbyEpG1aEsXnA=="
+    },
+    {
+      "alg": "ed25519",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAvMcfSlVh4WIg2su5vxA77+DP85TSZeUYQU9M1Hfasd4=\n-----END PUBLIC KEY-----\n",
+      "signature_b64": "wbhNwUEW9MmgWAXfhZRGZj5DjGqr/1fLJKmib097r5UA5daMUtnVA2w9HmYqlvh3q30mBpIDqQr9SoT2rex/Aw=="
+    },
+    {
+      "alg": "sm2-sign",
+      "public_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoEcz1UBgi0DQgAEGNlQT1ASQsN0m327xPoAzfwL/jyH\nVN2nqUcAaDA6KTvOemzFZO78DvZ0ZREqWnV2tqma2Koyifdzt7B4tdEmWg==\n-----END PUBLIC KEY-----\n",
+      "signature_b64": "MEQCIBzbD7fzrrGWKHmPo5RyhkUZP1dnLjW3u22O947YBFwHAiAAiP5/AlJlc9G3EsbCRIOMEeFokIK+xU3iewRc/sJU5w=="
+    }
+  ]
+}

@@ -24,8 +24,8 @@ clap = { workspace = true }
 futures = { workspace = true }
 getrandom = { workspace = true }
 hdrhistogram = { workspace = true }
-mazbri-core = { workspace = true }
-mazbri-sdk = { workspace = true }
+x-loadgen-core = { workspace = true }
+x-loadgen-sdk = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 rust-embed = { workspace = true }

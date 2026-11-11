@@ -1,6 +1,6 @@
-//! 本 crate 专用的数值转换小工具（基于 `mazbri_core::num`，饱和而非截断）。
+//! 本 crate 专用的数值转换小工具（基于 `x_loadgen_core::num`，饱和而非截断）。
 
-use mazbri_core::num::{f64_to_u64, u64_to_f64};
+use x_loadgen_core::num::{f64_to_u64, u64_to_f64};
 
 /// `u128` → `f64`；超过 `u64::MAX` 的值饱和到 `u64::MAX`（延迟统计不会触及）。
 pub fn u128_to_f64(v: u128) -> f64 {
@@ -26,4 +26,4 @@ pub fn u64_to_u32(v: u64) -> u32 {
 }
 
 /// Re-export for `cast_precision_loss` avoidance.
-pub use mazbri_core::num::u64_to_f64 as u64_as_f64;
+pub use x_loadgen_core::num::u64_to_f64 as u64_as_f64;

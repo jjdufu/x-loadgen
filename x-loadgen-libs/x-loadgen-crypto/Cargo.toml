@@ -1,0 +1,47 @@
+[package]
+name = "x-loadgen-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Closed-set algorithm registry and software primitives used by the x-loadgen mazbri gateway client"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+aes-gcm = { workspace = true }
+chacha20poly1305 = { workspace = true }
+aes = { workspace = true }
+cbc = { workspace = true }
+ctr = { workspace = true }
+cfb-mode = { workspace = true }
+cfb8 = { workspace = true }
+cipher = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+digest = { workspace = true }
+subtle = { workspace = true }
+rsa = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+ed25519-dalek = { workspace = true }
+sm3 = { workspace = true }
+sm4 = { workspace = true }
+libsm = { workspace = true }
+des = { workspace = true }
+md-5 = { workspace = true }
+ecb = { workspace = true }
+base64 = { workspace = true }
+der = { workspace = true }
+spki = { workspace = true }
+pkcs8 = { workspace = true }
+sec1 = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+[lints]
+workspace = true

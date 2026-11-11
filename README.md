@@ -2,13 +2,16 @@
 
 网关压测工具。通过 Web 页面或 HTTP API 配置目标与模板并执行任务。命令行只提供基础功能，不能用来发起压测。
 
-仓库位于 `/workspace/rust-proj/x-loadgen`，与 `mazbri-max` 在 `rust-proj` 下并列。
+仓库位于 `/workspace/rust-proj/x-loadgen`，是自包含的独立项目，不依赖仓库外的任何路径。
 
 - 版本：见仓库根 `Cargo.toml` 的 `[workspace.package]`（当前为 0.1.0）
-- 布局：Cargo workspace，成员 crate 位于 `x-loadgen-bin/x-loadgen`，二进制名 `x-loadgen`
+- 布局：Cargo workspace
+  - `x-loadgen-bin/x-loadgen`：守护进程与库，二进制名 `x-loadgen`
+  - `x-loadgen-libs/x-loadgen-crypto`：算法闭集、注册表与软件密码学原语
+  - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封与请求绑定签名编解码
+  - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、绑定头、解码响应）
 - 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3），发布时嵌入二进制
-- SDK：path 依赖 `../mazbri-max/mazbri-libs/mazbri-sdk` 与 `../mazbri-max/mazbri-libs/mazbri-core`（经同目录下的 `mazbri-crypto`）
-- 编译本仓库需要并列的 `../mazbri-max/mazbri-libs`。在 box 上直连 crates.io（sparse），不添加项目级 `.cargo` 代理。
+- 依赖全部来自 crates.io。在 box 上直连 crates.io（sparse），不添加项目级 `.cargo` 代理。
 
 ## 命令行
 
@@ -43,7 +46,7 @@ cargo build --release
 
 ## 在 box 上构建镜像
 
-镜像名 `x-loadgen`，标签为版本号（当前为 `0.1.0`）。只在 box 本地构建。构建必须用 BuildKit 把并列的 `mazbri-libs` 作为额外 context 传入，以保持 `Cargo.toml` 中的 path 依赖。
+镜像名 `x-loadgen`，标签为版本号（当前为 `0.1.0`）。只在 box 本地构建，构建上下文就是仓库根目录。
 
 ```bash
 cd /workspace/rust-proj/x-loadgen
@@ -51,7 +54,6 @@ cd /workspace/rust-proj/x-loadgen
 export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 DOCKER_BUILDKIT=1 docker build \
   --file Dockerfile \
-  --build-context libs=../mazbri-max/mazbri-libs \
   --tag x-loadgen:${X_LOADGEN_VERSION:-0.1.0} \
   --build-arg CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
   .

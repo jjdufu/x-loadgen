@@ -1,17 +1,17 @@
 //! 请求绑定（`x-mazbri-signature*` 头）：配置解析、签名器构造与本地密钥生成。
 //!
 //! SDK（encrypted 路径）与 plain 路径共用同一个 [`RequestSigner`]，签名逻辑全部在
-//! `mazbri-core::crypto::request_binding`，与 gateway 校验同源。
+//! `x-loadgen-core::crypto::request_binding`，与 gateway 校验同源。
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use mazbri_core::crypto::request_binding::{RequestSigner, parse_binding_alg};
-use mazbri_core::crypto::{AlgorithmId, AlgorithmKind, generate_sign_keypair};
 use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use x_loadgen_core::crypto::request_binding::{RequestSigner, parse_binding_alg};
+use x_loadgen_core::crypto::{AlgorithmId, AlgorithmKind, generate_sign_keypair};
 
 /// `[tenant.binding]`：kid + 算法 + 密钥（文件或内联，二选一）。
 ///
@@ -125,8 +125,8 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mazbri_core::crypto::AlgorithmRegistry;
-    use mazbri_core::crypto::request_binding::{
+    use x_loadgen_core::crypto::AlgorithmRegistry;
+    use x_loadgen_core::crypto::request_binding::{
         SignatureVersion, binding_key_ref, canonical_http_binding, parse_signature_input,
         verify_binding,
     };
@@ -165,7 +165,7 @@ mod tests {
             config.resolve_paths(&dir);
             let signer = config.signer().expect("signer");
             let headers = signer
-                .sign("POST", mazbri_sdk::GATEWAY_INVOKE_PATH, b"{}")
+                .sign("POST", x_loadgen_sdk::GATEWAY_INVOKE_PATH, b"{}")
                 .expect("sign");
             assert_eq!(
                 parse_signature_input(&headers.signature_input).expect("input"),
@@ -175,7 +175,7 @@ mod tests {
             let key = binding_key_ref(alg, &public_text).expect("public key");
             let canonical = canonical_http_binding(
                 "POST",
-                mazbri_sdk::GATEWAY_INVOKE_PATH,
+                x_loadgen_sdk::GATEWAY_INVOKE_PATH,
                 headers.timestamp,
                 &headers.nonce,
                 b"{}",

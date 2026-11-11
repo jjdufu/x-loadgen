@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile
 COPY x-loadgen-bin/x-loadgen/web/ ./
 RUN pnpm build
 
-# Rust：将源码与 mazbri-libs 放到保持相对 path 的位置，并嵌入前端 dist。
+# Rust：workspace 自包含（x-loadgen-libs 为成员 crate），嵌入前端 dist。
 FROM debian:trixie AS builder
 ARG CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=${CARGO_REGISTRIES_CRATES_IO_PROTOCOL}
@@ -26,7 +26,6 @@ RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /src/x-loadgen
 COPY . /src/x-loadgen
-COPY --from=libs / /src/mazbri-max/mazbri-libs
 COPY --from=frontend /src/web/dist /src/x-loadgen/x-loadgen-bin/x-loadgen/web/dist
 RUN cargo build --release -p x-loadgen \
     && test -x /src/x-loadgen/target/release/x-loadgen

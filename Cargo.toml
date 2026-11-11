@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "x-loadgen-bin/x-loadgen",
+    "x-loadgen-libs/x-loadgen-crypto",
+    "x-loadgen-libs/x-loadgen-core",
+    "x-loadgen-libs/x-loadgen-sdk",
 ]
 resolver = "2"
 
@@ -12,8 +15,9 @@ authors = ["Mazbri Team"]
 license = "MIT"
 
 [workspace.dependencies]
-mazbri-core = { path = "../mazbri-max/mazbri-libs/mazbri-core" }
-mazbri-sdk = { path = "../mazbri-max/mazbri-libs/mazbri-sdk" }
+x-loadgen-crypto = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-crypto" }
+x-loadgen-core = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-core" }
+x-loadgen-sdk = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-sdk" }
 
 anyhow = "1.0"
 base64 = "0.22"
@@ -40,6 +44,35 @@ getrandom = "0.2"
 sha2 = "0.10"
 subtle = "2.6"
 
+# 密码学原语（x-loadgen-libs 使用）。
+rand = "0.10.0"
+hex = "0.4"
+hmac = "0.12"
+aes-gcm = "0.10"
+zeroize = { version = "1.8", features = ["derive"] }
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc", "pkcs8", "pem", "zeroize"] }
+chacha20poly1305 = "0.10"
+cbc = { version = "0.1", features = ["alloc"] }
+cipher = "0.4"
+ctr = "0.9"
+aes = "0.8"
+cfb-mode = "0.8"
+cfb8 = "0.8"
+digest = "0.10"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2", "getrandom"] }
+sm3 = "0.4"
+sm4 = "0.5"
+libsm = "0.6"
+des = "0.8"
+md-5 = "0.10"
+ecb = { version = "0.1", features = ["alloc"] }
+der = { version = "0.7", features = ["alloc", "pem", "oid"] }
+spki = { version = "0.7", features = ["alloc", "pem"] }
+pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
+sec1 = { version = "0.7", features = ["der", "alloc"] }
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 [workspace.lints.clippy]
@@ -51,7 +84,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 16
 strip = true
-# 与 mazbri-libs / mazbri-bin 一致：release 使用 unwind，便于隔离单个任务中的 panic。
+# release 使用 unwind，便于隔离单个任务中的 panic。
 panic = "unwind"
 
 [profile.dev]
