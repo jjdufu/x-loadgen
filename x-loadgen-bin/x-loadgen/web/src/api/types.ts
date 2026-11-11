@@ -30,6 +30,15 @@ export interface Tenant {
   binding_kid?: string | null;
   binding_alg?: string | null;
   binding_key?: string | null;
+  binding_public_key?: string | null;
+}
+
+export type TargetProtocol = "http" | "mazbri";
+
+export interface KeypairResponse {
+  binding_kid: string | null;
+  binding_alg: string | null;
+  public_key_pem: string;
 }
 
 export interface Product {
@@ -37,7 +46,6 @@ export interface Product {
   target_id?: string;
   name: string;
   product_id: string;
-  channel_code?: string | null;
   path: string;
   method: string;
   weight: number;
@@ -46,11 +54,14 @@ export interface Product {
   query_json?: unknown;
   headers_json?: unknown;
   body_json?: unknown;
+  expect_transport?: string | null;
+  expect_checks_json?: unknown;
 }
 
 export interface TargetSummary {
   id: string;
   name: string;
+  protocol: TargetProtocol;
   gateway_base_url: string;
   insecure_skip_verify: boolean;
   note?: string | null;

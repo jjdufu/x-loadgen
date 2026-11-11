@@ -432,3 +432,40 @@ async fn crypto_and_business_failures_are_recorded_as_failed_samples() {
         gateway.stop().await;
     }
 }
+
+#[tokio::test]
+async fn every_custom_data_algorithm_round_trips_under_full_encryption() {
+    for data_alg in [
+        "aes-128-gcm",
+        "aes-192-gcm",
+        "aes-256-gcm",
+        "chacha20-poly1305",
+    ] {
+        let case = Case::encrypted("full", None, Some(data_alg), None);
+        assert_all_succeed(data_alg, &case).await;
+    }
+    for data_alg in [
+        "aes-128-cbc",
+        "aes-256-cbc",
+        "aes-128-ctr",
+        "aes-256-ctr",
+        "aes-128-cfb",
+        "aes-256-cfb",
+        "sm4-cbc-pkcs7",
+        "sm4-ctr",
+    ] {
+        for mac_alg in ["hmac-sha256", "hmac-sha384", "hmac-sha512", "hmac-sm3"] {
+            let case = Case::encrypted("full", None, Some(data_alg), Some(mac_alg));
+            assert_all_succeed(&format!("{data_alg} + {mac_alg}"), &case).await;
+        }
+    }
+    for data_alg in [
+        "aes-128-ecb",
+        "aes-256-ecb",
+        "sm4-ecb-pkcs7",
+        "des-cbc-pkcs5",
+    ] {
+        let case = Case::encrypted("full", None, Some(data_alg), Some("hmac-md5")).insecure();
+        assert_all_succeed(&format!("legacy {data_alg}"), &case).await;
+    }
+}

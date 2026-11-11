@@ -6,7 +6,14 @@
     </div>
     <el-table :data="rows" stripe>
       <el-table-column prop="name" label="名称" />
-      <el-table-column prop="gateway_base_url" label="网关地址" />
+      <el-table-column label="协议" width="120">
+        <template #default="{ row }">
+          <el-tag :type="row.protocol === 'mazbri' ? 'success' : 'info'">
+            {{ row.protocol === "mazbri" ? "mazbri 网关" : "普通 HTTP" }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="gateway_base_url" label="地址" />
       <el-table-column label="跳过校验证书" width="140">
         <template #default="{ row }">{{ row.insecure_skip_verify ? "是" : "否" }}</template>
       </el-table-column>
