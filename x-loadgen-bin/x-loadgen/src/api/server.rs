@@ -16,6 +16,15 @@ use tokio::sync::oneshot;
 use tracing::info;
 
 use super::auth::{login, logout, me, password};
+use super::targets::{
+    create_product, create_target, create_tenant, delete_product, delete_target, delete_tenant,
+    get_product, get_target, get_tenant, list_products, list_targets, list_tenants, update_product,
+    update_target, update_tenant,
+};
+use super::templates::{
+    create_template, delete_template, get_template, list_templates, update_template,
+};
+
 use super::error::ApiError;
 use crate::auth::{
     SESSION_COOKIE, ensure_admin_passwd, load_auth_state, password_file_log_line, touch_session,
@@ -61,6 +70,37 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/password", post(password))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/meta", get(meta))
+        .route("/api/v1/targets", get(list_targets).post(create_target))
+        .route(
+            "/api/v1/targets/{id}",
+            get(get_target).put(update_target).delete(delete_target),
+        )
+        .route(
+            "/api/v1/targets/{id}/tenants",
+            get(list_tenants).post(create_tenant),
+        )
+        .route(
+            "/api/v1/targets/{id}/tenants/{tid}",
+            get(get_tenant).put(update_tenant).delete(delete_tenant),
+        )
+        .route(
+            "/api/v1/targets/{id}/products",
+            get(list_products).post(create_product),
+        )
+        .route(
+            "/api/v1/targets/{id}/products/{pid}",
+            get(get_product).put(update_product).delete(delete_product),
+        )
+        .route(
+            "/api/v1/templates",
+            get(list_templates).post(create_template),
+        )
+        .route(
+            "/api/v1/templates/{id}",
+            get(get_template)
+                .put(update_template)
+                .delete(delete_template),
+        )
         .with_state(state)
 }
 
@@ -207,7 +247,7 @@ async fn meta(
     }))
 }
 
-fn require_ready_auth(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn require_ready_auth(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     if state.no_auth {
         return Ok(());
     }

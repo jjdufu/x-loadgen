@@ -44,6 +44,16 @@ impl ApiError {
     }
 
     #[must_use]
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_FOUND, "not_found", message)
+    }
+
+    #[must_use]
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, "conflict", message)
+    }
+
+    #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", message)
     }
@@ -64,6 +74,19 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
         Self::internal(err.to_string())
+    }
+}
+
+impl From<crate::db::StoreError> for ApiError {
+    fn from(err: crate::db::StoreError) -> Self {
+        match err {
+            crate::db::StoreError::Invalid(message) => {
+                Self::bad_request("invalid_request", message)
+            }
+            crate::db::StoreError::NotFound(message) => Self::not_found(message),
+            crate::db::StoreError::Conflict(message) => Self::conflict(message),
+            crate::db::StoreError::Other(err) => Self::internal(err.to_string()),
+        }
     }
 }
 

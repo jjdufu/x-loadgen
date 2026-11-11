@@ -1,11 +1,15 @@
 //! Data directory, SQLite databases, and the bounded detail writer.
 
 mod dump;
+pub mod error;
 mod paths;
 mod schema;
+pub mod targets;
+pub mod templates;
 mod writer;
 
 pub use dump::{MAGIC, VERSION, import_pending_dir, import_pending_file, write_pending};
+pub use error::StoreError;
 pub use paths::DataPaths;
 pub use schema::USER_VERSION;
 pub use writer::{
