@@ -320,3 +320,30 @@ fn unwritable_data_dir_fails_before_listening() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn root_serves_embedded_spa_or_placeholder() {
+    let tmp = TempDir::new("spa");
+    let (base, shutdown) = start(&tmp.path, true).await;
+    let http = client();
+    let response = http.get(format!("{base}/")).send().await.expect("get /");
+    let status = response.status();
+    let text = response.text().await.expect("body");
+    if cfg!(frontend_embedded) {
+        assert_eq!(status, reqwest::StatusCode::OK, "{text}");
+        assert!(
+            text.contains("<div id=\"app\"") || text.contains("<div id='app'"),
+            "expected SPA shell: {text:.200}"
+        );
+    } else {
+        assert_eq!(status, reqwest::StatusCode::SERVICE_UNAVAILABLE, "{text}");
+        assert!(text.contains("前端未嵌入"), "{text}");
+    }
+    let health = http
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("health");
+    assert_eq!(health.status(), reqwest::StatusCode::OK);
+    let _ = shutdown.send(());
+}

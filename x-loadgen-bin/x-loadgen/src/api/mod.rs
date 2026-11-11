@@ -6,6 +6,7 @@ pub mod report;
 pub mod runs;
 pub mod server;
 pub mod state;
+pub mod static_files;
 pub mod targets;
 pub mod templates;
 

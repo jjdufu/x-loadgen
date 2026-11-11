@@ -97,6 +97,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/runs/{id}/samples",
             get(super::report::list_samples),
         )
+        .fallback(super::static_files::static_handler)
         .with_state(state)
 }
 
