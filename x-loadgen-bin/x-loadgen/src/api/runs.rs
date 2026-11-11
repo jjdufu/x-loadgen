@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
 use crate::db::runs::{CreateRunRequest, TrafficPatch, delete_run, list_timeline, list_windows};
-use crate::db::targets::TargetDetail;
 use crate::engine::RING_CAPACITY;
 use crate::engine::StopKind;
 
@@ -356,24 +355,7 @@ fn view_from_record(record: &crate::db::runs::RunRecord, snapshot: Option<Value>
 }
 
 fn redact_snapshot(raw: &str) -> Value {
-    let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
-        return Value::Null;
-    };
-    if let Some(target) = value.get_mut("target")
-        && let Ok(detail) = serde_json::from_value::<TargetDetail>(target.clone())
-    {
-        let mut redacted = detail;
-        redacted.tenants = redacted
-            .tenants
-            .into_iter()
-            .map(crate::db::targets::Tenant::redacted)
-            .collect();
-        redacted.client_key = None;
-        if let Ok(cleaned) = serde_json::to_value(&redacted) {
-            *target = cleaned;
-        }
-    }
-    value
+    crate::report::redact::redact_snapshot_json(raw)
 }
 
 fn merged_live_stats(

@@ -761,6 +761,11 @@ impl Supervisor {
             error!(run_id, error = %err, "failed to append end timeline event");
         }
         info!(run_id, status, "run finished");
+        if let Ok(record) = get_run(&conn, run_id)
+            && let Err(err) = crate::db::janitor::apply_for_run(&self.paths, &record)
+        {
+            warn!(run_id, error = %err, "detail retention at end of run failed");
+        }
     }
 }
 

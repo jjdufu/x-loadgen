@@ -2,6 +2,7 @@
 
 mod dump;
 pub mod error;
+pub mod janitor;
 mod paths;
 pub mod runs;
 mod schema;
@@ -9,6 +10,8 @@ pub mod targets;
 pub mod templates;
 mod writer;
 
+#[cfg(test)]
+pub(crate) use dump::insert_samples;
 pub use dump::{
     MAGIC, VERSION, import_pending_dir, import_pending_file, list_pending, write_pending,
 };
@@ -23,7 +26,7 @@ pub use writer::{
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 use crate::db::schema::{CENTRAL_SCHEMA_V1, WORKER_SCHEMA_V1};
 
@@ -64,6 +67,38 @@ pub fn open_worker_connection(
     migrate(&conn, WORKER_SCHEMA_V1, "worker")?;
     ensure_worker_meta(&conn, run_id, worker_index)?;
     Ok(conn)
+}
+
+/// Open an existing worker database without creating a new file or writing
+/// `worker_meta`. Used by report queries (read-only) and retention cleanup.
+///
+/// # Errors
+///
+/// Returns an error if an existing file cannot be opened.
+pub fn open_existing_worker(
+    paths: &DataPaths,
+    run_id: &str,
+    worker_index: u32,
+    read_only: bool,
+) -> Result<Option<Connection>> {
+    let path = paths.worker_db(run_id, worker_index);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let flags = if read_only {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+    };
+    let conn = Connection::open_with_flags(&path, flags)
+        .with_context(|| format!("open worker database {}", path.display()))?;
+    if read_only {
+        conn.busy_timeout(std::time::Duration::from_millis(5000))
+            .context("busy_timeout")?;
+    } else {
+        apply_pragmas(&conn)?;
+    }
+    Ok(Some(conn))
 }
 
 /// WAL, `synchronous=NORMAL`, foreign keys, and a 5 second busy timeout.

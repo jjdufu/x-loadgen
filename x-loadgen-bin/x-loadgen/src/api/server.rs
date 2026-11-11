@@ -83,6 +83,20 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/runs/{id}/stop", post(stop_run))
         .route("/api/v1/runs/{id}/resume", post(resume_run))
         .route("/api/v1/runs/{id}/traffic", patch(patch_traffic))
+        .route("/api/v1/runs/{id}/events", get(super::report::get_events))
+        .route("/api/v1/runs/{id}/report", get(super::report::get_report))
+        .route(
+            "/api/v1/runs/{id}/report.json",
+            get(super::report::download_report_json),
+        )
+        .route(
+            "/api/v1/runs/{id}/report.html",
+            get(super::report::download_report_html),
+        )
+        .route(
+            "/api/v1/runs/{id}/samples",
+            get(super::report::list_samples),
+        )
         .with_state(state)
 }
 
@@ -95,6 +109,17 @@ pub fn router(state: AppState) -> Router {
 pub async fn run(args: ServeArgs) -> Result<()> {
     let prepared = prepare(args)?;
     let _log_guard = crate::log::init(&prepared.state.paths, crate::log::serve_prefix())?;
+    let janitor_paths = prepared.state.paths.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Err(err) = crate::db::janitor::sweep(&janitor_paths) {
+                tracing::warn!(error = %err, "detail retention sweep failed");
+            }
+        }
+    });
     let listener = TcpListener::bind(&prepared.listen)
         .await
         .with_context(|| format!("bind {}", prepared.listen))?;

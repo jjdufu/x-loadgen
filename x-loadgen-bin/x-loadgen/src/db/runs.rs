@@ -525,3 +525,29 @@ pub fn get_run_control(conn: &Connection, run_id: &str) -> Result<RunControl, St
     .optional()?
     .ok_or_else(|| StoreError::not_found(format!("run_control for {run_id} not found")))
 }
+
+/// Latest histogram blob for each worker of a run, from `run_checkpoints`.
+///
+/// # Errors
+///
+/// Returns a storage error if the query fails.
+pub fn latest_checkpoint_blobs(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<Vec<Vec<u8>>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT histogram_blob FROM run_checkpoints AS c
+         WHERE run_id = ?1
+           AND ts = (
+             SELECT MAX(ts) FROM run_checkpoints
+             WHERE run_id = c.run_id AND worker_index = c.worker_index
+           )
+           AND histogram_blob IS NOT NULL",
+    )?;
+    let rows = stmt.query_map(params![run_id], |row| row.get::<_, Vec<u8>>(0))?;
+    let mut blobs = Vec::new();
+    for row in rows {
+        blobs.push(row?);
+    }
+    Ok(blobs)
+}

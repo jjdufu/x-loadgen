@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>压测报告 __ID__</title>
+<style>
+  body { font-family: "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+         margin: 0; background: #f5f7fa; color: #1f2a37; }
+  header { background: #1d4ed8; color: #fff; padding: 16px 24px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
+  section { background: #fff; border-radius: 8px; padding: 16px 20px; margin-top: 16px;
+             box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .muted { opacity: .85; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { background: #eff6ff; border-radius: 6px; padding: 10px 14px; min-width: 120px; }
+  .card b { display: block; font-size: 18px; }
+  .chart { width: 100%; height: 280px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>压测报告</h1>
+  <div class="muted">任务 __ID__ · 状态 __STATUS__</div>
+</header>
+<main>
+  <section>
+    <h2>总览</h2>
+    <div class="cards" id="overview"></div>
+    <p class="muted" id="range"></p>
+  </section>
+  <section>
+    <h2>窗口</h2>
+    <div id="windows"></div>
+  </section>
+  <section>
+    <h2>时序</h2>
+    <div id="timeseries" class="chart"></div>
+  </section>
+  <section>
+    <h2>时间线</h2>
+    <div id="timeline"></div>
+  </section>
+  <section>
+    <h2>中断段</h2>
+    <div id="interrupts"></div>
+  </section>
+</main>
+<script>window.__REPORT__ = __PAYLOAD__;</script>
+<script>__ECHARTS__</script>
+<script>
+(function () {
+  const r = window.__REPORT__ || {};
+  const counters = r.counters || {};
+  const pct = r.percentiles || {};
+  const cards = [
+    ["样本", counters.samples],
+    ["成功", counters.success],
+    ["失败", counters.failure],
+    ["预期", counters.expected],
+    ["p50 (µs)", pct.p50_us],
+    ["p95 (µs)", pct.p95_us],
+    ["p99 (µs)", pct.p99_us],
+    ["最大 (µs)", pct.max_us]
+  ];
+  document.getElementById("overview").innerHTML = cards.map(([k, v]) =>
+    '<div class="card"><span>' + k + '</span><b>' + fmt(v) + '</b></div>').join("");
+  document.getElementById("range").textContent =
+    "开始 " + fmt(r.started_at) + " · 结束 " + fmt(r.ended_at) +
+    " · 模式 " + (r.mode || "-") + " · 进程数 " + fmt(r.processes);
+  document.getElementById("windows").innerHTML = table(
+    ["窗口", "开始", "结束", "样本", "成功", "失败", "预期", "p99 (µs)", "字节"],
+    (r.windows || []).map(w => [w.window_index, w.started_at, w.ended_at, w.samples,
+      w.success, w.failure, w.expected, w.p99_us, w.bytes])
+  );
+  document.getElementById("timeline").innerHTML = table(
+    ["时间", "事件", "载荷"],
+    (r.timeline || []).map(e => [e.ts, e.event, e.payload ? JSON.stringify(e.payload) : ""])
+  );
+  const ranges = r.interrupt_ranges || [];
+  document.getElementById("interrupts").innerHTML = ranges.length
+    ? table(["开始", "结束"], ranges.map(x => [x.start, x.end]))
+    : "<p class='muted'>无中断段</p>";
+  const points = r.timeseries || [];
+  const chart = echarts.init(document.getElementById("timeseries"));
+  chart.setOption({
+    tooltip: { trigger: "axis" },
+    legend: { data: ["样本", "成功", "失败"] },
+    xAxis: { type: "category", data: points.map(p => p.unix_sec || p.started_at || "") },
+    yAxis: { type: "value" },
+    series: [
+      { name: "样本", type: "line", data: points.map(p => p.samples || 0) },
+      { name: "成功", type: "line", data: points.map(p => p.success || 0) },
+      { name: "失败", type: "line", data: points.map(p => p.failure || 0) }
+    ]
+  });
+  function fmt(v) { return (v === null || v === undefined) ? "-" : String(v); }
+  function table(headers, rows) {
+    const th = headers.map(h => "<th>" + h + "</th>").join("");
+    const tr = rows.map(row => "<tr>" + row.map(c => "<td>" + escapeHtml(fmt(c)) + "</td>").join("") + "</tr>").join("");
+    return "<table><thead><tr>" + th + "</tr></thead><tbody>" + tr + "</tbody></table>";
+  }
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, ch => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[ch]);
+  }
+})();
+</script>
+</body>
+</html>

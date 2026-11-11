@@ -74,6 +74,32 @@ impl DataPaths {
             .join(format!("pending-w{worker_index:02}-{unix_ms}.bin"))
     }
 
+    /// Worker indexes that already have a `wNN.sqlite` file for this run.
+    #[must_use]
+    pub fn worker_indexes(&self, run_id: &str) -> Vec<u32> {
+        let mut indexes = Vec::new();
+        let Ok(entries) = fs::read_dir(self.run_dir(run_id)) else {
+            return indexes;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(rest) = name
+                .strip_prefix('w')
+                .and_then(|s| s.strip_suffix(".sqlite"))
+            else {
+                continue;
+            };
+            if let Ok(index) = rest.parse::<u32>() {
+                indexes.push(index);
+            }
+        }
+        indexes.sort_unstable();
+        indexes
+    }
+
     /// Create the data directory (mode 700 when the OS allows) and standard subdirectories.
     ///
     /// # Errors

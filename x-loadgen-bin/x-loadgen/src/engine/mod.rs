@@ -14,7 +14,10 @@ pub mod worker;
 #[cfg(test)]
 mod tests;
 
-pub use cluster::{LiveSnapshot, MergedStats, apply_worker_split, load_live_snapshots, merge_live};
+pub use cluster::{
+    HistogramPercentiles, LiveSnapshot, MergedStats, apply_worker_split, load_live_snapshots,
+    merge_live, merge_percentiles,
+};
 pub use execute::{ExecutePlan, ProductChoice, TenantChoice};
 pub use limits::{TrafficShare, check_caps, sum_traffic};
 pub use metrics::{
