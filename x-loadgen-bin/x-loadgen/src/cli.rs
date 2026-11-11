@@ -31,12 +31,12 @@ pub enum Command {
         /// Disable login. Prefer the flag; `X_LOADGEN_NO_AUTH=1|true` also enables this.
         #[arg(long)]
         no_auth: bool,
-        /// Global QPS cap across all running tasks. Unset means no cap.
-        #[arg(long, env = "X_LOADGEN_MAX_QPS")]
-        max_qps: Option<u64>,
-        /// Global concurrency cap across all running tasks. Unset means no cap.
-        #[arg(long, env = "X_LOADGEN_MAX_CONCURRENCY")]
-        max_concurrency: Option<u64>,
+        /// Global QPS cap across all running tasks. Unset or empty means no cap.
+        #[arg(long, env = "X_LOADGEN_MAX_QPS", default_value = "")]
+        max_qps: OptionalCap,
+        /// Global concurrency cap across all running tasks. Unset or empty means no cap.
+        #[arg(long, env = "X_LOADGEN_MAX_CONCURRENCY", default_value = "")]
+        max_concurrency: OptionalCap,
     },
     /// Regenerate the initial admin password file.
     ResetPasswd {
@@ -107,8 +107,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                 listen,
                 data_dir,
                 no_auth: no_auth || env_flag("X_LOADGEN_NO_AUTH"),
-                max_qps,
-                max_concurrency,
+                max_qps: max_qps.0,
+                max_concurrency: max_concurrency.0,
             };
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -149,6 +149,25 @@ fn flag_value(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+/// Optional numeric cap that treats an empty env value as unset.
+#[derive(Debug, Clone, Default)]
+pub struct OptionalCap(pub Option<u64>);
+
+impl std::str::FromStr for OptionalCap {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+        trimmed
+            .parse::<u64>()
+            .map(|parsed| Self(Some(parsed)))
+            .map_err(|err| format!("invalid cap: {err}"))
+    }
 }
 
 fn health(url: &str) -> Result<ExitCode> {
@@ -210,8 +229,8 @@ mod tests {
                 assert_eq!(listen, "0.0.0.0:8757");
                 assert_eq!(data_dir, std::path::PathBuf::from("./data"));
                 assert!(!no_auth);
-                assert!(max_qps.is_none());
-                assert!(max_concurrency.is_none());
+                assert!(max_qps.0.is_none());
+                assert!(max_concurrency.0.is_none());
             }
             other => panic!("expected serve, got {other:?}"),
         }
@@ -236,5 +255,16 @@ mod tests {
         assert!(!super::flag_value("0"));
         assert!(!super::flag_value("false"));
         assert!(!super::flag_value(""));
+    }
+
+    #[test]
+    fn empty_cap_string_is_unset() {
+        let empty: super::OptionalCap = "".parse().expect("empty cap");
+        assert!(empty.0.is_none());
+        let spaced: super::OptionalCap = "  ".parse().expect("blank cap");
+        assert!(spaced.0.is_none());
+        let value: super::OptionalCap = "42".parse().expect("numeric cap");
+        assert_eq!(value.0, Some(42));
+        assert!("nope".parse::<super::OptionalCap>().is_err());
     }
 }
