@@ -92,8 +92,8 @@ pub fn parse() -> Cli {
 /// # Errors
 ///
 /// Returns an error when a command cannot be completed (for example `health`
-/// cannot reach the server). `version` and argument parsing of `serve` /
-/// `reset-passwd` succeed even if the server is not running yet.
+/// cannot reach the server, or `serve` / `reset-passwd` cannot use the data
+/// directory).
 pub fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Serve {
@@ -103,17 +103,24 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             max_qps,
             max_concurrency,
         } => {
-            let _args = ServeArgs {
+            let args = ServeArgs {
                 listen,
                 data_dir,
                 no_auth: no_auth || env_flag("X_LOADGEN_NO_AUTH"),
                 max_qps,
                 max_concurrency,
             };
-            // Listening and auth file creation are implemented in later steps.
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("start tokio runtime")?;
+            runtime.block_on(crate::api::server::run(args))?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::ResetPasswd { data_dir: _ } => Ok(ExitCode::SUCCESS),
+        Command::ResetPasswd { data_dir } => {
+            crate::auth::reset_passwd(&crate::db::DataPaths::new(data_dir))?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Version => {
             print_version();
             Ok(ExitCode::SUCCESS)
