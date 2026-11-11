@@ -1,0 +1,42 @@
+# 「仅联调使用」— ENV-SC-SM4 / upupt 场景示例。
+# 工具本身不含 upupt 逻辑；本文件只是一份普通配置样例，密钥请指向本地 $SECRETS。
+
+[gateway]
+base_url = "https://REPLACE_GATEWAY:8888"
+
+[cluster]
+processes = 5
+qps_mode = "total"
+requests_mode = "total"
+
+[traffic]
+model = "open_loop"
+requests = 5000
+qps = 50
+concurrency = 10
+timeout_secs = 30
+
+[resolve]
+product_map = "REPLACE_PRODUCT_MAP.toml"
+
+[[customers]]
+name = "env-sc-sm4"
+weight = 1
+secrets = "REPLACE_SECRETS/env-sc-sm4.toml"  # [tenant] encryption_mode=full + SM 套件
+
+[[products]]
+name = "face-pressure"
+weight = 1
+channel_code = "REPLACE_CHANNEL"
+method = "POST"
+body_file = "bodies/face.json"   # 内含 {{uuid}} 等占位符；图片目录按需配置
+# body_image_dir = "REPLACE_IMAGES"
+# body_image_field = "imageBase64"
+expect_transport = "ok"
+
+[report]
+enabled = true
+dir = "reports/env-sc-sm4-lab"
+title = "ENV-SC-SM4 lab only"
+lang = "zh"
+profile = "latency"

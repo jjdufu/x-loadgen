@@ -1,0 +1,64 @@
+[workspace]
+members = [
+    "x-loadgen-bin/x-loadgen",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.91"
+authors = ["Mazbri Team"]
+license = "MIT"
+
+[workspace.dependencies]
+mazbri-core = { path = "../mazbri-max/mazbri-libs/mazbri-core" }
+mazbri-sdk = { path = "../mazbri-max/mazbri-libs/mazbri-sdk" }
+
+anyhow = "1.0"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "gzip", "rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+uuid = { version = "1.21", features = ["v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = true
+# 与 mazbri-libs / mazbri-bin 一致：release 使用 unwind，便于隔离单个任务中的 panic。
+panic = "unwind"
+
+[profile.dev]
+opt-level = 0
+debug = 2
+debug-assertions = true
+overflow-checks = true
+rpath = true
+
+# RSA / SM2 大数运算在 debug 下极慢（keygen / 签名可达分钟级），仅对这些依赖开启优化。
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.libsm]
+opt-level = 3
+
+[profile.dev.package.num-bigint]
+opt-level = 3

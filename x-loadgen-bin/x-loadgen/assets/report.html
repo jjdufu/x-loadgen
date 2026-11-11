@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="@@html_lang@@">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>@@title@@</title>
+<style>
+:root {
+  --bg: #e8edf5;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --line: #d7dee8;
+  --head: #f1f5fb;
+  --pass: #1a7f37;
+  --pass-bg: #dafbe1;
+  --fail: #cf222e;
+  --fail-bg: #ffebe9;
+  --warn: #9a6700;
+  --warn-bg: #fff8c5;
+  --accent: #0b3d91;
+  --accent-soft: rgba(11, 61, 145, 0.09);
+  --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --radius: 12px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+}
+.page { max-width: 1280px; margin: 0 auto; padding: 20px 20px 56px; }
+
+/* Header — deep-blue hero */
+header.top {
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0b3d91 0%, #1557b0 48%, #1d6fd0 100%);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(11, 61, 145, 0.28);
+}
+header.top .hero {
+  padding: 22px 24px 18px;
+}
+header.top h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding-right: 160px;
+  line-height: 1.3;
+  color: #fff;
+}
+.toolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: 52%;
+  z-index: 2;
+}
+
+/* Language segmented control */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+  border: none;
+  box-shadow: none;
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  padding: 6px 12px;
+  font: 12px/1.1 var(--sans);
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg button:hover { color: #fff; }
+.seg button.active {
+  background: #fff;
+  color: #0b3d91;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.meta { color: var(--muted); font-size: 13px; }
+header.top .meta { color: rgba(255, 255, 255, 0.82); }
+.meta code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--head);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+header.top .meta code {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-left: 10px;
+  vertical-align: middle;
+  letter-spacing: 0.04em;
+}
+.badge.pass { color: #052e16; background: #86efac; }
+.badge.fail { color: #450a0a; background: #fca5a5; }
+.badge.warn { color: #422006; background: #fde68a; }
+.notes { margin: 10px 0 0 18px; color: rgba(255, 255, 255, 0.8); font-size: 13px; }
+.pro-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  padding: 10px 24px 14px;
+  background: rgba(0, 0, 0, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+}
+.pro-strip span { opacity: 0.75; margin-right: 4px; }
+
+/* KPIs + tooltips */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 12px;
+  margin: 0 0 18px;
+}
+.kpi {
+  position: relative;
+  background: var(--card);
+  border: none;
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 14px 12px;
+  box-shadow: var(--shadow);
+  cursor: help;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.kpi:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1);
+}
+.kpi .l {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .03em;
+  font-weight: 600;
+  text-transform: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.kpi .l .hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.kpi .v {
+  font-size: 24px;
+  font-weight: 700;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+/* Custom tooltip bubble */
+.kpi::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #1f2328;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+  z-index: 20;
+  box-shadow: 0 8px 20px rgba(0,0,0,.18);
+}
+.kpi::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 2px);
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #1f2328;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+  z-index: 20;
+}
+.kpi:hover::after,
+.kpi:focus-within::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.kpi:hover::before,
+.kpi:focus-within::before { opacity: 1; }
+
+.panel {
+  background: var(--card);
+  border: none;
+  border-radius: var(--radius);
+  padding: 18px 20px 20px;
+  margin: 16px 0;
+  box-shadow: var(--shadow);
+}
+.panel h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel h2::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #0b3d91, #1d6fd0);
+  flex-shrink: 0;
+}
+.panel h3 { margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+/* Charts always full width */
+.chart { width: 100%; height: 360px; }
+.chart.tall { height: 440px; }
+.chart-hint { margin: -4px 0 10px; font-size: 12px; color: var(--muted); }
+.axis-caption {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+th {
+  background: #f1f5fb;
+  color: #475569;
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: none;
+  font-size: 12px;
+}
+tbody tr:nth-child(even) td { background: #fafbfd; }
+tbody tr:hover td { background: var(--accent-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td {
+  background: #e8eef8;
+  color: #0b3d91;
+  font-weight: 600;
+}
+.mono { font-family: var(--mono); font-size: 12px; }
+.msg { max-width: 280px; word-break: break-word; color: var(--muted); }
+.empty { color: var(--muted); text-align: center; }
+.ctx {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 18px;
+  font-size: 13px;
+}
+.ctx div {
+  background: var(--head);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.ctx div span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 2px; font-weight: 600; }
+footer {
+  margin-top: 22px;
+  padding: 14px 16px;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: #64748b;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media print {
+  body { background: #fff; }
+  .toolbar { display: none !important; }
+  .chart { break-inside: avoid; }
+  header.top {
+    background: #0b3d91 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+@media (max-width: 640px) {
+  header.top h1 { padding-right: 0; margin-top: 40px; font-size: 17px; }
+  .toolbar { position: static; max-width: 100%; margin-bottom: 8px; }
+  .kpi::after { max-width: min(240px, 70vw); }
+}
+</style>
+</head>
+<body>
+<div class="page">
+<header class="top">
+  <div class="toolbar">
+    <div class="seg lang-switch" role="group" aria-label="Language">
+      <button type="button" id="lang-zh" data-lang="zh">中文</button>
+      <button type="button" id="lang-en" data-lang="en">EN</button>
+    </div>
+  </div>
+  <div class="hero">
+    <h1>@@title@@ <span class="badge @@vclass@@">@@vstatus@@</span></h1>
+    <div class="meta">
+      <span data-i18n="run">Run</span> <code>@@run_id@@</code>
+      · @@duration@@<span data-i18n="unit_s">s</span>
+      · <span data-i18n="profile">profile</span> <code>@@profile@@</code>
+    </div>
+    <ul class="notes">@@notes@@</ul>
+  </div>
+  <div class="pro-strip">
+    <div><span data-i18n="ctx_tool">Tool</span> @@tool@@</div>
+    <div><span data-i18n="ctx_gateway">Gateway</span> @@gateway@@</div>
+    <div><span data-i18n="ctx_encryption">Encryption</span> @@enc@@</div>
+    <div><span data-i18n="ctx_concurrency">Concurrency</span> @@conc@@</div>
+  </div>
+</header>
+
+<div class="kpis">
+  <div class="kpi" data-tip-key="tip_samples" tabindex="0">
+    <div class="l"><span data-i18n="kpi_samples">Samples</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@samples@@</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_failed" tabindex="0">
+    <div class="l"><span data-i18n="kpi_failed">Failed</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@failed@@</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_error_rate" tabindex="0">
+    <div class="l"><span data-i18n="kpi_error_rate">Error rate</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@err@@%</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_ok_rate" tabindex="0">
+    <div class="l"><span data-i18n="kpi_ok_rate">OK rate</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@ok@@%</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_avg_rps" tabindex="0">
+    <div class="l"><span data-i18n="kpi_avg_rps">Avg RPS</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@rps@@</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_peak_rps" tabindex="0">
+    <div class="l"><span data-i18n="kpi_peak_rps">Peak RPS</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@peak@@</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_p95" tabindex="0">
+    <div class="l"><span data-i18n="kpi_p95">p95 (ms)</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@p95@@</div>
+  </div>
+  <div class="kpi" data-tip-key="tip_expected" tabindex="0">
+    <div class="l"><span data-i18n="kpi_expected">Expected rejects</span><span class="hint" aria-hidden="true">?</span></div>
+    <div class="v">@@exp@@</div>
+  </div>
+</div>
+
+<section class="panel">
+  <h2 data-i18n="statistics">Statistics</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th data-i18n="col_label">Label</th>
+        <th data-i18n="col_product">Product</th>
+        <th class="num">#</th>
+        <th class="num" data-i18n="col_ok">OK</th>
+        <th class="num" data-i18n="col_ko">KO</th>
+        <th class="num" data-i18n="col_exp">Exp</th>
+        <th class="num" data-i18n="col_error_pct">Error %</th>
+        <th class="num" data-i18n="col_mean">Mean</th>
+        <th class="num">p50</th><th class="num">p90</th>
+        <th class="num">p95</th><th class="num">p99</th>
+        <th class="num" data-i18n="col_max">Max</th>
+        <th class="num">RPS</th>
+      </tr>
+    </thead>
+    <tbody>
+      @@stats_rows@@
+      @@total_row@@
+    </tbody>
+  </table>
+  </div>
+  <p class="meta" style="margin:10px 0 0" data-i18n="stats_note">Latency columns are milliseconds. Exp = expected rejects (configured reasons). Error % excludes expected rejects when expected_reasons is set.</p>
+</section>
+
+@@lat_global@@
+
+@@chart_throughput@@
+@@chart_lat@@
+@@chart_dist@@
+@@chart_codes@@
+@@chart_reasons@@
+@@chart_reason_ts@@
+
+@@errors_section@@
+
+<section class="panel">
+  <h2 data-i18n="run_context">Run context</h2>
+  <div class="ctx">
+    <div><span data-i18n="ctx_gateway">Gateway</span>@@gateway@@</div>
+    <div><span data-i18n="ctx_encryption">Encryption</span>@@enc@@</div>
+    <div><span data-i18n="ctx_concurrency">Concurrency</span>@@conc@@</div>
+    <div><span data-i18n="ctx_rpp">Requests / product</span>@@rpp@@</div>
+    <div><span data-i18n="ctx_qps">Client QPS cap</span>@@qps@@</div>
+    <div><span data-i18n="ctx_products">Products</span>@@nprod@@</div>
+    <div><span data-i18n="ctx_tool">Tool</span>@@tool@@</div>
+  </div>
+</section>
+
+<footer data-i18n="footer">Generated by x-loadgen · data in data/summary.json</footer>
+</div>
+
+<script src="assets/echarts.min.js"></script>
+<script>
+const DATA = @@data_json@@;
+const DEFAULT_LANG = "@@default_lang@@";
+
+const I18N = {
+  zh: {
+    run: "运行",
+    unit_s: " 秒",
+    profile: "配置档",
+    kpi_samples: "请求数",
+    kpi_failed: "失败",
+    kpi_error_rate: "错误率",
+    kpi_ok_rate: "成功率",
+    kpi_avg_rps: "平均 RPS",
+    kpi_peak_rps: "峰值 RPS",
+    kpi_p95: "p95 (ms)",
+    kpi_expected: "预期拒绝",
+    tip_samples: "本次压测完成统计的请求总数（各产品合计）。",
+    tip_failed: "判定为失败的请求数（业务失败 / 非 2xx / 异常）。不含「预期拒绝」时仍计入失败。",
+    tip_error_rate: "失败请求占比。若配置了 expected_reasons，预期拒绝不计入错误率分母中的 KO。",
+    tip_ok_rate: "成功请求占比。配置 expected_reasons 时为有效成功率（成功 + 预期拒绝）/ 总数。",
+    tip_avg_rps: "平均 RPS = 总请求数 ÷ 整次压测墙钟时长（秒）。衡量整次运行的整体吞吐，不是瞬时值。",
+    tip_peak_rps: "时间序列桶内观测到的最高完成速率（请求/秒），反映短时峰值吞吐。",
+    tip_p95: "全部样本时延的第 95 百分位（毫秒）：95% 的请求不慢于此值。",
+    tip_expected: "命中配置的 expected_reasons（如 tenant_qps）的拒绝次数，限流验收中视为有效结果。",
+    statistics: "统计",
+    total: "合计",
+    col_label: "标签",
+    col_product: "产品",
+    col_ok: "成功",
+    col_ko: "失败",
+    col_exp: "预期",
+    col_error_pct: "错误率 %",
+    col_mean: "均值",
+    col_max: "最大",
+    col_min: "最小",
+    col_count: "数量",
+    col_key: "键",
+    col_type: "类型",
+    col_pct_samples: "占总请求 %",
+    col_pct_errors: "占错误 %",
+    col_status: "状态码",
+    col_reason: "原因",
+    col_req_id: "请求 ID",
+    col_message: "信息",
+    stats_note: "时延单位为毫秒。预期 = 配置的 expected_reasons 拒绝数。使用 expected_reasons 时，错误率不把预期拒绝算入 KO。",
+    latency_all: "时延（全部样本）",
+    chart_throughput: "吞吐",
+    chart_latency: "时延分位（随时间）",
+    chart_dist: "时延分布",
+    chart_status: "HTTP 状态码",
+    chart_reasons: "拒绝原因",
+    chart_reason_ts: "原因随时间变化",
+    chart_zoom_hint: "拖动图表下方的时间范围条（或在图上滚轮）可缩放。横坐标为相对运行开始的秒数。",
+    errors: "错误",
+    samples: "样例",
+    no_errors: "无错误记录",
+    no_error_samples: "无非预期错误样例",
+    run_context: "运行上下文",
+    ctx_gateway: "网关",
+    ctx_encryption: "加密",
+    ctx_concurrency: "并发",
+    ctx_rpp: "每产品请求数",
+    ctx_qps: "客户端 QPS 上限",
+    ctx_products: "产品数",
+    ctx_tool: "工具",
+    footer: "由 x-loadgen 生成 · 数据见 data/summary.json",
+    series_completed: "完成/秒",
+    series_failures: "失败/秒",
+    series_expected: "预期拒绝/秒",
+    axis_time: "相对开始时间 (秒)",
+    axis_rps: "请求/秒",
+    axis_ms: "毫秒",
+    axis_count: "次数/秒",
+    zoom: "框选缩放",
+    zoom_back: "还原缩放",
+    restore: "重置",
+    save: "保存图片"
+  },
+  en: {
+    run: "Run",
+    unit_s: "s",
+    profile: "profile",
+    kpi_samples: "Samples",
+    kpi_failed: "Failed",
+    kpi_error_rate: "Error rate",
+    kpi_ok_rate: "OK rate",
+    kpi_avg_rps: "Avg RPS",
+    kpi_peak_rps: "Peak RPS",
+    kpi_p95: "p95 (ms)",
+    kpi_expected: "Expected rejects",
+    tip_samples: "Total requests counted across all products in this run.",
+    tip_failed: "Requests classified as failures (non-success / non-2xx / errors). Expected rejects may still appear as failures unless handled as expected.",
+    tip_error_rate: "Share of failed requests. When expected_reasons is set, matching rejects are not counted as KO in the error rate.",
+    tip_ok_rate: "Share of successful requests. With expected_reasons, this is effective OK (success + expected rejects) / total.",
+    tip_avg_rps: "Average RPS = total samples ÷ wall-clock duration of the whole run (not an instantaneous rate).",
+    tip_peak_rps: "Highest completed requests/sec observed in any timeseries bucket (short-term peak throughput).",
+    tip_p95: "95th percentile latency of all samples (ms): 95% of requests are no slower than this.",
+    tip_expected: "Rejects matching configured expected_reasons (e.g. tenant_qps); treated as intentional in rate-limit verification.",
+    statistics: "Statistics",
+    total: "Total",
+    col_label: "Label",
+    col_product: "Product",
+    col_ok: "OK",
+    col_ko: "KO",
+    col_exp: "Exp",
+    col_error_pct: "Error %",
+    col_mean: "Mean",
+    col_max: "Max",
+    col_min: "Min",
+    col_count: "Count",
+    col_key: "Key",
+    col_type: "Type",
+    col_pct_samples: "% samples",
+    col_pct_errors: "% errors",
+    col_status: "Status",
+    col_reason: "Reason",
+    col_req_id: "Request id",
+    col_message: "Message",
+    stats_note: "Latency columns are milliseconds. Exp = expected rejects (configured reasons). Error % excludes expected rejects when expected_reasons is set.",
+    latency_all: "Latency (all samples)",
+    chart_throughput: "Throughput",
+    chart_latency: "Response time percentiles",
+    chart_dist: "Response time distribution",
+    chart_status: "HTTP status",
+    chart_reasons: "Reasons",
+    chart_reason_ts: "Reasons over time",
+    chart_zoom_hint: "Drag the time range bar under the chart (or scroll on the plot) to zoom. Labels are seconds from run start.",
+    errors: "Errors",
+    samples: "Samples",
+    no_errors: "No errors recorded",
+    no_error_samples: "No unexpected error samples",
+    run_context: "Run context",
+    ctx_gateway: "Gateway",
+    ctx_encryption: "Encryption",
+    ctx_concurrency: "Concurrency",
+    ctx_rpp: "Requests / product",
+    ctx_qps: "Client QPS cap",
+    ctx_products: "Products",
+    ctx_tool: "Tool",
+    footer: "Generated by x-loadgen · data in data/summary.json",
+    series_completed: "Completed/s",
+    series_failures: "Failures/s",
+    series_expected: "Expected/s",
+    axis_time: "Time from start (s)",
+    axis_rps: "req/s",
+    axis_ms: "ms",
+    axis_count: "count/s",
+    zoom: "Select range",
+    zoom_back: "Reset zoom",
+    restore: "Reset",
+    save: "Save"
+  }
+};
+
+let LANG = DEFAULT_LANG === "en" ? "en" : "zh";
+const chartInstances = [];
+
+function t(key) {
+  const pack = I18N[LANG] || I18N.zh;
+  return pack[key] != null ? pack[key] : (I18N.en[key] || key);
+}
+
+function applyI18n() {
+  document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (key) el.textContent = t(key);
+  });
+  document.querySelectorAll(".kpi[data-tip-key]").forEach(el => {
+    const key = el.getAttribute("data-tip-key");
+    if (key) {
+      const tip = t(key);
+      el.setAttribute("data-tip", tip);
+      el.setAttribute("title", tip);
+      el.setAttribute("aria-label", tip);
+    }
+  });
+  document.getElementById("lang-zh").classList.toggle("active", LANG === "zh");
+  document.getElementById("lang-en").classList.toggle("active", LANG === "en");
+  try { localStorage.setItem("x-loadgen-report-lang", LANG); } catch (e) {}
+}
+
+function tsAxis() {
+  return (DATA.timeseries || []).map(p => p.t_rel);
+}
+
+function timeZoom(prominent) {
+  // Slider sits in the chart bottom padding; axis title is HTML below the chart.
+  const h = prominent ? 34 : 28;
+  return [
+    { type: "inside", xAxisIndex: 0, filterMode: "none", zoomOnMouseWheel: true, moveOnMouseMove: true },
+    {
+      type: "slider",
+      xAxisIndex: 0,
+      height: h,
+      bottom: 8,
+      left: 56,
+      right: 28,
+      borderColor: "#8c959f",
+      borderWidth: 1,
+      backgroundColor: "#eaeef2",
+      fillerColor: "rgba(11, 61, 145, 0.22)",
+      handleIcon: "path://M-4,0 L4,0 L4,16 L-4,16 Z",
+      handleSize: "120%",
+      handleStyle: {
+        color: "#0b3d91",
+        borderColor: "#08306b",
+        borderWidth: 1,
+        shadowBlur: 2,
+        shadowColor: "rgba(0,0,0,0.15)"
+      },
+      moveHandleSize: 10,
+      moveHandleStyle: { color: "#0b3d91" },
+      showDetail: true,
+      showDataShadow: true,
+      brushSelect: false,
+      emphasis: { handleStyle: { color: "#08306b" } },
+      textStyle: { color: "#0f172a", fontSize: 11, fontWeight: 600 },
+      labelFormatter: function (value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return value + "s";
+        return n + "s";
+      }
+    }
+  ];
+}
+
+function baseOpt(prominentZoom) {
+  // No xAxis.name inside ECharts — it collides with dataZoom.
+  // Title is rendered as HTML .axis-caption under the chart.
+  return {
+    animation: false,
+    color: ["#0b3d91", "#cf222e", "#9a6700", "#1a7f37", "#8250df"],
+    grid: { left: 56, right: 28, top: 44, bottom: prominentZoom ? 64 : 58 },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "rgba(15, 23, 42, 0.92)",
+      borderColor: "transparent",
+      textStyle: { color: "#f8fafc", fontSize: 12 }
+    },
+    legend: { top: 4, left: "center", textStyle: { color: "#656d76" } },
+    toolbox: {
+      right: 8,
+      top: 0,
+      feature: {
+        dataZoom: { yAxisIndex: "none", title: { zoom: t("zoom"), back: t("zoom_back") } },
+        restore: { title: t("restore") },
+        saveAsImage: { title: t("save"), pixelRatio: 2 }
+      }
+    },
+    dataZoom: timeZoom(!!prominentZoom),
+    textStyle: { fontFamily: "-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,Microsoft YaHei,Helvetica,Arial,sans-serif" }
+  };
+}
+
+function disposeCharts() {
+  while (chartInstances.length) {
+    const c = chartInstances.pop();
+    try { c.dispose(); } catch (e) {}
+  }
+}
+
+function line(el, series, opts) {
+  if (!window.echarts || !el) return;
+  opts = opts || {};
+  const chart = echarts.init(el, null, { renderer: "canvas" });
+  chartInstances.push(chart);
+  const axis = tsAxis();
+  const opt = Object.assign(baseOpt(opts.prominentZoom), {
+    xAxis: {
+      type: "category",
+      data: axis,
+      boundaryGap: false,
+      axisLabel: { formatter: function (v) { return v + "s"; }, color: "#656d76" },
+      axisTick: { alignWithLabel: true }
+    },
+    yAxis: {
+      type: "value",
+      scale: true,
+      name: opts.yName || "",
+      nameLocation: "end",
+      nameGap: 12,
+      nameTextStyle: { color: "#656d76", fontSize: 11 },
+      axisLabel: { color: "#656d76" }
+    },
+    series
+  });
+  chart.setOption(opt);
+}
+
+function bar(el, names, values, color) {
+  if (!window.echarts || !el) return;
+  const chart = echarts.init(el, null, { renderer: "canvas" });
+  chartInstances.push(chart);
+  const fill = color || "#0b3d91";
+  chart.setOption({
+    animation: false,
+    grid: { left: 56, right: 24, top: 28, bottom: 72 },
+    tooltip: { trigger: "axis" },
+    xAxis: {
+      type: "category",
+      data: names,
+      axisLabel: { rotate: names.length > 8 ? 30 : 0, color: "#656d76", interval: 0 },
+      axisTick: { alignWithLabel: true }
+    },
+    yAxis: { type: "value", axisLabel: { color: "#656d76" }, splitLine: { lineStyle: { color: "#e8eef8" } } },
+    series: [{
+      type: "bar",
+      data: values,
+      itemStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: fill },
+          { offset: 1, color: "#1d6fd0" }
+        ]),
+        borderRadius: [4, 4, 0, 0]
+      },
+      barMaxWidth: 56
+    }]
+  });
+}
+
+function renderCharts() {
+  disposeCharts();
+  const ts = DATA.timeseries || [];
+  if (document.getElementById("chart-rps") && ts.length) {
+    line(document.getElementById("chart-rps"), [
+      { name: t("series_completed"), type: "line", smooth: false, showSymbol: false, areaStyle: { opacity: 0.08 }, data: ts.map(p => p.rps) },
+      { name: t("series_failures"), type: "line", smooth: false, showSymbol: false, data: ts.map(p => p.failure) },
+      { name: t("series_expected"), type: "line", smooth: false, showSymbol: false, data: ts.map(p => p.expected) }
+    ], { yName: t("axis_rps") });
+  }
+  if (document.getElementById("chart-lat") && ts.length) {
+    line(document.getElementById("chart-lat"), [
+      { name: "p50", type: "line", showSymbol: false, data: ts.map(p => p.p50) },
+      { name: "p95", type: "line", showSymbol: false, data: ts.map(p => p.p95) },
+      { name: "p99", type: "line", showSymbol: false, data: ts.map(p => p.p99) }
+    ], { yName: t("axis_ms") });
+  }
+  if (document.getElementById("chart-dist") && (DATA.distribution || []).length) {
+    const d = DATA.distribution;
+    bar(document.getElementById("chart-dist"), d.map(x => x.label), d.map(x => x.count), "#0969da");
+  }
+  if (document.getElementById("chart-codes") && (DATA.status_codes || []).length) {
+    const d = DATA.status_codes;
+    bar(document.getElementById("chart-codes"), d.map(x => x.name), d.map(x => x.count), "#8250df");
+  }
+  if (document.getElementById("chart-reasons") && (DATA.reasons || []).length) {
+    const d = DATA.reasons;
+    bar(document.getElementById("chart-reasons"), d.map(x => x.name), d.map(x => x.count), "#cf222e");
+  }
+  if (document.getElementById("chart-reason-ts") && ts.length && (DATA.reasons || []).length) {
+    const top = (DATA.reasons || []).slice(0, 5).map(r => r.name);
+    const series = top.map(name => ({
+      name,
+      type: "line",
+      stack: "r",
+      areaStyle: { opacity: 0.55 },
+      showSymbol: false,
+      data: ts.map(p => {
+        const hit = (p.reasons || []).find(x => x.name === name);
+        return hit ? hit.count : 0;
+      })
+    }));
+    line(document.getElementById("chart-reason-ts"), series, {
+      prominentZoom: true,
+      yName: t("axis_count")
+    });
+  }
+}
+
+function setLang(lang) {
+  LANG = lang === "en" ? "en" : "zh";
+  applyI18n();
+  renderCharts();
+}
+
+(function init() {
+  let initial = DEFAULT_LANG;
+  try {
+    const saved = localStorage.getItem("x-loadgen-report-lang");
+    if (saved === "zh" || saved === "en") initial = saved;
+  } catch (e) {}
+  document.getElementById("lang-zh").addEventListener("click", () => setLang("zh"));
+  document.getElementById("lang-en").addEventListener("click", () => setLang("en"));
+  window.addEventListener("resize", () => chartInstances.forEach(c => c.resize()));
+  setLang(initial);
+})();
+</script>
+</body>
+</html>

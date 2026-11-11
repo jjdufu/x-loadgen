@@ -1,0 +1,42 @@
+# box 单机示例：接 6 面（无 ws / grpc / 信封面；graphql 见下），按方法限速。
+# 绑定值是上游渠道编码（接入脚本里固定命名，重建不变），不是网关产品编码。
+# 产品编码每次重建都会变，运行时用 --product-map 传入由 mgmt 现查生成的映射文件：
+#   scripts/01-upupt-matrix/gen-loadgen-product-map.py <输出路径>
+# 映射里缺任何渠道编码，loadgen 会一次性列出全部缺项后退出。
+# 注：接入脚本目前只建了 GQL-POSTS-SEARCH，GQL-PHOTOS-RENDER / GQL-IMGDEF-COMPARE 未建，
+#     所以这里先不接 graphql；补齐渠道后把 graphql 加回 faces 并恢复下面三行绑定。
+# 顶层键必须写在任何 [table] 之前。
+
+faces = ["oauth", "sign", "rest", "jsonrpc", "soap", "job"]
+
+[qps]
+posts = 45   # 小包，< 50
+photos = 9   # 大包（响应带图），< 10
+imgdef = 9   # 大包（请求带图），< 10
+
+[bind]
+rest.posts = "REST-POSTS-SEARCH-POST"
+rest.photos = "REST-PHOTOS-RENDER-POST"
+rest.imgdef = "REST-IMGDEF-COMPARE-POST"
+oauth.posts = "OAUTH-POSTS-SEARCH"
+oauth.photos = "OAUTH-PHOTOS-RENDER"
+oauth.imgdef = "OAUTH-IMGDEF-COMPARE"
+jsonrpc.posts = "JSONRPC-POSTS-SEARCH"
+jsonrpc.photos = "JSONRPC-PHOTOS-RENDER"
+jsonrpc.imgdef = "JSONRPC-IMGDEF-COMPARE"
+# graphql.posts = "GQL-POSTS-SEARCH"
+# graphql.photos = "GQL-PHOTOS-RENDER"
+# graphql.imgdef = "GQL-IMGDEF-COMPARE"
+job.posts = "JOB-POSTS-SEARCH"
+job.photos = "JOB-PHOTOS-RENDER"
+job.imgdef = "JOB-IMGDEF-COMPARE"
+sign.posts = "SIGN-POSTS-SEARCH"
+sign.photos = "SIGN-PHOTOS-RENDER"
+sign.imgdef = "SIGN-IMGDEF-COMPARE"
+soap.posts = "SOAP-SEARCH-POSTS"
+soap.photos = "SOAP-RENDER-PHOTO"
+soap.imgdef = "SOAP-COMPARE-IMAGE"
+
+[images]
+match_dir = "../imgs"
+mismatch_dir = "../imgs/nomatch"

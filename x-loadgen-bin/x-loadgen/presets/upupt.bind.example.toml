@@ -1,0 +1,40 @@
+# 绑定值是上游渠道编码（接入脚本里固定命名，重建不变），不是网关产品编码。
+# 产品编码每次重建都会变，运行时用 --product-map 传入由 mgmt 现查生成的映射文件：
+#   scripts/01-upupt-matrix/gen-loadgen-product-map.py <输出路径>
+# 映射里缺任何渠道编码，loadgen 会一次性列出全部缺项后退出。
+# pressure / coverage 需要下面全部键。rest 只需要 rest.posts、rest.photos、rest.imgdef。
+# 图片目录相对启动 loadgen 时的工作目录。默认 ../imgs 与 ../imgs/nomatch。
+# 注：GQL-PHOTOS-RENDER、GQL-IMGDEF-COMPARE 与 GRPC-* 目前接入脚本未建，需先补渠道。
+
+[bind]
+rest.posts = "REST-POSTS-SEARCH-POST"
+rest.photos = "REST-PHOTOS-RENDER-POST"
+rest.imgdef = "REST-IMGDEF-COMPARE-POST"
+oauth.posts = "OAUTH-POSTS-SEARCH"
+oauth.photos = "OAUTH-PHOTOS-RENDER"
+oauth.imgdef = "OAUTH-IMGDEF-COMPARE"
+jsonrpc.posts = "JSONRPC-POSTS-SEARCH"
+jsonrpc.photos = "JSONRPC-PHOTOS-RENDER"
+jsonrpc.imgdef = "JSONRPC-IMGDEF-COMPARE"
+graphql.posts = "GQL-POSTS-SEARCH"
+graphql.photos = "GQL-PHOTOS-RENDER"
+graphql.imgdef = "GQL-IMGDEF-COMPARE"
+job.posts = "JOB-POSTS-SEARCH"
+job.photos = "JOB-PHOTOS-RENDER"
+job.imgdef = "JOB-IMGDEF-COMPARE"
+sign.posts = "SIGN-POSTS-SEARCH"
+sign.photos = "SIGN-PHOTOS-RENDER"
+sign.imgdef = "SIGN-IMGDEF-COMPARE"
+soap.posts = "SOAP-SEARCH-POSTS"
+soap.photos = "SOAP-RENDER-PHOTO"
+soap.imgdef = "SOAP-COMPARE-IMAGE"
+ws.posts = "WS-POSTS-SEARCH"
+ws.photos = "WS-PHOTOS-RENDER"
+ws.imgdef = "WS-IMGDEF-COMPARE"
+grpc.posts = "GRPC-POSTS-SEARCH"
+grpc.photos = "GRPC-PHOTOS-RENDER"
+grpc.imgdef = "GRPC-IMGDEF-COMPARE"
+
+[images]
+match_dir = "../imgs"
+mismatch_dir = "../imgs/nomatch"

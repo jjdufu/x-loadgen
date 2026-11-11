@@ -1,0 +1,52 @@
+# Rust / Cargo
+target/
+.cargo-target/
+**/*.rs.bk
+*.pdb
+
+# Package Cache
+.package-cache
+/registry/
+
+# IDEs and Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+.claude/worktrees/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Coverage and Profiles
+/.nyc_output
+coverage/
+*.profraw
+*.profdata
+
+# large vendor is committed for offline reports; ignore local report copies only
+reports/
+
+# Web frontend build
+node_modules/
+.pnpm-store/
+dist/
+
+# Runtime data (SQLite, logs, admin.passwd, dumps)
+/data/
+/deploy/data/
