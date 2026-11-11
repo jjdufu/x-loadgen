@@ -36,6 +36,7 @@ pub enum TransportExpect {
 }
 
 impl TransportExpect {
+    #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "ok" => Some(Self::Ok),
@@ -56,6 +57,7 @@ pub enum Judge {
     },
 }
 
+#[must_use]
 pub fn judge(
     transport_ok: bool,
     data: Option<&Value>,
@@ -111,6 +113,7 @@ fn eval_check(payload: &Value, check: &FieldCheck) -> Result<(), String> {
     }
 }
 
+#[must_use]
 pub fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     let mut cur = value;
     if path.is_empty() {

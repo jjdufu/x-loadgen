@@ -12,6 +12,11 @@ use anyhow::{Result, bail};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+/// Render placeholders in a request body template for `request_index`.
+///
+/// # Errors
+///
+/// Returns an error if a placeholder is malformed or cannot be substituted.
 pub fn render_body_template(template: &str, request_index: u32) -> Result<String> {
     let mut out = String::with_capacity(template.len().saturating_add(32));
     let bytes = template.as_bytes();

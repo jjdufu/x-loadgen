@@ -63,6 +63,12 @@ impl BindingConfig {
     }
 
     /// 校验配置并构造签名器（构造时会自检一次签名）。
+    /// Build a request signer from this binding configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the algorithm is unsupported or the key material
+    /// cannot be loaded or parsed.
     pub fn signer(&self) -> Result<RequestSigner> {
         let alg = parse_binding_alg(self.alg.trim())
             .map_err(|_| anyhow!("unsupported tenant.binding.alg={}", self.alg))?;
@@ -80,6 +86,12 @@ impl BindingConfig {
 }
 
 /// 生成签名密钥对并落盘（私钥 600；公钥用于 mgmt 注册，可公开）。
+/// Generate a signature key pair and write PEM files (private mode 600).
+///
+/// # Errors
+///
+/// Returns an error if `alg` is not a signature algorithm, key generation
+/// fails, or the files cannot be written.
 pub fn keygen(alg: &str, private_out: &Path, public_out: &Path) -> Result<()> {
     let alg: AlgorithmId =
         parse_binding_alg(alg.trim()).map_err(|_| anyhow!("unsupported --alg={alg}"))?;
