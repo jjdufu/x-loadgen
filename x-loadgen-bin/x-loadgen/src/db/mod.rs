@@ -316,6 +316,31 @@ mod tests {
     }
 
     #[test]
+    fn close_returns_while_a_handle_is_still_held() {
+        let tmp = TempDir::new("held-handle");
+        let paths = tmp.paths();
+        let mut config = fast_config();
+        // A long flush interval used to leave close() blocked in recv_timeout
+        // for the whole interval, or forever if a WriterHandle kept the
+        // channel open.
+        config.flush_interval = Duration::from_secs(30);
+        config.checkpoint_interval = Duration::from_secs(30);
+        let writer = DetailWriter::start(&paths, "run-held", 0, config).expect("start");
+        let handle = writer.handle();
+        assert!(handle.try_send(sample(1, "held")), "send before close");
+        let start = Instant::now();
+        writer.close().expect("close with live handle");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "close wedged while a handle was held ({elapsed:?})"
+        );
+        assert!(!handle.try_send(sample(2, "held")), "send after close");
+        let conn = open_worker_connection(&paths, "run-held", 0).expect("reopen");
+        assert_eq!(sample_count(&conn), 1);
+    }
+
+    #[test]
     fn try_send_does_not_block_when_the_queue_is_full() {
         const TOTAL: u64 = 200;
         let tmp = TempDir::new("drop");

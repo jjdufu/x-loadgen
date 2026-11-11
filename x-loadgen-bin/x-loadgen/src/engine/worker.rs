@@ -54,7 +54,7 @@ struct WorkerWindow {
     executor: Arc<HttpExecutor>,
     plan: Arc<ExecutePlan>,
     metrics: Arc<crate::engine::Metrics>,
-    sink: Arc<dyn crate::engine::SampleSink>,
+    sink: Option<Arc<dyn crate::engine::SampleSink>>,
     writer: std::sync::Mutex<Option<DetailWriter>>,
     traffic: Arc<LiveTraffic>,
     cancel: CancellationToken,
@@ -67,10 +67,10 @@ async fn run_async(
     worker_index: u32,
     worker_count: u32,
 ) -> Result<()> {
-    let ctx = prepare_worker(paths, run_id, worker_index, worker_count)?;
+    let mut ctx = prepare_worker(paths, run_id, worker_index, worker_count)?;
     spawn_background(&ctx);
     run_worker_windows(&ctx).await?;
-    finish_worker(&ctx);
+    finish_worker(&mut ctx);
     Ok(())
 }
 
@@ -105,7 +105,7 @@ fn prepare_worker(
     }
 
     let writer = DetailWriter::start(paths, run_id, worker_index, WriterConfig::default())?;
-    let sink: Arc<dyn crate::engine::SampleSink> = Arc::new(writer.handle());
+    let sink = Some(Arc::new(writer.handle()) as Arc<dyn crate::engine::SampleSink>);
     let (total_qps, total_conc) = traffic_from_record(&snapshot, &record_now(paths, run_id)?);
     let qps = split_value(
         total_qps,
@@ -185,7 +185,7 @@ fn spawn_background(ctx: &WorkerWindow) {
     });
 }
 
-fn finish_worker(ctx: &WorkerWindow) {
+fn finish_worker(ctx: &mut WorkerWindow) {
     ctx.cancel.cancel();
     publish_live(
         &ctx.paths,
@@ -200,6 +200,10 @@ fn finish_worker(ctx: &WorkerWindow) {
         &ctx.metrics,
         ctx.window_index.load(Ordering::Relaxed),
     );
+    // WriterHandle clones keep the write thread's channel open. Drop the
+    // worker-owned sink before joining so close() can observe disconnect,
+    // and close() itself also stops the thread if any handle is still held.
+    drop(ctx.sink.take());
     if let Some(writer) = ctx
         .writer
         .lock()
@@ -243,10 +247,15 @@ async fn run_worker_windows(ctx: &WorkerWindow) -> Result<()> {
         let started_at = crate::engine::unix_now_ms();
         let before = ctx.metrics.counters();
         let config = worker_window_config(&ctx.snapshot, &ctx.plan, &ctx.traffic, requests);
+        let sink = ctx
+            .sink
+            .as_ref()
+            .context("worker sink is held until the window loop ends")?
+            .clone();
         let handle = EngineHandle::start_with(
             config,
             Arc::clone(&ctx.executor) as Arc<dyn crate::engine::RequestExecutor>,
-            Arc::clone(&ctx.sink),
+            sink,
             Arc::clone(&ctx.traffic),
             Arc::clone(&ctx.metrics),
             ctx.cancel.child_token(),

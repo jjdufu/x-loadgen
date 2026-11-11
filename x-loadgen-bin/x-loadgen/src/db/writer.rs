@@ -1,7 +1,7 @@
 //! Bounded in-memory queue plus a dedicated SQLite write thread.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -84,7 +84,8 @@ pub struct CheckpointUpdate {
     pub histogram_blob: Option<Vec<u8>>,
 }
 
-/// Cloneable enqueue handle. Dropping it does not close the write thread.
+/// Cloneable enqueue handle. Dropping a handle does not stop the write thread;
+/// [`DetailWriter::close`] does, even while handles are still held.
 #[derive(Clone)]
 pub struct WriterHandle {
     tx: Option<SyncSender<Sample>>,
@@ -115,6 +116,7 @@ pub struct DetailWriter {
     dropped: Arc<AtomicU64>,
     written: Arc<AtomicU64>,
     checkpoint: Arc<Mutex<Option<CheckpointUpdate>>>,
+    stop: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<()>>>,
 }
 
@@ -142,12 +144,14 @@ impl DetailWriter {
         let dropped = Arc::new(AtomicU64::new(0));
         let written = Arc::new(AtomicU64::new(0));
         let checkpoint = Arc::new(Mutex::new(None));
+        let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread_paths = paths.clone();
         let thread_run = run_id.to_string();
         let thread_dropped = Arc::clone(&dropped);
         let thread_written = Arc::clone(&written);
         let thread_checkpoint = Arc::clone(&checkpoint);
+        let thread_stop = Arc::clone(&stop);
         let name = format!("x-loadgen-w{worker_index:02}");
         let join = thread::Builder::new()
             .name(name)
@@ -171,6 +175,7 @@ impl DetailWriter {
                     dropped: thread_dropped,
                     written: thread_written,
                     checkpoint: thread_checkpoint,
+                    stop: thread_stop,
                 };
                 state.run(&rx)
             })
@@ -191,6 +196,7 @@ impl DetailWriter {
             dropped,
             written,
             checkpoint,
+            stop,
             join: Some(join),
         })
     }
@@ -243,8 +249,9 @@ impl DetailWriter {
     }
 
     /// Stop accepting samples, drain the queue, write a final checkpoint, and
-    /// join the write thread. On a write or drain failure the remaining
-    /// samples are dumped to `pending-*.bin`.
+    /// join the write thread. Outstanding [`WriterHandle`] clones do not keep
+    /// the thread alive. On a write or drain failure the remaining samples are
+    /// dumped to `pending-*.bin`.
     ///
     /// # Errors
     ///
@@ -255,6 +262,10 @@ impl DetailWriter {
     }
 
     fn shutdown_and_join(&mut self) -> Result<()> {
+        self.stop.store(true, Ordering::Release);
+        if let Some(join) = self.join.as_ref() {
+            join.thread().unpark();
+        }
         self.tx.take();
         let Some(join) = self.join.take() else {
             return Ok(());
@@ -282,6 +293,7 @@ struct LoopState {
     dropped: Arc<AtomicU64>,
     written: Arc<AtomicU64>,
     checkpoint: Arc<Mutex<Option<CheckpointUpdate>>>,
+    stop: Arc<AtomicBool>,
 }
 
 impl LoopState {
@@ -301,9 +313,13 @@ impl LoopState {
                     self.config.flush_interval,
                     &mut batch,
                     self.config.batch_size,
+                    &self.stop,
                 ) {
                     RecvOutcome::BatchReady | RecvOutcome::TimedOut => {}
-                    RecvOutcome::Disconnected => disconnected = true,
+                    RecvOutcome::Disconnected => {
+                        drain_receiver(rx, &mut batch);
+                        disconnected = true;
+                    }
                 }
             }
             if !batch.is_empty()
@@ -413,22 +429,29 @@ fn recv_until(
     flush_interval: Duration,
     batch: &mut Vec<Sample>,
     batch_size: usize,
+    stop: &AtomicBool,
 ) -> RecvOutcome {
     let deadline = Instant::now() + flush_interval;
     loop {
+        if stop.load(Ordering::Acquire) {
+            return RecvOutcome::Disconnected;
+        }
         if batch.len() >= batch_size {
             return RecvOutcome::BatchReady;
         }
-        let now = Instant::now();
-        let remain = deadline.saturating_duration_since(now);
+        match rx.try_recv() {
+            Ok(sample) => {
+                batch.push(sample);
+                continue;
+            }
+            Err(TryRecvError::Disconnected) => return RecvOutcome::Disconnected,
+            Err(TryRecvError::Empty) => {}
+        }
+        let remain = deadline.saturating_duration_since(Instant::now());
         if remain.is_zero() {
             return RecvOutcome::TimedOut;
         }
-        match rx.recv_timeout(remain) {
-            Ok(sample) => batch.push(sample),
-            Err(RecvTimeoutError::Timeout) => return RecvOutcome::TimedOut,
-            Err(RecvTimeoutError::Disconnected) => return RecvOutcome::Disconnected,
-        }
+        thread::park_timeout(remain);
     }
 }
 

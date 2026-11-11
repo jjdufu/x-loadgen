@@ -384,3 +384,89 @@ async fn two_multiprocess_runs_are_isolated_and_killing_one_worker_stays_local()
     }
     let _ = (child.kill(), status_a);
 }
+
+fn mp_request_template(name: &str, target_id: &str, requests: u64, qps: u64) -> Value {
+    json!({
+        "name": name,
+        "target_id": target_id,
+        "model": "open_loop",
+        "qps": qps,
+        "concurrency": 2,
+        "requests": requests,
+        "warmup_secs": 0,
+        "ramp_secs": 0,
+        "timeout_secs": 5,
+        "processes": 2,
+        "qps_mode": "total",
+        "requests_mode": "total",
+        "loop_enabled": false
+    })
+}
+
+/// A short request-count once run with two workers must reach `finished` on
+/// its own after the samples are complete. Stopping the run is not allowed
+/// here: that was masking workers that stayed alive after `in_flight` hit 0.
+#[tokio::test]
+async fn processes_two_request_once_finishes_without_stop() {
+    let tmp = TempDir::new("once-finish");
+    let (mock, _shutdown_mock) = start_mock().await;
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let request_count = 10_u64;
+    let (created, target) = post_json(
+        &http,
+        &format!("{base}/api/v1/targets"),
+        &target_payload("once-finish", &mock),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{target}");
+    let target_id = target["id"].as_str().unwrap();
+    let (created, template) = post_json(
+        &http,
+        &format!("{base}/api/v1/templates"),
+        &mp_request_template("tmpl-once-finish", target_id, request_count, 20),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{template}");
+    let (created, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({"template_id": template["id"], "mode": "once"}),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{run}");
+    assert_eq!(run["processes"], 2);
+    let id = run["id"].as_str().unwrap().to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let (final_status, samples, in_flight) = loop {
+        let (code, body) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        assert_eq!(code, reqwest::StatusCode::OK, "{body}");
+        let (code, counters) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
+        assert_eq!(code, reqwest::StatusCode::OK, "{counters}");
+        let run_status = body["status"].as_str().unwrap_or_default().to_string();
+        let samples = counters["samples"].as_u64().unwrap_or(0);
+        let in_flight = counters["in_flight"].as_u64().unwrap_or(0);
+        if run_status == "finished" {
+            break (run_status, samples, in_flight);
+        }
+        assert!(
+            !matches!(run_status.as_str(), "failed" | "interrupted" | "stopped"),
+            "run ended as {run_status} instead of finished: {body} {counters}"
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "processes=2 once stayed at {run_status} after samples={samples} in_flight={in_flight}: {body} {counters}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(final_status, "finished");
+    assert_eq!(samples, request_count, "expected all request-count samples");
+    assert_eq!(in_flight, 0);
+    let _ = child.kill();
+}
