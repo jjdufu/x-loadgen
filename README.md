@@ -2,9 +2,10 @@
 
 网关压测工具。通过 Web 页面或 HTTP API 配置目标与模板并执行任务。命令行只提供基础功能，不能用来发起压测。
 
-仓库位于 `/workspace/rust-proj/x-loadgen`，是自包含的独立项目，不依赖仓库外的任何路径。
+仓库：<https://github.com/jjdufu/x-loadgen>。自包含的独立项目，不依赖仓库外的任何路径。
 
-- 版本：见仓库根 `Cargo.toml` 的 `[workspace.package]`（当前为 0.1.0）
+- 版本：仓库根 `Cargo.toml` 的 `[workspace.package]`，由发版流程自动维护（见「CI 与发版」）
+- 镜像：Docker Hub `dex2all/x-loadgen:<版本>`（linux/amd64 + linux/arm64），也可以在本地用仓库根 `Dockerfile` 构建
 - 布局：Cargo workspace
   - `x-loadgen-bin/x-loadgen`：守护进程与库，二进制名 `x-loadgen`
   - `x-loadgen-bin/x-loadgen-mockgw`：基于 `x-loadgen-core` 的 mock mazbri 网关，供测试与端到端联调，不进入产品镜像
@@ -12,7 +13,7 @@
   - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封与请求绑定签名编解码
   - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、绑定头、解码响应）
 - 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3），发布时嵌入二进制
-- 依赖全部来自 crates.io。在 box 上直连 crates.io（sparse），不添加项目级 `.cargo` 代理。
+- 依赖全部来自 crates.io（sparse），不添加项目级 `.cargo` 代理。
 
 ## 命令行
 
@@ -33,7 +34,7 @@ x-loadgen health [--url http://127.0.0.1:8757/health]
 
 ## 开发
 
-在仓库根、box 上：
+在仓库根：
 
 ```bash
 export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -45,30 +46,78 @@ cargo build --release
 
 工具链见 `rust-toolchain.toml`（1.99.1）。前端在 `x-loadgen-bin/x-loadgen/web`：`pnpm lint`、`pnpm typecheck`、`pnpm build`。未构建前端时，debug 编译可以不嵌入页面；release 构建必须先有 `web/dist`。
 
-## 在 box 上构建镜像
+## 镜像
 
-镜像名 `x-loadgen`，标签为版本号（当前为 `0.1.0`）。只在 box 本地构建，构建上下文就是仓库根目录。
+### 拉取发版镜像
 
 ```bash
-cd /workspace/rust-proj/x-loadgen
-
-export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-DOCKER_BUILDKIT=1 docker build \
-  --file Dockerfile \
-  --tag x-loadgen:${X_LOADGEN_VERSION:-0.1.0} \
-  --build-arg CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
-  .
+docker pull dex2all/x-loadgen:<版本>      # 例如 0.1.0；latest 指向最近一次发版
 ```
 
-`.dockerignore` 会排除 `.cargo`、`target`、`node_modules`、`.git` 和数据目录。构建走 crates.io sparse。拷到其它主机使用 `docker save` / `docker load`：
+镜像同时提供 linux/amd64 与 linux/arm64。`deploy/config/.env.example` 默认就是 `X_LOADGEN_IMAGE=dex2all/x-loadgen`，`deploy/scripts/start.sh` 发现本机没有镜像时会自动拉取。
+
+### 本地构建
+
+构建上下文是仓库根目录，`Dockerfile` 分三段：`node` 构建前端，`debian:trixie` 按 `rust-toolchain.toml` 安装工具链并以 `cargo build --release --locked` 编译（嵌入前端），最后只把二进制放进 `debian:trixie-slim` 运行镜像。GitHub runner 上的发版构建用的就是这份 `Dockerfile`，不依赖本机的任何额外文件。
 
 ```bash
-docker save x-loadgen:0.1.0 | gzip > x-loadgen-0.1.0.tar.gz
+docker build --tag x-loadgen:<版本> .
+# 或者用 buildx 指定平台
+docker buildx build --platform linux/amd64 --load --tag x-loadgen:<版本> .
+```
+
+`.dockerignore` 排除 `.git`、`.github`、`target`、`node_modules`、`web/dist`、`deploy`、Markdown 文档和数据文件，前端产物在镜像内重新构建。本地构建的镜像用于部署时，在 `deploy/config/.env` 里设 `X_LOADGEN_IMAGE=x-loadgen`。
+
+不能访问 Docker Hub 的主机用 `docker save` / `docker load` 导入：
+
+```bash
+docker save dex2all/x-loadgen:<版本> | gzip > x-loadgen-<版本>.tar.gz
 # 在目标主机
-gunzip -c x-loadgen-0.1.0.tar.gz | docker load
+gunzip -c x-loadgen-<版本>.tar.gz | docker load
 ```
 
-不要在 o50 上用本仓库 Dockerfile 构建。
+## CI 与发版
+
+工作流在 `.github/workflows/`，脚本在 `.github/scripts/`，action 全部按提交 SHA 固定版本。
+
+### CI（`ci.yml`）
+
+push 到 `main`、任何 PR 和手动触发时运行；同一分支或 PR 的新运行会取消旧运行。
+
+| 任务 | 内容 |
+| --- | --- |
+| Scripts and workflows lint | `shellcheck` 检查仓库内全部 `*.sh`，`actionlint` 检查工作流，执行发版脚本自测 `.github/scripts/release-test.sh` |
+| Frontend lint, typecheck, build | `pnpm install --frozen-lockfile`、`pnpm lint`、`pnpm typecheck`、`pnpm build`，把 `web/dist` 交给 Rust 任务 |
+| Rust fmt, clippy -D warnings, test | 按 `rust-toolchain.toml` 安装工具链；`cargo fmt --all --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings`、`cargo test --locked --workspace`，编译时嵌入真实的前端产物 |
+
+Node、pnpm 走 `setup-node` 的 pnpm 缓存，cargo 走 `Swatinem/rust-cache`（只在 `main` 保存）。
+
+### 发版（`release.yml`）
+
+`main` 上的 CI 成功后自动运行，不需要 release PR，也不需要手动打 tag。是否发版、发哪个版本只由提交信息决定：
+
+| 自上一个 `vX.Y.Z` tag 以来的提交 | 0.x 阶段 | 1.0 之后 |
+| --- | --- | --- |
+| 破坏性变更：`feat!:`、`fix(scope)!:`，或正文含 `BREAKING CHANGE:` | 升 minor（0.1.3 → 0.2.0） | 升 major |
+| `feat:` / `feat(scope):` | 升 patch（0.1.0 → 0.1.1） | 升 minor |
+| `fix:`、`perf:`、`revert:` | 升 patch | 升 patch |
+| 只有 `docs`、`chore`、`ci`、`refactor`、`test`、`style`、`build` 等 | 不发版 | 不发版 |
+
+- 规则与 mazbri 的 release-please 配置一致（`bump-minor-pre-major`、`bump-patch-for-minor-pre-major`）。取最高的一级，一次发版只升一级。
+- 提交标题格式：`类型(可选范围)!: 描述`，类型小写，冒号后有一个空格，描述可以写中文，例如 `feat(engine): 支持按租户限速`、`fix: 修复多进程任务不结束`。
+- 仓库还没有任何 `vX.Y.Z` tag 时，按 `Cargo.toml` 的当前版本做首次发版，与提交类型无关。
+- 发版流程：`.github/scripts/release.sh` 计算版本，改写 `Cargo.toml`（workspace 版本和内部依赖版本）、`Cargo.lock`、`web/package.json`、`deploy/config/.env.example`、`deploy/README.md`，把本次的 Features / Bug Fixes 等段落置顶写入 `CHANGELOG.md`；以 `github-actions[bot]` 提交 `chore(release): vX.Y.Z [skip ci]`，打附注 tag `vX.Y.Z` 并推回 `main`；amd64 与 arm64 原生 runner 分别构建仓库根 `Dockerfile`，合并推送 `dex2all/x-loadgen:X.Y.Z` 与 `:latest`，校验两种架构都在；最后创建 GitHub Release，内容为 CHANGELOG 段落和 `docker pull` 命令。
+- release 提交不会再触发发版：用 `GITHUB_TOKEN` 推送的提交和 tag 不触发任何 workflow，提交信息又带 `[skip ci]`，`release.sh` 也不把 `chore(release)` 计入下一次发版。
+- CI 跑完时如果 `main` 已经有更新的提交，本次不发版，交给新提交对应的那次运行。
+- 某个任务失败（例如推送 Docker Hub 超时）时，在 Actions 页面点 “Re-run failed jobs”；已完成的 tag 与版本号会被沿用，不会重复升版本。
+- 需要的仓库 secrets：`DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`（对 `dex2all/x-loadgen` 有推送权限）。
+
+本地预览下一次发版：
+
+```bash
+.github/scripts/release.sh plan          # 输出 release / version / previous / bump，发版说明写到 .git/release-notes.md
+.github/scripts/release-test.sh          # 用临时仓库验证各种提交组合
+```
 
 ## 用 deploy/ 部署
 
@@ -108,7 +157,7 @@ curl -c /tmp/xlg.cookie -b /tmp/xlg.cookie \
   http://127.0.0.1:8757/api/v1/auth/password
 ```
 
-健康检查：`GET /health` 或 `x-loadgen health`，成功时返回 `{"ok":true,"version":"0.1.0"}`。
+健康检查：`GET /health` 或 `x-loadgen health`，成功时返回 `{"ok":true,"version":"<版本>"}`。
 
 ## 在页面里配置并启动任务
 

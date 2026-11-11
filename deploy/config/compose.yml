@@ -5,7 +5,7 @@ services:
     extends:
       file: ../common/base.yml
       service: base
-    image: x-loadgen:${X_LOADGEN_VERSION?}
+    image: ${X_LOADGEN_IMAGE?}:${X_LOADGEN_VERSION?}
     container_name: ${STACK:-mazbri}-x-loadgen
     # 以执行者 uid:gid 运行，data/ logs/ 属主与执行者一致（lib/common.sh 导出 RUN_UID/RUN_GID）
     user: "${RUN_UID:-10001}:${RUN_GID:-10001}"

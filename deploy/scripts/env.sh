@@ -6,12 +6,17 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PROJECT_ROOT/lib/common.sh"
 lib_load
 
-IMAGE="x-loadgen:${X_LOADGEN_VERSION}"
+IMAGE="${X_LOADGEN_IMAGE}:${X_LOADGEN_VERSION}"
 
+# 本机没有镜像时先 docker pull（Docker Hub 发版镜像）；拉不到再提示本地构建或离线导入
 require_image() {
-  docker image inspect "$IMAGE" >/dev/null 2>&1 || die "镜像 $IMAGE 不存在。
-  构建机：在仓库根 docker build -t $IMAGE .
-  其它主机：gunzip -c x-loadgen-${X_LOADGEN_VERSION}.tar.gz | docker load"
+  docker image inspect "$IMAGE" >/dev/null 2>&1 && return 0
+  log "本机没有镜像 $IMAGE，尝试 docker pull"
+  docker pull "$IMAGE" >/dev/null 2>&1 && { log "已拉取 $IMAGE"; return 0; }
+  die "镜像 $IMAGE 不存在且无法拉取。
+  联网主机：确认 config/.env 里 X_LOADGEN_IMAGE=dex2all/x-loadgen 且版本已发布
+  本地构建：在仓库根 docker build -t x-loadgen:${X_LOADGEN_VERSION} .，并设 X_LOADGEN_IMAGE=x-loadgen
+  离线主机：gunzip -c x-loadgen-${X_LOADGEN_VERSION}.tar.gz | docker load，X_LOADGEN_IMAGE 与导入的镜像名一致"
 }
 
 # 探测本机内网 IP：ip route src -> hostname -I 第一个 -> 127.0.0.1

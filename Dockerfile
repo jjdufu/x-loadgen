@@ -22,12 +22,15 @@ RUN apt-get update \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
+    | sh -s -- -y --default-toolchain none --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /src/x-loadgen
+# 工具链唯一来源是 rust-toolchain.toml；单独一层，改源码不重装工具链。
+COPY rust-toolchain.toml ./
+RUN rustup toolchain install && rustc -V
 COPY . /src/x-loadgen
 COPY --from=frontend /src/web/dist /src/x-loadgen/x-loadgen-bin/x-loadgen/web/dist
-RUN cargo build --release -p x-loadgen \
+RUN cargo build --release --locked -p x-loadgen \
     && test -x /src/x-loadgen/target/release/x-loadgen
 
 # 运行镜像：bundled rusqlite，不安装 libsqlite3；不含编译器与源码树。

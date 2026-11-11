@@ -33,14 +33,14 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 
 ## 首次使用
 
-镜像 `x-loadgen:${X_LOADGEN_VERSION}` 只在构建机本地构建（见仓库根 `README.md`），其它主机用 `docker load` 导入。`start.sh` 启动前会检查镜像是否存在。
+镜像为 `${X_LOADGEN_IMAGE}:${X_LOADGEN_VERSION}`，默认 `dex2all/x-loadgen`，即 GitHub Actions 发版推到 Docker Hub 的多架构镜像（linux/amd64 + linux/arm64）。`start.sh` 启动前检查镜像，本机没有时自动 `docker pull`。不能访问 Docker Hub 的主机，用本地构建或 `docker save` / `docker load` 导入的镜像，并把 `X_LOADGEN_IMAGE` 改成导入后的镜像名（见下文「镜像来源」）。
 
 ```bash
 <工程目录>/scripts/start.sh     # 首次会从 config/.env.example 生成 config/.env
 <工程目录>/scripts/status.sh
 ```
 
-`start.sh` 依次：准备 `data/ logs/ backups/` 并校验属主 → 校验镜像 → `docker compose up -d --wait`（等待 healthcheck）→ 打印访问地址与口令文件路径。输出示例：
+`start.sh` 依次：准备 `data/ logs/ backups/` 并校验属主 → 校验镜像（缺失时拉取）→ `docker compose up -d --wait`（等待 healthcheck）→ 打印访问地址与口令文件路径。输出示例：
 
 ```text
 [x-loadgen] 访问地址: http://192.168.1.10:8757/
@@ -72,7 +72,8 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 |---|---|---|
 | `STACK` | `mazbri` | 容器、工程、网络名前缀 |
 | `TZ` | `Asia/Shanghai` | 时区 |
-| `X_LOADGEN_VERSION` | `0.1.0` | 镜像标签 |
+| `X_LOADGEN_IMAGE` | `dex2all/x-loadgen` | 镜像仓库名。本地构建或离线导入时改为 `x-loadgen` |
+| `X_LOADGEN_VERSION` | `0.1.0` | 镜像标签，发版时自动更新为最新版本 |
 | `X_LOADGEN_BIND` | `0.0.0.0` | 宿主机发布地址。`0.0.0.0` 局域网可访问；`127.0.0.1` 只开本机 |
 | `X_LOADGEN_PORT` | `8757` | 宿主机端口，映射到容器内 8757 |
 | `X_LOADGEN_ACCESS_HOST` | 空 | 打印访问地址用的主机名或 IP，空为自动探测 |
@@ -103,15 +104,20 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 - `backup.sh`：为保证 SQLite、检查点和 pending 文件处于一致状态，服务在运行时会先 `stop`（等同正常停机，运行中的任务写检查点），打包 `data/`（不含 `logs/`），再按原状态启动。停机时间通常几秒；运行中的任务之后在页面续跑。服务本来没运行时直接打包。超过 `BACKUP_RETENTION_DAYS` 的旧备份顺带删除。
 - `restore.sh <备份名>`：校验压缩包后要求确认，`down` → 当前 `data/` 移到 `backups/pre-restore_<时间>/` → 解包 → `start`。
 
-## 镜像分发
+## 镜像来源
+
+- **Docker Hub（默认）**：`X_LOADGEN_IMAGE=dex2all/x-loadgen`，`X_LOADGEN_VERSION` 填已发布的版本号（见 GitHub Releases 或 Docker Hub 的 tag）。`start.sh` 发现本机没有该镜像时自动拉取，也可以手动 `docker pull dex2all/x-loadgen:<版本>`。
+- **本地构建**：在仓库根执行 `docker build -t x-loadgen:<版本> .`，并在 `config/.env` 里设 `X_LOADGEN_IMAGE=x-loadgen`。
+- **离线主机**：在联网主机拉取或构建后导出，再到目标主机导入，`X_LOADGEN_IMAGE` 与导入的镜像名一致：
 
 ```bash
-docker save x-loadgen:0.1.0 | gzip > x-loadgen-0.1.0.tar.gz
+docker pull dex2all/x-loadgen:<版本>
+docker save dex2all/x-loadgen:<版本> | gzip > x-loadgen-<版本>.tar.gz
 # 在目标主机
-gunzip -c x-loadgen-0.1.0.tar.gz | docker load
+gunzip -c x-loadgen-<版本>.tar.gz | docker load
 ```
 
-部署到其它主机时，把本目录整个拷过去（不带 `data/ logs/ backups/` 和 `config/.env`），导入镜像后执行 `scripts/start.sh`。本工程独立启动，不接入 mazbri-max 的 `up.sh` 或平台编排。
+部署到其它主机时，把本目录整个拷过去（不带 `data/ logs/ backups/` 和 `config/.env`），准备好镜像后执行 `scripts/start.sh`。本工程独立启动，不接入 mazbri-max 的 `up.sh` 或平台编排。
 
 ## 检查
 

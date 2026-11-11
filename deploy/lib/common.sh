@@ -28,8 +28,10 @@ lib_load() {
   export RUN_UID="${SUDO_UID:-$(id -u)}"
   export RUN_GID="${SUDO_GID:-$(id -g)}"
   export CONTAINER_NAME="${STACK}-${COMPONENT}"
-  # 一次性辅助容器默认用本工程镜像（离线主机只需 docker load 这一个镜像）
-  HELPER_IMAGE="${HELPER_IMAGE:-x-loadgen:${X_LOADGEN_VERSION:?X_LOADGEN_VERSION 未设置}}"
+  # 镜像仓库名：Docker Hub 发版镜像，或本地构建 / docker load 的 x-loadgen
+  export X_LOADGEN_IMAGE="${X_LOADGEN_IMAGE:-dex2all/x-loadgen}"
+  # 一次性辅助容器默认用本工程镜像（离线主机只需导入这一个镜像）
+  HELPER_IMAGE="${HELPER_IMAGE:-${X_LOADGEN_IMAGE}:${X_LOADGEN_VERSION:?X_LOADGEN_VERSION 未设置}}"
   COMPOSE_ARGS=(--project-directory "$PROJECT_ROOT/config" -f "$PROJECT_ROOT/config/compose.yml")
 }
 

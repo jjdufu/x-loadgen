@@ -1,4 +1,6 @@
 .git
+.github
+*.md
 .cargo
 target
 **/.cargo
