@@ -1,5 +1,6 @@
 //! Streaming load-test engine: scheduler, metrics, token refresh, and execution.
 
+mod cluster;
 mod execute;
 mod limits;
 mod metrics;
@@ -8,10 +9,12 @@ mod supervisor;
 mod token;
 mod transport;
 mod windows;
+pub mod worker;
 
 #[cfg(test)]
 mod tests;
 
+pub use cluster::{LiveSnapshot, MergedStats, apply_worker_split, load_live_snapshots, merge_live};
 pub use execute::{ExecutePlan, ProductChoice, TenantChoice};
 pub use limits::{TrafficShare, check_caps, sum_traffic};
 pub use metrics::{

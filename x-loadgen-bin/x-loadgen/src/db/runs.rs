@@ -493,3 +493,35 @@ pub struct TrafficPatch {
     pub qps: Option<u64>,
     pub concurrency: Option<u64>,
 }
+
+/// Live control knobs written by `serve` and read by workers.
+#[derive(Debug, Clone)]
+pub struct RunControl {
+    pub stop_flag: bool,
+    pub qps: Option<i64>,
+    pub concurrency: Option<i64>,
+    pub epoch: i64,
+}
+
+/// Load the control row for a run.
+///
+/// # Errors
+///
+/// Returns not-found when the row is missing, or a storage error.
+pub fn get_run_control(conn: &Connection, run_id: &str) -> Result<RunControl, StoreError> {
+    conn.query_row(
+        "SELECT stop_flag, qps, concurrency, epoch FROM run_control WHERE run_id = ?1",
+        params![run_id],
+        |row| {
+            let flag: i64 = row.get(0)?;
+            Ok(RunControl {
+                stop_flag: flag != 0,
+                qps: row.get(1)?,
+                concurrency: row.get(2)?,
+                epoch: row.get(3)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| StoreError::not_found(format!("run_control for {run_id} not found")))
+}

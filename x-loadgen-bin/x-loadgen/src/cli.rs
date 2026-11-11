@@ -126,9 +126,12 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Health { url } => health(&url),
-        Command::Worker { .. } => {
-            bail!("internal worker is started by serve and is not implemented yet")
-        }
+        Command::Worker {
+            data_dir,
+            run_id,
+            worker_index,
+            worker_count,
+        } => crate::engine::worker::run(data_dir, &run_id, worker_index, worker_count),
     }
 }
 

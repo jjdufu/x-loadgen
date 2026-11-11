@@ -74,6 +74,8 @@ pub struct RunningTask {
     current_concurrency: AtomicU64,
     window_index: AtomicI64,
     stop_kind: Mutex<StopKind>,
+    cluster_status: Mutex<Option<String>>,
+    processes: u32,
 }
 
 impl RunningTask {
@@ -93,6 +95,38 @@ impl RunningTask {
     #[must_use]
     pub fn window_index(&self) -> i64 {
         self.window_index.load(Ordering::Relaxed)
+    }
+
+    /// Number of worker processes configured for this run.
+    #[must_use]
+    pub fn processes(&self) -> u32 {
+        self.processes
+    }
+
+    /// Why this run was asked to stop, if at all.
+    #[must_use]
+    pub fn stop_kind(&self) -> StopKind {
+        *self
+            .stop_kind
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Persist the terminal status chosen by a multi-process driver.
+    pub fn set_cluster_status(&self, status: &str) {
+        *self
+            .cluster_status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(status.to_string());
+    }
+
+    /// Terminal status recorded by a multi-process driver, if any.
+    #[must_use]
+    pub fn cluster_status(&self) -> Option<String> {
+        self.cluster_status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -121,6 +155,25 @@ impl Supervisor {
             max_qps,
             max_concurrency,
             tasks: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Data directory used by this supervisor.
+    #[must_use]
+    pub fn paths(&self) -> &DataPaths {
+        &self.paths
+    }
+
+    /// Append a cluster-related timeline event.
+    pub fn append_cluster_event(&self, run_id: &str, event: &str, value: u32) {
+        let conn = self.lock_db();
+        if let Err(err) = append_timeline(
+            &conn,
+            run_id,
+            event,
+            Some(serde_json::json!({ "value": value })),
+        ) {
+            tracing::warn!(run_id, error = %err, "failed to append cluster timeline event");
         }
     }
 
@@ -187,13 +240,14 @@ impl Supervisor {
             let snapshot_json = serde_json::to_string(&snapshot)?;
             let qps_i = i64::try_from(qps).ok();
             let concurrency_i = i64::try_from(concurrency).unwrap_or(i64::MAX);
+            let processes = snapshot.template.processes.max(1);
             let record = insert_run(
                 &conn,
                 &NewRun {
                     template_id,
                     target_id: &snapshot.target.id,
                     mode,
-                    processes: 1,
+                    processes,
                     current_qps: qps_i,
                     current_concurrency: concurrency_i,
                     snapshot_json: &snapshot_json,
@@ -201,7 +255,7 @@ impl Supervisor {
             )?;
             (record, snapshot)
         };
-        self.spawn_driver(record.id.clone(), snapshot, false);
+        self.spawn_for(&record, snapshot, false);
         Ok(record)
     }
 
@@ -255,7 +309,7 @@ impl Supervisor {
             let conn = self.lock_db();
             append_interrupt_range(&conn, id, start_ms, end_ms.max(start_ms))?;
         }
-        self.spawn_driver(record.id.clone(), snapshot, true);
+        self.spawn_for(&record, snapshot, true);
         let conn = self.lock_db();
         get_run(&conn, id)
     }
@@ -390,6 +444,60 @@ impl Supervisor {
         get_run(&conn, id)
     }
 
+    fn spawn_for(&self, record: &RunRecord, snapshot: RunSnapshot, resume: bool) {
+        if record.processes > 1 {
+            self.spawn_cluster(record.id.clone(), snapshot, record.processes);
+        } else {
+            self.spawn_driver(record.id.clone(), snapshot, resume);
+        }
+    }
+
+    fn spawn_cluster(&self, run_id: String, snapshot: RunSnapshot, processes: i64) {
+        let processes = u32::try_from(processes.max(1)).unwrap_or(1);
+        let timeout_us = u64::try_from(snapshot.template.timeout_secs.max(0))
+            .unwrap_or(0)
+            .saturating_mul(1_000_000)
+            .max(2);
+        let metrics = Arc::new(
+            Metrics::new(timeout_us)
+                .unwrap_or_else(|_| Metrics::new(2).expect("fallback histogram")),
+        );
+        let cancel = CancellationToken::new();
+        let qps = opt_u64(snapshot.template.qps);
+        let concurrency = as_u64(snapshot.template.concurrency).max(1);
+        let traffic = Arc::new(LiveTraffic {
+            qps: AtomicU64::new(qps),
+            concurrency: AtomicU64::new(concurrency),
+        });
+        let task = Arc::new(RunningTask {
+            cancel: cancel.clone(),
+            traffic,
+            metrics,
+            current_qps: AtomicU64::new(qps),
+            current_concurrency: AtomicU64::new(concurrency),
+            window_index: AtomicI64::new(0),
+            stop_kind: Mutex::new(StopKind::None),
+            cluster_status: Mutex::new(None),
+            processes,
+        });
+        self.lock_tasks().insert(run_id.clone(), Arc::clone(&task));
+        let supervisor = self.clone();
+        tokio::spawn(async move {
+            let result = crate::engine::cluster::drive_cluster(
+                supervisor.clone(),
+                run_id.clone(),
+                snapshot,
+                Arc::clone(&task),
+            )
+            .await;
+            let status = task
+                .cluster_status()
+                .unwrap_or_else(|| STATUS_FINISHED.to_string());
+            let error = result.err().map(|err| err.to_string());
+            supervisor.finish_run(&run_id, &status, error.as_deref());
+        });
+    }
+
     fn spawn_driver(&self, run_id: String, snapshot: RunSnapshot, resume: bool) {
         let supervisor = self.clone();
         tokio::spawn(async move {
@@ -473,6 +581,8 @@ impl Supervisor {
             current_concurrency: AtomicU64::new(concurrency),
             window_index: AtomicI64::new(start_window),
             stop_kind: Mutex::new(StopKind::None),
+            cluster_status: Mutex::new(None),
+            processes: 1,
         });
         self.lock_tasks()
             .insert(run_id.to_string(), Arc::clone(&task));

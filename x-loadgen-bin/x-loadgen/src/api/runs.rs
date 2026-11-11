@@ -104,6 +104,13 @@ pub async fn get_stats(
 ) -> Result<Json<Value>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let record = state.supervisor.get_run(&id)?;
+    let processes = state.supervisor.get(&id).map_or_else(
+        || u32::try_from(record.processes.max(0)).unwrap_or(0),
+        |task| task.processes(),
+    );
+    if let Some(payload) = merged_live_stats(&state, &record, &id, processes) {
+        return Ok(Json(payload));
+    }
     let (counters, percentiles, in_flight, window_index, qps, concurrency) =
         if let Some(task) = state.supervisor.get(&id) {
             let counters = task.metrics.counters();
@@ -367,4 +374,39 @@ fn redact_snapshot(raw: &str) -> Value {
         }
     }
     value
+}
+
+fn merged_live_stats(
+    state: &AppState,
+    record: &crate::db::runs::RunRecord,
+    id: &str,
+    processes: u32,
+) -> Option<Value> {
+    if processes <= 1 {
+        return None;
+    }
+    let snaps = crate::engine::load_live_snapshots(&state.paths, id, processes);
+    if snaps.is_empty() {
+        return None;
+    }
+    let merged = crate::engine::merge_live(&snaps, 60_000_000).ok()?;
+    Some(json!({
+        "id": record.id,
+        "status": record.status,
+        "current_qps": record.current_qps,
+        "current_concurrency": record.current_concurrency,
+        "samples": merged.samples,
+        "success": merged.success,
+        "failure": merged.failure,
+        "expected": merged.expected,
+        "bytes": merged.bytes,
+        "dropped_details": merged.dropped_details,
+        "in_flight": merged.in_flight,
+        "peak_in_flight": merged.peak_in_flight,
+        "p50_us": merged.p50_us,
+        "p95_us": merged.p95_us,
+        "p99_us": merged.p99_us,
+        "max_us": merged.max_us,
+        "window_index": merged.window_index,
+    }))
 }

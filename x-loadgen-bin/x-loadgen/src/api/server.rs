@@ -94,6 +94,7 @@ pub fn router(state: AppState) -> Router {
 /// cannot be created, the database cannot be opened, or the bind fails.
 pub async fn run(args: ServeArgs) -> Result<()> {
     let prepared = prepare(args)?;
+    let _log_guard = crate::log::init(&prepared.state.paths, crate::log::serve_prefix())?;
     let listener = TcpListener::bind(&prepared.listen)
         .await
         .with_context(|| format!("bind {}", prepared.listen))?;
