@@ -16,7 +16,6 @@
     <SaveRequestModal />
     <LoadRunnerModal />
     <ImportCurlModal />
-    <ShortcutsModal />
   </div>
 </template>
 
@@ -30,40 +29,50 @@ import EnvironmentModal from "./modals/EnvironmentModal.vue";
 import ImportCurlModal from "./modals/ImportCurlModal.vue";
 import LoadRunnerModal from "./modals/LoadRunnerModal.vue";
 import SaveRequestModal from "./modals/SaveRequestModal.vue";
-import ShortcutsModal from "./modals/ShortcutsModal.vue";
 import {
+  matchShortcut,
+  recordingShortcutId,
+  shortcutBindings,
+} from "../modules/shortcuts";
+import {
+  activeTab,
   addNewRequestTab,
   bootstrapWorkspace,
   refreshMeta,
+  responsePaneOpen,
   saveActiveTab,
   sendActiveTabProbe,
-  shortcutsModalOpen,
+  switchActiveTabProtocol,
 } from "../stores/workspace";
 
 const route = useRoute();
 let metaTimer: number | null = null;
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
-  const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key === "/") {
-    e.preventDefault();
-    shortcutsModalOpen.value = !shortcutsModalOpen.value;
-    return;
-  }
+  if (recordingShortcutId.value !== null) return;
+  if (document.querySelector('[role="dialog"]')) return;
   if (route.name !== "workspace") return;
 
-  if (mod && e.key === "Enter") {
+  const bindings = shortcutBindings.value;
+  if (matchShortcut(e, bindings.sendRequest)) {
     e.preventDefault();
     void sendActiveTabProbe();
-  } else if (mod && e.key.toLowerCase() === "s") {
+  } else if (matchShortcut(e, bindings.saveRequest)) {
     e.preventDefault();
     void saveActiveTab();
-  } else if (e.altKey && e.key.toLowerCase() === "n") {
+  } else if (matchShortcut(e, bindings.newRequest)) {
     e.preventDefault();
-    addNewRequestTab("http");
-  } else if (e.altKey && e.key.toLowerCase() === "m") {
+    addNewRequestTab(
+      activeTab.value.draft.protocol === "mazbri" ? "mazbri" : "http",
+    );
+  } else if (matchShortcut(e, bindings.switchProtocol)) {
     e.preventDefault();
-    addNewRequestTab("mazbri");
+    switchActiveTabProtocol(
+      activeTab.value.draft.protocol === "http" ? "mazbri" : "http",
+    );
+  } else if (matchShortcut(e, bindings.toggleResponse)) {
+    e.preventDefault();
+    responsePaneOpen.value = !responsePaneOpen.value;
   }
 }
 

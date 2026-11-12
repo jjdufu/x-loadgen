@@ -1,26 +1,16 @@
 <template>
   <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
-    <div class="mx-auto max-w-6xl space-y-8 p-6 lg:p-8">
-      <!-- Page Title -->
-      <div class="space-y-1.5 border-b border-border pb-5">
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-          系统外观与安全设置
-        </h1>
-        <p class="text-sm text-muted-foreground">
-          切换浅色（Light）与纯黑（Black）显示模式，查看当前实例的压测容量护栏及管理访问口令。
-        </p>
-      </div>
-
+    <div class="mx-auto max-w-6xl space-y-6 p-6 lg:p-8">
       <!-- Balanced 2-Column Shadcn Card Grid -->
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <!-- Card 1: Light / Black Theme Switcher -->
         <UiCard class="flex flex-col justify-between p-6 space-y-5">
           <div class="space-y-1.5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
-              界面明暗模式 (Appearance)
+              外观模式
             </h2>
             <p class="text-xs text-muted-foreground leading-relaxed">
-              首次访问默认自动跟随操作系统配色方案；您也可以在此或右上角一键切换为浅色（Light）或纯黑（Black）。
+              默认自动跟随操作系统配色方案，也可手动固定为浅色或纯黑模式。
             </p>
           </div>
 
@@ -51,7 +41,7 @@
               <div class="mt-2.5 flex items-center justify-between px-0.5">
                 <span class="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <Sun class="h-3.5 w-3.5" />
-                  <span>浅色 (Light)</span>
+                  <span>浅色</span>
                 </span>
                 <Check
                   v-if="effectiveTheme === 'light'"
@@ -85,7 +75,7 @@
               <div class="mt-2.5 flex items-center justify-between px-0.5">
                 <span class="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <Moon class="h-3.5 w-3.5" />
-                  <span>纯黑 (Black)</span>
+                  <span>纯黑</span>
                 </span>
                 <Check
                   v-if="effectiveTheme === 'black'"
@@ -103,8 +93,8 @@
               <strong class="font-medium text-foreground">
                 {{
                   isFollowingSystem
-                    ? `自动跟随系统 (${effectiveTheme === "black" ? "Black" : "Light"})`
-                    : `手动固定为 ${effectiveTheme === "black" ? "纯黑 (Black)" : "浅色 (Light)"}`
+                    ? `跟随系统（${effectiveTheme === "black" ? "纯黑" : "浅色"}）`
+                    : `固定为${effectiveTheme === "black" ? "纯黑" : "浅色"}`
                 }}
               </strong>
             </span>
@@ -115,81 +105,127 @@
               @click="resetToSystemTheme"
             >
               <RotateCcw class="h-3 w-3" />
-              <span>恢复默认跟随系统</span>
+              <span>跟随系统</span>
             </UiButton>
           </div>
         </UiCard>
 
-        <!-- Card 2: Instance Capacity & Built-in OpenAPI Reference -->
+        <!-- Card 2: Instance Capacity -->
         <UiCard class="flex flex-col justify-between p-6 space-y-5">
           <div class="space-y-1.5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
-              实例运行规格与接口文档
+              实例规格
             </h2>
             <p class="text-xs text-muted-foreground leading-relaxed">
-              当前守护进程的全局速率/并发安全护栏配置，以及离线内置的 OpenAPI 3 接口规范。
+              当前守护进程的版本、鉴权状态及全局发压安全护栏配置。
             </p>
           </div>
 
           <div v-if="serverMeta" class="grid grid-cols-2 gap-3.5">
-            <div class="rounded-lg border border-border bg-surface/50 p-3.5 space-y-1">
+            <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-1">
               <div class="text-xs text-muted-foreground">服务端版本</div>
               <div class="font-mono text-base font-semibold text-foreground tabular-nums">
                 v{{ serverMeta.version }}
               </div>
             </div>
-            <div class="rounded-lg border border-border bg-surface/50 p-3.5 space-y-1">
-              <div class="text-xs text-muted-foreground">访问鉴权状态</div>
+            <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-1">
+              <div class="text-xs text-muted-foreground">鉴权状态</div>
               <div class="text-sm font-semibold text-foreground">
-                {{ serverMeta.auth_required ? "Admin 口令鉴权" : "--no-auth 免密模式" }}
+                {{ serverMeta.auth_required ? "口令保护已启用" : "免密模式 (--no-auth)" }}
               </div>
             </div>
-            <div class="rounded-lg border border-border bg-surface/50 p-3.5 space-y-1">
+            <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-1">
               <div class="text-xs text-muted-foreground">全局 QPS 上限</div>
               <div class="font-mono text-base font-semibold text-foreground tabular-nums">
                 {{ serverMeta.max_qps ?? "未限制" }}
               </div>
             </div>
-            <div class="rounded-lg border border-border bg-surface/50 p-3.5 space-y-1">
+            <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-1">
               <div class="text-xs text-muted-foreground">全局并发上限</div>
               <div class="font-mono text-base font-semibold text-foreground tabular-nums">
                 {{ serverMeta.max_concurrency ?? "未限制" }}
               </div>
             </div>
           </div>
-
-          <div
-            class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface/60 px-4 py-3"
-          >
-            <div class="space-y-0.5">
-              <div class="text-xs font-semibold text-foreground">
-                OpenAPI 3 接口规范文档
-              </div>
-              <div class="text-xs text-muted-foreground">
-                浏览离线渲染的接口参数、Schema 与 cURL 示例
-              </div>
-            </div>
-            <UiButton
-              variant="outline"
-              size="sm"
-              @click="router.push({ name: 'docs' })"
-            >
-              <BookOpen class="h-3.5 w-3.5" />
-              <span>打开接口文档</span>
-            </UiButton>
-          </div>
         </UiCard>
       </div>
 
-      <!-- Full-Width Security / Admin Password Rotation Card -->
+      <!-- Card 3: Keyboard Shortcut Management -->
+      <UiCard class="p-6 space-y-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="space-y-1">
+            <h2 class="text-base font-semibold tracking-tight text-foreground">
+              快捷键管理
+            </h2>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              点击键位按钮即可录制新组合键（需包含 Ctrl / ⌘ 或 Alt）；录制时按 Esc 取消，按 Backspace 清空禁用。
+            </p>
+          </div>
+          <UiButton variant="outline" size="sm" @click="handleResetShortcuts">
+            <RotateCcw class="h-3.5 w-3.5" />
+            <span>恢复默认</span>
+          </UiButton>
+        </div>
+
+        <div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+          <div
+            v-for="item in SHORTCUT_DEFINITIONS"
+            :key="item.id"
+            class="flex flex-wrap items-center justify-between gap-3 bg-background px-4 py-3"
+          >
+            <div class="min-w-0 space-y-0.5">
+              <div class="text-sm font-medium text-foreground">
+                {{ item.label }}
+              </div>
+              <div class="text-xs text-muted-foreground">
+                {{ item.description }}
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                class="inline-flex h-8 min-w-[128px] items-center justify-center rounded-md border px-3 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :class="
+                  recordingShortcutId === item.id
+                    ? 'border-foreground bg-accent text-foreground font-semibold'
+                    : shortcutBindings[item.id]
+                      ? 'border-border bg-surface text-foreground hover:bg-accent/60'
+                      : 'border-dashed border-border text-muted-foreground hover:text-foreground'
+                "
+                @click="toggleRecord(item.id)"
+              >
+                {{
+                  recordingShortcutId === item.id
+                    ? "请按下组合键..."
+                    : formatBindingDisplay(shortcutBindings[item.id])
+                }}
+              </button>
+
+              <UiButton
+                v-if="shortcutBindings[item.id]"
+                variant="ghost"
+                size="icon-sm"
+                title="清空快捷键"
+                aria-label="清空快捷键"
+                @click="handleClearShortcut(item.id)"
+              >
+                <X class="h-3.5 w-3.5" />
+              </UiButton>
+            </div>
+          </div>
+        </div>
+      </UiCard>
+
+      <!-- Card 4: Security / Admin Password Rotation Card -->
       <UiCard class="p-6">
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div class="space-y-1.5 lg:col-span-5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
-              管理员访问口令轮换
+              访问口令轮换
             </h2>
             <p class="text-xs text-muted-foreground leading-relaxed">
-              新口令不少于 24 个字符，仅限可打印 ASCII（不含空格、引号、分号、逗号和反斜杠）。修改成功后旧口令与历史 Cookie 会话立即失效。
+              新口令不少于 24 位可打印 ASCII（不含空格、引号、分号、逗号和反斜杠）。更新后旧口令与历史会话立即失效。
             </p>
           </div>
 
@@ -202,7 +238,7 @@
               <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                 --no-auth
               </code>
-              模式启动，无需口令即可访问。生产或公网部署请移除该启动标志以启用口令保护。
+              免密模式运行。生产或公网部署请移除该启动参数以启用口令保护。
             </div>
 
             <form v-else class="space-y-4" @submit.prevent="changePwd">
@@ -216,14 +252,14 @@
                     type="password"
                     mono
                     autocomplete="current-password"
-                    placeholder="输入当前管理员口令"
+                    placeholder="输入当前口令"
                   />
                 </div>
 
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between gap-2">
                     <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                      新口令 (&gt;= 24 位)
+                      新口令（至少 24 位）
                     </label>
                     <UiButton
                       variant="ghost"
@@ -261,7 +297,7 @@
                   :loading="saving"
                   @click="changePwd"
                 >
-                  更新管理员口令
+                  更新口令
                 </UiButton>
               </div>
             </form>
@@ -273,10 +309,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import {
-  BookOpen,
   Check,
   Dices,
   Eye,
@@ -284,11 +318,23 @@ import {
   Moon,
   RotateCcw,
   Sun,
+  X,
 } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiInput from "../components/ui/UiInput.vue";
+import {
+  SHORTCUT_DEFINITIONS,
+  captureBindingFromEvent,
+  clearShortcutBinding,
+  formatBindingDisplay,
+  recordingShortcutId,
+  resetAllShortcuts,
+  setShortcutBinding,
+  shortcutBindings,
+  type ShortcutId,
+} from "../modules/shortcuts";
 import {
   effectiveTheme,
   isFollowingSystem,
@@ -298,17 +344,82 @@ import {
 import { toast } from "../modules/toast";
 import { refreshMeta, serverMeta } from "../stores/workspace";
 
-const router = useRouter();
 const authRequired = ref(false);
 const oldToken = ref("");
 const newToken = ref("");
 const showNew = ref(false);
 const saving = ref(false);
 
+function toggleRecord(id: ShortcutId): void {
+  recordingShortcutId.value = recordingShortcutId.value === id ? null : id;
+}
+
+function handleClearShortcut(id: ShortcutId): void {
+  if (recordingShortcutId.value === id) {
+    recordingShortcutId.value = null;
+  }
+  clearShortcutBinding(id);
+  toast.info("已清空该快捷键");
+}
+
+function handleResetShortcuts(): void {
+  recordingShortcutId.value = null;
+  resetAllShortcuts();
+  toast.success("已恢复默认快捷键");
+}
+
+function handleRecorderKeydown(e: KeyboardEvent): void {
+  const targetId = recordingShortcutId.value;
+  if (!targetId) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.key === "Escape") {
+    recordingShortcutId.value = null;
+    return;
+  }
+
+  if (
+    (e.key === "Backspace" || e.key === "Delete") &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
+    clearShortcutBinding(targetId);
+    recordingShortcutId.value = null;
+    toast.info("已清空该快捷键");
+    return;
+  }
+
+  const captured = captureBindingFromEvent(e);
+  if (!captured.binding) {
+    if (captured.reason === "needs_modifier") {
+      toast.error("请组合 Ctrl / ⌘ 或 Alt 键设置快捷键");
+    }
+    return;
+  }
+
+  const res = setShortcutBinding(targetId, captured.binding);
+  if (!res.ok) {
+    toast.error(`快捷键与「${res.conflictLabel}」冲突`);
+    return;
+  }
+
+  recordingShortcutId.value = null;
+  toast.success(`已更新为 ${formatBindingDisplay(captured.binding)}`);
+}
+
 onMounted(async () => {
+  window.addEventListener("keydown", handleRecorderKeydown, true);
   await refreshMeta();
   const me = await api.me();
   authRequired.value = me.auth_required;
+});
+
+onBeforeUnmount(() => {
+  recordingShortcutId.value = null;
+  window.removeEventListener("keydown", handleRecorderKeydown, true);
 });
 
 function generateStrongPassword(): void {
@@ -333,7 +444,7 @@ async function changePwd(): Promise<void> {
   saving.value = true;
   try {
     await api.changePassword(oldToken.value, newToken.value);
-    toast.success("管理员口令已更新");
+    toast.success("口令已更新");
     oldToken.value = "";
     newToken.value = "";
   } finally {

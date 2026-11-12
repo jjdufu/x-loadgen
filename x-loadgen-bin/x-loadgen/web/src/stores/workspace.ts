@@ -238,7 +238,6 @@ export const editingEnvId = ref<string | null>(null);
 export const saveModalOpen = ref<boolean>(false);
 export const saveModalForceNew = ref<boolean>(false);
 export const curlModalOpen = ref<boolean>(false);
-export const shortcutsModalOpen = ref<boolean>(false);
 export const runnerModalOpen = ref<boolean>(false);
 export const runnerContext = ref<LoadRunnerLaunchContext>({
   mode: "single",

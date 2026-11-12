@@ -1,47 +1,55 @@
 <template>
   <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
-    <div class="mx-auto max-w-7xl space-y-6 p-6 lg:p-8">
-      <!-- Header -->
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <div class="space-y-1">
-          <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-            可复用负载预设
-          </h1>
-          <p class="text-sm text-muted-foreground">
-            将常用的 QPS、并发、爬坡预热及 SLA 判定规则保存为独立预设，对任意 HTTP 请求、Mazbri 网关接口或集合一键复用。
-          </p>
-        </div>
+    <div class="mx-auto max-w-7xl space-y-5 p-6 lg:p-8">
+      <!-- Top Shared Search & Action Toolbar -->
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <UiSearchInput
+          v-model="searchQuery"
+          placeholder="搜索预设名称或备注..."
+          wrapper-class="w-64 sm:w-72"
+        />
 
-        <UiButton variant="default" @click="openEditor(null)">
-          <Plus class="h-4 w-4" />
-          <span>新建负载预设</span>
+        <UiButton variant="default" size="sm" @click="openEditor(null)">
+          <Plus class="h-3.5 w-3.5" />
+          <span>新建预设</span>
         </UiButton>
       </div>
 
       <!-- Empty State -->
       <UiCard
-        v-if="loadProfiles.length === 0"
+        v-if="filteredProfiles.length === 0"
         class="flex flex-col items-center justify-center gap-3 border-dashed py-20 text-center"
       >
         <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground">
           <Gauge class="h-5 w-5" />
         </div>
         <div class="space-y-1">
-          <p class="text-sm font-medium text-foreground">暂无已保存的负载预设</p>
+          <p class="text-sm font-medium text-foreground">
+            {{ searchQuery.trim() ? "未找到匹配的负载预设" : "暂无已保存的负载预设" }}
+          </p>
           <p class="text-xs text-muted-foreground">
-            点击右上角「新建负载预设」创建基准冒烟、容量评估或峰值冲击规格。
+            {{
+              searchQuery.trim()
+                ? "请尝试更换搜索关键词。"
+                : "点击右上角「新建预设」创建常用的 QPS、并发与 SLA 规格。"
+            }}
           </p>
         </div>
-        <UiButton variant="outline" size="sm" @click="openEditor(null)">
+        <UiButton
+          v-if="!searchQuery.trim()"
+          variant="outline"
+          size="sm"
+          @click="openEditor(null)"
+        >
           <Plus class="h-3.5 w-3.5" />
-          <span>创建首个负载预设</span>
+          <span>新建预设</span>
         </UiButton>
       </UiCard>
 
       <!-- Profile Cards Grid -->
       <div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         <UiCard
-          v-for="item in loadProfiles"
+          v-for="item in filteredProfiles"
           :key="item.id"
           class="flex flex-col justify-between p-5 space-y-5 transition-colors hover:border-foreground/30"
         >
@@ -109,8 +117,8 @@
     <!-- Editor Dialog -->
     <UiDialog
       :open="editorOpen"
-      :title="editingId ? '编辑负载预设' : '新建负载预设'"
-      description="配置发压模型、预算、集群进程数及可选的 SLA 自动判定阈值。"
+      :title="editingId ? '编辑预设' : '新建预设'"
+      description="配置发压模型、预算、集群进程数及可选的 SLA 判定阈值。"
       max-width="3xl"
       @close="editorOpen = false"
     >
@@ -118,7 +126,7 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              预设名称 (唯一标识) *
+              预设名称 *
             </label>
             <UiInput
               v-model="name"
@@ -127,9 +135,9 @@
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              备注说明 (可选)
+              备注说明
             </label>
-            <UiInput v-model="note" placeholder="适用场景说明" />
+            <UiInput v-model="note" placeholder="适用场景说明（可选）" />
           </div>
         </div>
 
@@ -143,7 +151,7 @@
       <template #footer>
         <UiButton variant="outline" @click="editorOpen = false">取消</UiButton>
         <UiButton variant="default" :loading="saving" @click="saveProfile">
-          保存预设
+          保存
         </UiButton>
       </template>
     </UiDialog>
@@ -151,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Edit3, Gauge, Plus, Trash2 } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import type { AssertSpec, LoadConfig, LoadProfile } from "../api/types";
@@ -161,14 +169,17 @@ import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiDialog from "../components/ui/UiDialog.vue";
 import UiInput from "../components/ui/UiInput.vue";
+import UiSearchInput from "../components/ui/UiSearchInput.vue";
 import {
   cloneJson,
   createDefaultLoadConfig,
   formatTimeMs,
 } from "../helpers/format";
+import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
 import { loadProfiles, refreshLoadProfiles } from "../stores/workspace";
 
+const searchQuery = ref("");
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const name = ref("");
@@ -176,6 +187,16 @@ const note = ref("");
 const config = ref<LoadConfig>(createDefaultLoadConfig());
 const assertSpec = ref<AssertSpec | null>(null);
 const saving = ref(false);
+
+const filteredProfiles = computed<LoadProfile[]>(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return loadProfiles.value;
+  return loadProfiles.value.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.note && p.note.toLowerCase().includes(q)),
+  );
+});
 
 onMounted(() => {
   void refreshLoadProfiles();
@@ -247,7 +268,13 @@ async function saveProfile(): Promise<void> {
 }
 
 async function removeProfile(profile: LoadProfile): Promise<void> {
-  if (!confirm(`确定删除负载预设「${profile.name}」吗？`)) return;
+  const confirmed = await askConfirm({
+    title: "删除负载预设",
+    description: `确定删除负载预设「${profile.name}」吗？删除后无法恢复。`,
+    confirmText: "删除",
+    variant: "destructive",
+  });
+  if (!confirmed) return;
   await api.deleteLoadProfile(profile.id);
   await refreshLoadProfiles();
   toast.success("负载预设已删除");

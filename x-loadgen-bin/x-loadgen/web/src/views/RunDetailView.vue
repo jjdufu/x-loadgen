@@ -13,26 +13,24 @@
             >
               <ArrowLeft class="h-4 w-4" />
             </UiButton>
-            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-              {{ run?.title || "压测任务实时监控" }}
+            <h1 class="text-xl font-semibold tracking-tight text-foreground">
+              {{ run?.title || "压测任务详情" }}
             </h1>
             <UiBadge
               v-if="run"
               :variant="isRunning ? 'success' : 'secondary'"
-              class="font-mono"
             >
-              {{ run.status }}
+              {{ formatRunStatus(run.status) }}
             </UiBadge>
             <UiBadge
               v-if="run?.verdict && run.verdict.result !== 'none'"
               :variant="verdictVariant(run.verdict.result)"
-              class="font-mono"
             >
-              SLA: {{ run.verdict.result.toUpperCase() }}
+              SLA: {{ formatVerdictResult(run.verdict.result) }}
             </UiBadge>
           </div>
           <p class="pl-10 font-mono text-xs text-muted-foreground tabular-nums">
-            ID: {{ id }} · 模式: {{ run?.mode ?? "-" }} · 工作进程: {{ run?.processes ?? 1 }}
+            ID: {{ id }} · 模式: {{ formatRunMode(run?.mode) }} · 工作进程: {{ run?.processes ?? 1 }}
           </p>
         </div>
 
@@ -44,7 +42,7 @@
             @click="handleStop"
           >
             <Square class="h-3.5 w-3.5" />
-            <span>停止压测</span>
+            <span>停止</span>
           </UiButton>
           <UiButton
             v-if="canResume"
@@ -53,7 +51,7 @@
             @click="handleResume"
           >
             <Play class="h-3.5 w-3.5" />
-            <span>断点续跑</span>
+            <span>续跑</span>
           </UiButton>
           <UiButton
             variant="outline"
@@ -69,7 +67,7 @@
             @click="downloadReport('html')"
           >
             <FileCode2 class="h-3.5 w-3.5" />
-            <span>离线 HTML 报告</span>
+            <span>HTML 报告</span>
           </UiButton>
         </div>
       </div>
@@ -109,7 +107,7 @@
         >
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              在线动态目标 QPS
+              动态目标 QPS
             </label>
             <UiInput
               :model-value="tuneQps"
@@ -123,7 +121,7 @@
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              在线动态并发上限
+              动态并发上限
             </label>
             <UiInput
               :model-value="tuneConcurrency"
@@ -140,10 +138,10 @@
             :disabled="!isRunning"
             @click="applyTrafficPatch"
           >
-            热更新流量参数
+            应用
           </UiButton>
           <span class="pb-2 text-xs text-muted-foreground">
-            运行期间可随时无损调高或调低 QPS 与并发，即时同步至全部工作进程。
+            运行期间可随时调整 QPS 与并发，实时同步至全部工作进程。
           </span>
         </form>
       </UiCard>
@@ -156,7 +154,7 @@
               每秒吞吐量与成功 / 失败趋势
             </h2>
             <p class="text-xs text-muted-foreground">
-              按秒聚合全集群样本速率 (Real-time Timeseries)
+              按秒聚合全集群样本速率
             </p>
           </div>
         </div>
@@ -212,7 +210,7 @@
             </div>
             <div class="space-y-1">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                错误分类 (error_class)
+                错误分类
               </label>
               <UiInput
                 v-model="sampleFilterErrClass"
@@ -237,7 +235,7 @@
               />
             </div>
             <UiButton variant="outline" size="sm" @click="loadSamples(true)">
-              检索样本
+              检索
             </UiButton>
           </div>
 
@@ -252,8 +250,8 @@
             <table class="w-full border-collapse text-left font-mono text-xs">
               <thead>
                 <tr class="border-b border-border text-muted-foreground">
-                  <th class="py-2.5 pr-4 font-medium">Worker#Seq</th>
-                  <th class="py-2.5 pr-4 font-medium">接口 / Product</th>
+                  <th class="py-2.5 pr-4 font-medium">进程#序号</th>
+                  <th class="py-2.5 pr-4 font-medium">接口</th>
                   <th class="py-2.5 pr-4 font-medium">状态</th>
                   <th class="py-2.5 pr-4 font-medium">延迟</th>
                   <th class="py-2.5 pr-4 font-medium">字节</th>
@@ -281,7 +279,7 @@
                           : 'text-rose-600 dark:text-rose-400'
                       "
                     >
-                      {{ s.http_status ?? (s.success ? "OK" : "ERR") }}
+                      {{ s.http_status ?? (s.success ? "成功" : "失败") }}
                     </span>
                   </td>
                   <td class="py-2 pr-4 text-foreground tabular-nums">
@@ -300,7 +298,7 @@
 
           <div v-if="sampleNextCursor" class="flex justify-center pt-2">
             <UiButton variant="outline" size="sm" @click="loadSamples(false)">
-              加载更多样本
+              加载更多
             </UiButton>
           </div>
         </div>
@@ -311,13 +309,13 @@
             v-if="!run?.verdict || run.verdict.result === 'none'"
             class="py-6 text-muted-foreground"
           >
-            当前压测未配置 SLA 阈值判定规则 (AssertSpec)。
+            当前压测未配置 SLA 阈值判定规则。
           </div>
           <template v-else>
             <div class="flex items-center gap-2 font-medium text-foreground">
               <span>综合结论：</span>
-              <UiBadge :variant="verdictVariant(run.verdict.result)" class="font-mono">
-                {{ run.verdict.result.toUpperCase() }}
+              <UiBadge :variant="verdictVariant(run.verdict.result)">
+                {{ formatVerdictResult(run.verdict.result) }}
               </UiBadge>
             </div>
             <div v-if="run.verdict.failed?.length" class="space-y-2">
@@ -440,7 +438,10 @@ import UiSelect from "../components/ui/UiSelect.vue";
 import {
   formatBytes,
   formatLatencyUs,
+  formatRunMode,
+  formatRunStatus,
   formatTimeMs,
+  formatVerdictResult,
 } from "../helpers/format";
 import { effectiveTheme } from "../modules/theme";
 import { toast } from "../modules/toast";
@@ -484,7 +485,7 @@ const canResume = computed(
 );
 
 const detailTabs = computed(() => [
-  { id: "samples" as const, label: "请求样本明细", count: samples.value.length },
+  { id: "samples" as const, label: "样本明细", count: samples.value.length },
   { id: "verdict" as const, label: "SLA 判定", count: 0 },
   { id: "windows" as const, label: "循环窗口", count: windows.value.length },
   { id: "timeline" as const, label: "事件时间线", count: timeline.value.length },
