@@ -11,12 +11,13 @@ const routes: RouteRecordRaw[] = [
     path: "/login",
     name: "login",
     component: () => import("../views/LoginView.vue"),
-    meta: { public: true },
+    meta: { public: true, title: "登录" },
   },
   {
     path: "/password",
     name: "password",
     component: () => import("../views/ChangePasswordView.vue"),
+    meta: { title: "修改口令" },
   },
   {
     path: "/",
@@ -26,16 +27,19 @@ const routes: RouteRecordRaw[] = [
         path: "",
         name: "workspace",
         component: () => import("../views/WorkspaceView.vue"),
+        meta: { title: "工作台" },
       },
       {
         path: "runs",
         name: "runs",
         component: () => import("../views/RunsView.vue"),
+        meta: { title: "压测任务" },
       },
       {
         path: "runs/:id",
         name: "run-detail",
         component: () => import("../views/RunDetailView.vue"),
+        meta: { title: "压测任务" },
       },
       {
         path: "runs/:id/report",
@@ -46,16 +50,19 @@ const routes: RouteRecordRaw[] = [
         path: "profiles",
         name: "profiles",
         component: () => import("../views/ProfilesView.vue"),
+        meta: { title: "负载预设" },
       },
       {
         path: "docs",
         name: "docs",
         component: () => import("../views/ApiDocsView.vue"),
+        meta: { title: "接口文档" },
       },
       {
         path: "settings",
         name: "settings",
         component: () => import("../views/SettingsView.vue"),
+        meta: { title: "系统设置" },
       },
     ],
   },
@@ -92,6 +99,11 @@ router.beforeEach(async (to) => {
     }
     return { name: "login" };
   }
+});
+
+router.afterEach((to) => {
+  const pageTitle = typeof to.meta.title === "string" ? to.meta.title : "工作台";
+  document.title = `${pageTitle} · x-loadgen`;
 });
 
 export default router;

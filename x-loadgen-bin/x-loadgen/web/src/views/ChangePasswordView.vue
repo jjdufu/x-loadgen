@@ -1,13 +1,16 @@
 <template>
   <div class="relative flex min-h-screen w-screen items-center justify-center bg-background p-6 text-foreground">
-    <!-- Top-Right Light/Black Toggle -->
+    <!-- Top-Right Icon-Only Theme Toggle -->
     <div class="absolute right-6 top-6">
-      <UiButton variant="outline" size="sm" @click="toggleTheme">
-        <Sun v-if="effectiveTheme === 'light'" class="h-3.5 w-3.5" />
-        <Moon v-else class="h-3.5 w-3.5" />
-        <span class="font-mono text-xs">
-          {{ effectiveTheme === "black" ? "Black" : "Light" }}
-        </span>
+      <UiButton
+        variant="ghost"
+        size="icon-sm"
+        :title="effectiveTheme === 'black' ? '切换为浅色模式' : '切换为纯黑模式'"
+        aria-label="切换外观模式"
+        @click="toggleTheme"
+      >
+        <Sun v-if="effectiveTheme === 'light'" class="h-4 w-4" />
+        <Moon v-else class="h-4 w-4" />
       </UiButton>
     </div>
 
@@ -21,10 +24,10 @@
           </div>
           <div>
             <h1 class="text-xl font-semibold tracking-tight text-foreground">
-              首次安全加固：修改管理员口令
+              修改管理员口令
             </h1>
             <p class="text-xs text-muted-foreground">
-              完成口令轮换后系统将自动清理引导文件 <code class="font-mono text-foreground">admin.passwd</code>
+              完成后将自动清理初始引导文件 <code class="font-mono text-foreground">admin.passwd</code>
             </p>
           </div>
         </div>
@@ -37,21 +40,21 @@
       <form class="space-y-4" @submit.prevent="submit">
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            当前口令 (Current Token)
+            当前口令
           </label>
           <UiInput
             v-model="oldToken"
             type="password"
             mono
             autocomplete="current-password"
-            placeholder="输入刚登录使用的初始口令"
+            placeholder="输入初始口令"
           />
         </div>
 
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-              新口令 (至少 24 位可打印 ASCII)
+              新口令
             </label>
             <UiButton
               variant="ghost"
@@ -59,7 +62,7 @@
               @click="generateStrongPassword"
             >
               <Dices class="h-3.5 w-3.5" />
-              <span>随机生成高强度口令</span>
+              <span>随机生成</span>
             </UiButton>
           </div>
           <div class="flex items-center gap-1.5">
@@ -68,7 +71,7 @@
               :type="showNew ? 'text' : 'password'"
               mono
               autocomplete="new-password"
-              placeholder="输入至少 24 字符的新口令"
+              placeholder="输入至少 24 位新口令"
               class="flex-1"
             />
             <UiButton
@@ -89,7 +92,7 @@
           :loading="loading"
           class="w-full"
         >
-          确认修改并进入工作台
+          确认修改
         </UiButton>
       </form>
     </UiCard>
@@ -124,7 +127,7 @@ function generateStrongPassword(): void {
   }
   newToken.value = out;
   showNew.value = true;
-  toast.info("已生成 32 位高强度随机口令，请妥善保存");
+  toast.info("已生成 32 位随机口令，请妥善保存");
 }
 
 async function submit(): Promise<void> {

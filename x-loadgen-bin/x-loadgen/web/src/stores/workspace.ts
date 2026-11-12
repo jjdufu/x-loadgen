@@ -165,6 +165,7 @@ export const rightSidebarSection = ref<RightSidebarSection>(
   initialLayout.rightSection,
 );
 export const horizontalSplit = ref<boolean>(initialLayout.horizontalSplit);
+export const responsePaneOpen = ref<boolean>(false);
 
 watch(
   [leftSidebarExpanded, rightSidebarOpen, rightSidebarSection, horizontalSplit],

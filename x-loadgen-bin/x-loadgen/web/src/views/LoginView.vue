@@ -1,13 +1,16 @@
 <template>
   <div class="relative flex min-h-screen w-screen items-center justify-center bg-background p-6 text-foreground">
-    <!-- Top-Right Light/Black Toggle -->
+    <!-- Top-Right Icon-Only Theme Toggle -->
     <div class="absolute right-6 top-6">
-      <UiButton variant="outline" size="sm" @click="toggleTheme">
-        <Sun v-if="effectiveTheme === 'light'" class="h-3.5 w-3.5" />
-        <Moon v-else class="h-3.5 w-3.5" />
-        <span class="font-mono text-xs">
-          {{ effectiveTheme === "black" ? "Black" : "Light" }}
-        </span>
+      <UiButton
+        variant="ghost"
+        size="icon-sm"
+        :title="effectiveTheme === 'black' ? '切换为浅色模式' : '切换为纯黑模式'"
+        aria-label="切换外观模式"
+        @click="toggleTheme"
+      >
+        <Sun v-if="effectiveTheme === 'light'" class="h-4 w-4" />
+        <Moon v-else class="h-4 w-4" />
       </UiButton>
     </div>
 
@@ -21,24 +24,24 @@
           </span>
           <div>
             <h1 class="text-xl font-semibold tracking-tight text-foreground">
-              登录 x-loadgen
+              登录
             </h1>
             <p class="text-xs text-muted-foreground">
-              API 调试与高并发压测工作台
+              接口调试与压测工作台
             </p>
           </div>
         </div>
 
         <p class="pt-1 text-xs text-muted-foreground leading-relaxed">
-          请输入管理员访问口令（初始引导口令位于数据目录
-          <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">admin.passwd</code>，首次登录后将引导修改口令）。
+          请输入管理员口令（初始口令位于数据目录
+          <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">admin.passwd</code>，首次登录后将引导修改）。
         </p>
       </div>
 
       <form class="space-y-4" @submit.prevent="submit">
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            管理员口令 (Admin Token)
+            管理员口令
           </label>
           <div class="flex items-center gap-1.5">
             <UiInput
@@ -67,7 +70,7 @@
           :loading="loading"
           class="w-full"
         >
-          登录进入工作台
+          登录
         </UiButton>
       </form>
     </UiCard>
