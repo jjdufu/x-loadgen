@@ -133,53 +133,563 @@ deploy/scripts/stop.sh       # 或 down.sh（删容器与网络，数据保留�
 
 默认桥接网络，容器内监听 `0.0.0.0:8757`，宿主机发布 `0.0.0.0:8757`（`config/.env` 里 `X_LOADGEN_BIND=127.0.0.1` 则只开本机）。容器以执行者的 uid:gid 运行，数据目录归执行者。联调可设 `X_LOADGEN_NO_AUTH=1`。端口、资源、host 网络切换、备份恢复和镜像分发见 `deploy/README.md`。本工程独立启动，不写入 mazbri-max 的编排。
 
-## 登录与改密
+## 用 curl 调用 HTTP API
 
-默认鉴权开启时，首次启动会在数据目录（容器内 `/data`，宿主机 `deploy/data/`）的 `admin.passwd` 写入初始口令（文件模式 600）。打开页面进入登录页，提交该口令后必须立即改密：新口令至少 16 个字符，且不能与旧口令相同。改密完成前，业务 API 返回 403（`password_change_required`）。
+命令行本身不能发起压测。所有自动化（建目标、建模板、启动任务、调流量、取报告、判定）都通过 HTTP API 完成，推荐用 `curl` + `jq`。本节覆盖全部接口，例子均可直接复制。完整机器可读清单见无需认证的 [OpenAPI 文档](#openapi-文档)。
 
-改密后 `admin.passwd` 被删除，服务重启也不会再生成。重置口令：
+### 变量
 
-```bash
-deploy/scripts/reset-passwd.sh   # 在容器内执行 x-loadgen reset-passwd，只打印口令文件路径
-```
-
-会话 cookie 名为 `x_loadgen_session`（HttpOnly，SameSite=Lax）。用 curl 调用 API 时带上 cookie，例如：
+在 shell 里先设定这些变量。后面所有例子都依赖它们。
 
 ```bash
-curl -c /tmp/xlg.cookie -b /tmp/xlg.cookie \
-  -H 'Content-Type: application/json' \
-  -d '{"token":"<admin.passwd 或已改密的口令>"}' \
-  http://127.0.0.1:8757/api/v1/auth/login
+# 服务地址（按实际部署修改）
+XLG=http://127.0.0.1:8757
 
-# 若 must_change_password 为 true：
-curl -c /tmp/xlg.cookie -b /tmp/xlg.cookie \
-  -H 'Content-Type: application/json' \
-  -d '{"old_token":"<旧口令>","new_token":"<至少 16 位的新口令>"}' \
-  http://127.0.0.1:8757/api/v1/auth/password
+# 口令只放在权限 600 的文件里，不要写在命令行、不要 echo、不要 export 到可被 ps 看见的环境后再直接拼进 curl 参数
+TOKEN_FILE=${TOKEN_FILE:-$HOME/.config/x-loadgen/token}
+HDR=${HDR:-$HOME/.config/x-loadgen/auth.hdr}
+
+# 用文件生成请求头，令牌不会进入 shell 历史
+write_hdr() {
+  umask 077
+  mkdir -p "$(dirname "$HDR")"
+  printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$(tr -d '\n' < "$TOKEN_FILE")" > "$HDR"
+}
+
+# 已认证的 JSON 请求；下载二进制时不要加 -H Content-Type，用下面的 xlg_get
+xlg() { curl -fsS -H @"$HDR" "$@"; }
 ```
 
-健康检查：`GET /health` 或 `x-loadgen health`，成功时返回 `{"ok":true,"version":"<版本>"}`。
+被压的网关地址用 `$GW` 表示，必须是 **x-loadgen 进程能够访问** 的 URL（容器部署时不要填 `127.0.0.1` 指向宿主机上的网关）。
 
-## 在页面里配置并启动任务
+### 使用提示
 
-登录（或 `--no-auth`）之后：
+- JSON 请求体始终用单引号包起来，或 `--data-binary @file.json`，避免 shell 把 `$` 和 `"` 吃掉。
+- 默认加上 `-fsS`：`-f` 在 4xx/5xx 时以状态 22 退出（便于脚本判断），`-sS` 安静但保留错误信息。需要看 HTTP 状态时用 `-w '%{http_code}'`，或临时去掉 `-f`。
+- **永远不要**把口令写在命令行上（会进历史记录，也可能出现在 `ps` 里）。从文件读取；改密后立刻更新 `$TOKEN_FILE` 并重新执行 `write_hdr`。
+- 需要排错时，把响应交给 `jq`：`xlg ... | jq .`。`jq` 在例子里用于抽取 `id` 等字段。
+- 时间戳均为 Unix 毫秒。
+
+### 鉴权
+
+登录口令就是长期令牌：不自动过期，只在改密或 `reset-passwd` 之后失效。每个已认证请求用 `Authorization: Bearer <口令>` 或 Cookie `x_loadgen_token` 携带同一份口令。二者等价，脚本推荐 Bearer。
+
+Cookie 属性：`HttpOnly`、`SameSite=Lax`、`Path=/`，无 `Secure`、无 `Max-Age`（浏览器会话 cookie）。登出只清 cookie，口令本身仍然有效。
+
+#### 首次启动与必须改密
+
+默认开启鉴权。首次启动会在数据目录下生成 `admin.passwd`（模式 600，64 位十六进制随机口令）。此时 `must_change_password` 为 true，除登录、改密、健康检查和 OpenAPI 外，业务接口返回 **403** `password_change_required`。
+
+新口令规则：至少 **24** 个字符；仅限可打印 ASCII；不得包含空白、`"`、`;`、`,`、`\`；必须与旧口令不同。改密成功后 `admin.passwd` 被删除，重启也不会再生成。
+
+```bash
+# 把初始口令拷到 TOKEN_FILE（不要 cat 到终端）
+umask 077
+mkdir -p "$(dirname "$TOKEN_FILE")"
+# 数据目录在容器内部是 /data，宿主机上一般是 deploy/data/admin.passwd
+cp -f /path/to/data/admin.passwd "$TOKEN_FILE"
+
+# 登录（响应里的 token 与口令相同，同时 Set-Cookie）
+curl -fsS -X POST "$XLG/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  --data-binary @<(jq -n --rawfile t "$TOKEN_FILE" '{token: ($t | rtrimstr("\n"))}') \
+  | jq '{must_change_password}'
+
+# 改密：新口令先写入文件，再交给接口。成功后旧口令立即失效，Set-Cookie 换成新口令。
+NEW_FILE=$(mktemp); chmod 600 "$NEW_FILE"
+# 用自己保管的新口令覆盖 NEW_FILE，至少 24 字符，例如：openssl rand -hex 16 > "$NEW_FILE"
+write_hdr   # 先用旧口令生成 $HDR
+curl -fsS -X POST "$XLG/api/v1/auth/password" \
+  -H @"$HDR" \
+  --data-binary @<(jq -n --rawfile o "$TOKEN_FILE" --rawfile n "$NEW_FILE" \
+      '{old_token: ($o | rtrimstr("\n")), new_token: ($n | rtrimstr("\n"))}') \
+  | jq '{must_change_password, auth_required}'
+mv -f "$NEW_FILE" "$TOKEN_FILE"
+write_hdr
+```
+
+改密之后，用旧口令访问会得到 **401** `unauthorized`；用新口令（Bearer 或重新登录）立即可以访问。进程重启后同一口令仍然有效，不必再登录。
+
+用 curl 做浏览器式 cookie 登录（把 cookie 存进 jar，后续 `-b` 带上，可以不写 Bearer）：
+
+```bash
+COOKIE_JAR=$HOME/.config/x-loadgen/cookies
+umask 077
+curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$XLG/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  --data-binary @<(jq -n --rawfile t "$TOKEN_FILE" '{token: ($t | rtrimstr("\n"))}') \
+  | jq '{must_change_password}'
+curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$XLG/api/v1/auth/me" | jq .
+curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$XLG/api/v1/auth/logout" | jq .
+# 登出只清 cookie，口令仍有效；再用 Bearer 或重新登录即可
+```
+
+当前身份：
+
+```bash
+xlg "$XLG/api/v1/auth/me" | jq .
+# {"auth_required":true,"must_change_password":false}
+```
+
+重置口令（另一个进程写入新的 `admin.passwd`，内存缓存会在下一次请求按 `updated_at` 失效，旧口令立即 401，并再次要求改密）：
+
+```bash
+# 容器部署
+deploy/scripts/reset-passwd.sh          # 只打印口令文件路径，不打印内容
+# 或直接
+x-loadgen reset-passwd --data-dir /path/to/data
+```
+
+#### `--no-auth`
+
+`X_LOADGEN_NO_AUTH=1` 或 `x-loadgen serve --no-auth` 时，所有 API 无需令牌，也不会生成 `admin.passwd`。此时调用登录或改密会返回 **400** `auth_disabled`。`GET /api/v1/auth/me` 返回 `{"auth_required":false,"must_change_password":false}`。下面的例子在 `--no-auth` 下只需把 `xlg` 换成 `curl -fsS -H 'Content-Type: application/json'`。
+
+### 元信息与健康检查
+
+`GET /health` 和 `GET /api/v1/openapi.json` **无需认证**。
+
+```bash
+curl -fsS "$XLG/health" | jq .
+# {"ok":true,"version":"<版本>"}
+# 也可以：x-loadgen health --url "$XLG/health"（失败以非 0 退出）
+
+curl -fsS "$XLG/api/v1/openapi.json" | jq '{openapi, title: .info.title, paths: (.paths | keys | length)}'
+
+xlg "$XLG/api/v1/meta" | jq .
+# version、auth_required、max_qps、max_concurrency、running_qps、running_concurrency
+```
+
+### OpenAPI 文档
+
+完整 OpenAPI 3.0 文档（公开，无需登录）：
+
+```text
+GET $XLG/api/v1/openapi.json
+```
+
+可导入 Postman、Insomnia，或用浏览器打开。路径与运行中的路由一一对应。
+
+### 目标（Targets）
+
+协议为 `http`（普通 HTTP）或 `mazbri`。列表不返回密钥；详情（`GET /targets/{id}`）包含密钥明文，请妥善保管输出。
+
+```bash
+# 创建一个普通 HTTP 目标（租户只能是 encryption_mode=none，不能填加密或绑定字段）
+TARGET=$(xlg -X POST "$XLG/api/v1/targets" --data-binary @- <<EOF | jq .
+{
+  "name": "http-demo",
+  "protocol": "http",
+  "gateway_base_url": "$GW",
+  "insecure_skip_verify": true,
+  "note": "curl 手册演示",
+  "tenants": [
+    {"name": "plain", "weight": 1, "api_key": "demo-key", "encryption_mode": "none"}
+  ],
+  "products": [
+    {
+      "name": "probe",
+      "product_id": "P001",
+      "path": "/ok",
+      "method": "GET",
+      "weight": 1
+    }
+  ]
+}
+EOF
+)
+echo "$TARGET" | jq '{id, name, protocol}'
+TARGET_ID=$(echo "$TARGET" | jq -r .id)
+
+xlg "$XLG/api/v1/targets" | jq '[.[] | {id, name, protocol, gateway_base_url}]'
+xlg "$XLG/api/v1/targets/$TARGET_ID" | jq '{id, name, tenants: [.tenants[].name], products: [.products[].name]}'
+
+# 更新（PUT）。省略 tenants / products 时保留原有子资源；省略 client_cert、client_key、ca_cert 等密钥字段会被清空，修改时要带上原值或有意覆盖
+xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID" --data-binary @- <<EOF | jq '{id, note}'
+{"name":"http-demo","protocol":"http","gateway_base_url":"$GW","insecure_skip_verify":true,"note":"已更新"}
+EOF
+
+# 删除（若仍有模板引用会 409 conflict）
+# xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID"    # 204 无响应体
+```
+
+mazbri 目标在创建时一并给出租户的协议与密码学字段（`encryption_mode`、`suite` 或 `data_alg`/`mac_alg`、`tenant_id`、`tenant_key_base64`、`key_version`、`binding_*` 等），详见下文「租户」和后面的「接入 mazbri 网关」。API Key 在普通 HTTP 下以 `X-API-KEY` 头发送。
+
+### 租户（Tenants）
+
+挂在目标下，可单独增删改。普通 HTTP 目标只接受 `encryption_mode=none` 的明文租户。
+
+```bash
+# 列表 / 创建
+xlg "$XLG/api/v1/targets/$TARGET_ID/tenants" | jq '[.[] | {id, name, weight, encryption_mode}]'
+
+TENANT=$(xlg -X POST "$XLG/api/v1/targets/$TARGET_ID/tenants" --data-binary @- <<'EOF'
+{"name":"plain-2","weight":1,"api_key":"demo-key-2","encryption_mode":"none"}
+EOF
+)
+TENANT_ID=$(echo "$TENANT" | jq -r .id)
+echo "$TENANT" | jq '{id, name, weight}'
+
+xlg "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID" | jq '{id, name, encryption_mode}'
+
+xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID" --data-binary @- <<'EOF' | jq '{id, weight}'
+{"name":"plain-2","weight":2,"api_key":"demo-key-2","encryption_mode":"none"}
+EOF
+
+# 删除：204
+xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID"
+```
+
+为 mazbri 租户生成请求绑定密钥对（私钥存进租户，响应 **只返回公钥**）：
+
+```bash
+# 目标协议必须是 mazbri；alg 例如 sm2-sign
+xlg -X POST "$XLG/api/v1/targets/$MAZBRI_TARGET_ID/tenants/$MAZBRI_TENANT_ID/binding-keypair" \
+  --data-binary '{"alg":"sm2-sign","kid":"kid-curl-demo"}' \
+  | jq '{binding_kid, binding_alg, public_key_pem}'
+```
+
+租户上与协议 / 密码学相关的字段包括：`api_key`、`encryption_mode`（`none` / `request` / `response` / `full`）、`tenant_id`、`tenant_key_base64`、`key_version`、`suite`、`data_alg`、`mac_alg`、`require_signature`、`allow_insecure`、`binding_kid`、`binding_alg`、`binding_key`、`binding_public_key`。生成密钥对后 `binding_key` 由服务保存，详情接口会返回，列表和报告会脱敏。
+
+### 产品（Products）
+
+```bash
+xlg "$XLG/api/v1/targets/$TARGET_ID/products" | jq '[.[] | {id, name, product_id, path, method, weight}]'
+
+PRODUCT=$(xlg -X POST "$XLG/api/v1/targets/$TARGET_ID/products" --data-binary @- <<'EOF'
+{
+  "name": "echo",
+  "product_id": "P-ECHO",
+  "path": "/ok",
+  "method": "POST",
+  "weight": 1,
+  "body_json": {"seq": "{{seq}}"}
+}
+EOF
+)
+PRODUCT_ID=$(echo "$PRODUCT" | jq -r .id)
+
+xlg "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID" | jq '{id, name, method, path}'
+
+xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID" --data-binary @- <<'EOF' | jq '{id, weight}'
+{"name":"echo","product_id":"P-ECHO","path":"/ok","method":"POST","weight":2,"body_json":{"seq":"{{seq}}"}}
+EOF
+
+# 删除：204
+xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID"
+```
+
+可选字段：`qps_limit`、`timeout_secs`、`query_json`、`headers_json`、`body_json`、`expect_transport`、`expect_checks_json`。
+
+### 模板（Templates）
+
+模板保存一次压测的全部参数，启动任务必须引用一份已保存的模板（按 id 或名称），并可以在启动时覆盖部分字段。
+
+```bash
+TEMPLATE=$(xlg -X POST "$XLG/api/v1/templates" --data-binary @- <<EOF
+{
+  "name": "nightly-once",
+  "target_id": "$TARGET_ID",
+  "model": "open_loop",
+  "qps": 20,
+  "concurrency": 4,
+  "requests": 50,
+  "warmup_secs": 0,
+  "ramp_secs": 0,
+  "timeout_secs": 5,
+  "connect_timeout_secs": 5,
+  "processes": 1,
+  "qps_mode": "total",
+  "requests_mode": "total",
+  "loop_enabled": false
+}
+EOF
+)
+TEMPLATE_ID=$(echo "$TEMPLATE" | jq -r .id)
+echo "$TEMPLATE" | jq '{id, name, qps, requests, loop_enabled}'
+
+xlg "$XLG/api/v1/templates" | jq '[.[] | {id, name, qps, requests, duration_secs, loop_enabled}]'
+xlg "$XLG/api/v1/templates/$TEMPLATE_ID" | jq '{id, name, target_id, qps, concurrency, processes}'
+
+# 再存一份循环模板，供 loop 模式使用
+LOOP_TPL=$(xlg -X POST "$XLG/api/v1/templates" --data-binary @- <<EOF
+{
+  "name": "nightly-loop",
+  "target_id": "$TARGET_ID",
+  "model": "open_loop",
+  "qps": 10,
+  "concurrency": 2,
+  "requests": 20,
+  "timeout_secs": 5,
+  "processes": 1,
+  "loop_enabled": true,
+  "rounds": 100,
+  "loop_interval_secs": 2
+}
+EOF
+)
+LOOP_TEMPLATE_ID=$(echo "$LOOP_TPL" | jq -r .id)
+
+# 更新 / 删除
+# xlg -X PUT "$XLG/api/v1/templates/$TEMPLATE_ID" --data-binary @file.json
+# xlg -X DELETE "$XLG/api/v1/templates/$TEMPLATE_ID"    # 204；被运行中任务占用时可能 409
+```
+
+常用字段：`model`（`open_loop` / `closed_loop`）、`qps`、`concurrency`、`requests` 与 `duration_secs` 二选一、`warmup_secs`、`ramp_secs`、`timeout_secs`、`connect_timeout_secs`、`token_refresh_skew_secs`、`include_request_id`、`processes`（≥1，大于 1 时按进程拆分）、`qps_mode` / `requests_mode`（`total` 或 `per_process`）、`loop_enabled`、`rounds`（空表示循环不限轮次）、`loop_interval_secs`、`product_ids`、`weight_overrides`、`expected_reasons`、`detail_retain_days`、`detail_retain_rows`、`note`。
+
+### 启动任务（Runs）
+
+`POST /api/v1/runs` 必须指定已保存的模板：`template`（id 或名称，优先）或 `template_id`。同一次请求里可以带覆盖字段，只作用于这次运行的内存副本，**已保存的模板不会被改掉**。`requests` 与 `duration_secs` 互斥，设置其中一个会清掉另一个。`rounds` 与 `clear_rounds` 不能同时给；`clear_rounds: true` 用于把循环改为不限轮次。
+
+`mode` 为 `once` 或 `loop`（可省略，默认跟随模板的 `loop_enabled`）。`once` 跑完 `requests` 或 `duration_secs` 即结束；`loop` 按 `rounds` 与 `loop_interval_secs` 重复窗口。`processes`、`concurrency`、`qps` 控制进程数、并发与目标速率；`qps_mode=total` 表示所有进程合计，`per_process` 表示每个进程各自那么多。
+
+可选 `assert`：`p50_ms` / `p95_ms` / `p99_ms` / `max_ms`（必须 > 0）、`max_error_rate`（0–1）、`min_qps_ratio`（> 0，且创建时模板或覆盖里要有 `qps`）。比较采用闭区间（等于阈值算通过）。达成 QPS = 样本数 ÷ 墙钟耗时（`started_at` 到 `ended_at` 或当前时间）。断言冻结在任务快照里。
+
+`?wait=true&timeout=N`：请求会等到任务离开 `running`/`stopping` 再返回 201；`timeout` 默认 60 秒、最大 600、最小 1。超时返回 **409**，`error.code` 为 `wait_timeout`，同时带上当前 `run`。
+
+```bash
+# 按模板 id 启动一次任务（once），不覆盖参数
+xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<EOF | jq '{id, status, template_id, current_qps, mode}'
+{"template_id":"$TEMPLATE_ID","mode":"once"}
+EOF
+
+# 按模板名称启动，并覆盖 QPS / 请求数 / 进程，附带断言；wait 等到结束
+RUN=$(xlg -X POST "$XLG/api/v1/runs?wait=true&timeout=60" --data-binary @- <<'EOF'
+{
+  "template": "nightly-once",
+  "mode": "once",
+  "qps": 15,
+  "concurrency": 4,
+  "requests": 30,
+  "processes": 1,
+  "assert": {
+    "p99_ms": 5000,
+    "max_error_rate": 0.05,
+    "min_qps_ratio": 0.5
+  }
+}
+EOF
+)
+echo "$RUN" | jq '{id, status, current_qps, verdict}'
+RUN_ID=$(echo "$RUN" | jq -r .id)
+
+# 确认已保存的模板没被改掉
+xlg "$XLG/api/v1/templates/$TEMPLATE_ID" | jq '{qps, requests}'
+# 覆盖只出现在这次任务的 snapshot 里
+xlg "$XLG/api/v1/runs/$RUN_ID" | jq '{status, snapshot_qps: .snapshot.template.qps, snapshot_requests: .snapshot.template.requests, verdict}'
+
+# 按名称启动循环任务（不要 wait，或接受 409 wait_timeout）
+LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<'EOF'
+{
+  "template": "nightly-loop",
+  "mode": "loop",
+  "qps": 8,
+  "rounds": 50,
+  "loop_interval_secs": 2,
+  "assert": {"max_error_rate": 0.2, "p99_ms": 5000}
+}
+EOF
+)
+LOOP_ID=$(echo "$LOOP" | jq -r .id)
+echo "$LOOP" | jq '{id, status, mode, current_qps}'
+```
+
+同时已有任务在跑时，API **不会**因此返回 409（页面会先确认）。若触发全局 `max_qps` / `max_concurrency` 上限则 400 `invalid_request`。模板不存在 404；非法断言或两个互斥字段同时给出 400。
+
+### 运行中调整流量
+
+只对 `running` 的任务有效：
+
+```bash
+xlg -X PATCH "$XLG/api/v1/runs/$LOOP_ID/traffic" --data-binary '{"qps":20,"concurrency":4}' \
+  | jq '{id, status, current_qps, current_concurrency}'
+```
+
+`qps` 与 `concurrency` 都是可选的，只传要改的字段。超过全局上限会 400。
+
+### 停止、续跑、删除
+
+```bash
+# 停止（对 running / stopping）；停止后再续跑
+xlg -X POST "$XLG/api/v1/runs/$LOOP_ID/stop" | jq '{id, status}'
+# 等到 status 变为 stopped（或 finished / failed）
+xlg "$XLG/api/v1/runs/$LOOP_ID" | jq .status
+
+# 续跑：仅 stopped / interrupted 可 resume
+xlg -X POST "$XLG/api/v1/runs/$LOOP_ID/resume" | jq '{id, status}'
+
+# 再停一次，然后删除。运行中或 stopping 的任务不能删（409），需先停止。
+xlg -X POST "$XLG/api/v1/runs/$LOOP_ID/stop" | jq '{id, status}'
+# 等待结束后：
+xlg -X DELETE "$XLG/api/v1/runs/$LOOP_ID"    # 204，同时删除任务目录
+```
+
+`GET /api/v1/runs` 可加 `?status=running`（或 `finished`、`stopped` 等）过滤。`GET /api/v1/runs/{id}` 返回详情，含脱敏后的 `snapshot` 和 `verdict`。
+
+### 统计、时序、时间线、窗口、事件、样本
+
+```bash
+xlg "$XLG/api/v1/runs/$RUN_ID/stats" | jq '{status, samples, success, failure, p50_us, p95_us, p99_us, max_us, current_qps, in_flight}'
+
+xlg "$XLG/api/v1/runs/$RUN_ID/timeseries" | jq '{count: (.points | length), last: .points[-1]}'
+# points[]: unix_sec 或 started_at、samples、success、failure、bytes 等
+
+xlg "$XLG/api/v1/runs/$RUN_ID/timeline" | jq '.events[] | {ts, event, payload}'
+# 例如 start / window / traffic / stop / end
+
+xlg "$XLG/api/v1/runs/$RUN_ID/windows" | jq '.windows[] | {window_index, samples, success, failure, p99_us}'
+
+# 样本：默认最多 100 条，limit 最大 1000。可按 product_id、success、from_ms、to_ms 过滤；
+# 用 after_end_unix_ms、after_worker、after_seq 做 keyset 翻页（响应里的 next 原样带回）。
+xlg "$XLG/api/v1/runs/$RUN_ID/samples?limit=20&success=true" | jq '{count: (.items | length), next}'
+
+# 实时事件：SSE，事件名为 stats，约每秒一条。curl -N 关闭缓冲；Ctrl-C 结束。
+# curl -NS -H @"$HDR" "$XLG/api/v1/runs/$LOOP_ID/events"
+```
+
+百分位在接口里以微秒（`*_us`）给出；断言字段则是毫秒（`*_ms`）。
+
+### 判定（verdict）与退出码
+
+`GET /api/v1/runs/{id}/verdict` 的 HTTP 状态是为了让 `curl -f` 直接当脚本退出码用（有意不用 202：`curl -f` 把 2xx 当成成功）：
+
+| 结果 | HTTP | curl -f 退出码 | 含义 |
+| --- | --- | --- | --- |
+| `pass` 或 `none` | 200 | 0 | 通过，或该任务没有设置断言 |
+| `fail` | 422 | 22 | 至少一项阈值未满足（`failed[]` 列出 check / wanted / actual） |
+| `pending` | 409 | 22 | 任务仍在 `running`/`stopping`，已给出目前的 actual |
+
+响应体始终是 `Verdict`：`result`、`assert`、`actual`（含 `samples`、`error_rate`、`p99_ms`、`achieved_qps`、`qps_ratio` 等）、`failed`。任务详情和 `report.json` 里也有同样的 `verdict`。
+
+```bash
+# 已结束且通过：-f 成功，退出 0
+xlg "$XLG/api/v1/runs/$RUN_ID/verdict" | jq '{result, actual, failed}'
+
+# 在脚本里区分 fail / pending（不要只用 -f，因为二者都是非 0）
+code=$(curl -sS -o /tmp/verdict.json -w '%{http_code}' -H @"$HDR" \
+  "$XLG/api/v1/runs/$RUN_ID/verdict")
+jq '{result, failed}' /tmp/verdict.json
+case "$code" in
+  200) echo "pass 或 none" ;;
+  422) echo "断言失败"; exit 2 ;;
+  409) echo "仍在运行"; exit 3 ;;
+  *)   echo "意外状态 $code"; exit 1 ;;
+esac
+```
+
+### 下载报告
+
+```bash
+# JSON 正文（与 GET .../report 相同，另带 Content-Disposition）
+xlg "$XLG/api/v1/runs/$RUN_ID/report" | jq '{id, status, counters, percentiles, verdict}'
+
+xlg -o "run-$RUN_ID-report.json" "$XLG/api/v1/runs/$RUN_ID/report.json"
+# HTML 是完整页面，嵌入了同一份 JSON（含 verdict）
+curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/report.html"
+```
+
+报告和快照会脱敏密钥（`api_key`、`binding_key`、`tenant_key_base64`、`client_key` 等）。
+
+### 错误格式与状态码
+
+除判定接口（正文为 `Verdict`）和部分 204 删除外，错误响应统一为：
+
+```json
+{"error":{"code":"<code>","message":"<说明>"}}
+```
+
+`wait=true` 超时时是同一结构，并多一个 `run` 字段。
+
+| HTTP | code | 典型情况 |
+| --- | --- | --- |
+| 400 | `invalid_request` | 参数非法、断言越界、互斥字段、超过全局 QPS/并发上限 |
+| 400 | `auth_disabled` | `--no-auth` 下调用登录或改密 |
+| 401 | `unauthorized` | 未带令牌、口令错误、改密/重置后仍用旧口令 |
+| 403 | `password_change_required` | 首次口令尚未更改时访问业务接口 |
+| 404 | `not_found` | 目标、租户、产品、模板、任务不存在 |
+| 409 | `conflict` | 资源冲突（例如删除仍被引用的目标、删除运行中的任务） |
+| 409 | `wait_timeout` | `POST /runs?wait=true` 在 timeout 内未结束（附带 `run`） |
+| 409 | （verdict 正文） | 判定结果为 `pending`（正文是 Verdict，不是 Error） |
+| 422 | （verdict 正文） | 判定结果为 `fail`（正文是 Verdict，不是 Error） |
+| 500 | `internal` | 未预期的服务端错误 |
+
+### 端到端自动化脚本示例
+
+下面的脚本：按名称启动一个循环任务、轮询统计、把 QPS 调高、停止、下载报告、检查判定。把前面的「变量」「鉴权」和已有的 `nightly-loop` 模板准备好之后即可运行。
+
+```bash
+#!/usr/bin/env bash
+# 依赖：curl、jq。令牌已写入 $TOKEN_FILE 并执行过 write_hdr。
+set -euo pipefail
+: "${XLG:?set XLG}" "${HDR:?run write_hdr first}"
+xlg() { curl -fsS -H @"$HDR" "$@"; }
+
+echo "== 启动循环任务"
+LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<'EOF'
+{
+  "template": "nightly-loop",
+  "mode": "loop",
+  "qps": 8,
+  "concurrency": 2,
+  "rounds": 50,
+  "loop_interval_secs": 2,
+  "assert": {"p99_ms": 5000, "max_error_rate": 0.2}
+}
+EOF
+)
+LOOP_ID=$(echo "$LOOP" | jq -r .id)
+echo "$LOOP" | jq '{id, status, current_qps}'
+
+echo "== 监控约 5 秒"
+for i in 1 2 3 4 5; do
+  xlg "$XLG/api/v1/runs/$LOOP_ID/stats" \
+    | jq -c '{samples, success, failure, p99_us, current_qps, status}'
+  sleep 1
+done
+
+echo "== 把 QPS 调到 20"
+xlg -X PATCH "$XLG/api/v1/runs/$LOOP_ID/traffic" --data-binary '{"qps":20}' \
+  | jq '{id, current_qps, current_concurrency, status}'
+
+sleep 2
+echo "== 停止并等待结束"
+xlg -X POST "$XLG/api/v1/runs/$LOOP_ID/stop" | jq '{id, status}'
+for i in $(seq 1 30); do
+  ST=$(xlg "$XLG/api/v1/runs/$LOOP_ID" | jq -r .status)
+  echo "  status=$ST"
+  case "$ST" in
+    stopped|finished|failed|interrupted) break ;;
+  esac
+  sleep 1
+done
+
+echo "== 下载报告"
+xlg -o "run-$LOOP_ID-report.json" "$XLG/api/v1/runs/$LOOP_ID/report.json"
+jq '{id, status, counters, percentiles, verdict}' "run-$LOOP_ID-report.json"
+
+echo "== 判定"
+code=$(curl -sS -o /tmp/verdict.json -w '%{http_code}' -H @"$HDR" \
+  "$XLG/api/v1/runs/$LOOP_ID/verdict")
+jq '{result, failed, actual}' /tmp/verdict.json
+case "$code" in
+  200) echo "verdict 通过或未设置断言"; exit 0 ;;
+  422) echo "verdict 未通过"; exit 2 ;;
+  409) echo "仍在运行（不应发生，已停止）"; exit 3 ;;
+  *)   echo "意外 HTTP $code"; exit 1 ;;
+esac
+```
+
+运行中的循环任务不要对 `POST /runs?wait=true` 设过短的 timeout 却期望 201：到点会 409 `wait_timeout`，任务本身继续跑，用返回体里的 `run.id` 再去 stop。
+
+### 在页面里配置并启动任务
+
+登录（或 `--no-auth`）之后也可以用页面完成同样的事情：
 
 1. 打开「目标」，新建目标。选择协议（mazbri 网关 / 普通 HTTP），填写名称和 `gateway_base_url`，再配置租户与产品。mazbri 的加密与签名字段见下一节。
 2. 打开「模板」，新建模板并绑定目标。单次任务填写 `requests` 或 `duration_secs`；循环任务打开 loop，填写 `rounds` 与 `loop_interval_secs`。
-3. 打开「任务」，选择模板和模式（`once` / `loop`）后启动。若已有正在运行的任务，页面会先确认再启动；API 不会只因为另有任务在跑就返回 409。
-4. 任务详情页可看实时统计、调整流量、停止或续跑。报告页查看脱敏摘要，并可下载 JSON / HTML。
+3. 打开「任务」，选择模板和模式（`once` / `loop`），可选填写断言后启动。若已有正在运行的任务，页面会先确认再启动；API 不会只因为另有任务在跑就返回 409。
+4. 任务详情页可看实时统计、判定、调整流量、停止或续跑。报告页查看脱敏摘要和判定，并可下载 JSON / HTML。
 
 `gateway_base_url` 必须是**容器能够访问**的地址：IP、公网 URL，或 DNS 可解析的域名加端口。不要填写 `http://127.0.0.1:8888` 来指向宿主机上的网关（那是容器自己的回环）。指向宿主机上的监听时，使用宿主机在该桥接网络上的地址，或该服务对容器可见的地址。
-
-对应的 HTTP API（均在 `/api/v1` 下，需登录 cookie，除非 `--no-auth`）：
-
-- `POST /targets`、`GET /targets`、`GET|PUT|DELETE /targets/{id}` 以及租户、产品子资源
-- `POST /targets/{id}/tenants/{tid}/binding-keypair`（`{"alg":"sm2-sign","kid":"..."}`）为租户生成签名密钥对，只返回公钥
-- `POST /templates`、`GET /templates`、`GET|PUT|DELETE /templates/{id}`
-- `POST /runs`（`{"template_id":"...","mode":"once"|"loop"}`）启动任务
-- `GET /runs`、`GET /runs/{id}`、`GET /runs/{id}/stats`
-- `POST /runs/{id}/stop`、`POST /runs/{id}/resume`
-- `GET /runs/{id}/report`、`GET /runs/{id}/report.json`、`GET /runs/{id}/report.html`
 
 页面路由：`/login`、`/password`、`/targets`、`/templates`、`/runs`、`/runs/:id`、`/runs/:id/report`、`/settings`。
 

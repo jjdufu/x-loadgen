@@ -50,7 +50,9 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 
 访问地址里的 IP 取 `X_LOADGEN_ACCESS_HOST`；留空时自动探测本机内网 IP（`ip route get 1.1.1.1` 的 src → `hostname -I` 第一个 → `127.0.0.1`），只用于打印。
 
-用 `admin.passwd` 里的口令登录页面，系统要求立即改密；改密后该文件被删除，重启也不会再生成。忘记口令时执行 `scripts/reset-passwd.sh`，重新生成 `data/admin.passwd`，脚本只打印路径，不打印内容。
+用 `admin.passwd` 里的口令登录页面，系统要求立即改密；改密后该文件被删除，重启也不会再生成。新口令至少 24 个字符（可打印 ASCII，不含空白、引号、分号、逗号和反斜杠）。忘记口令时执行 `scripts/reset-passwd.sh`，重新生成 `data/admin.passwd`，脚本只打印路径，不打印内容。
+
+登录口令就是长期令牌，不自动过期，只在改密或 `reset-passwd` 后失效。脚本用 `Authorization: Bearer <口令>`（或 cookie `x_loadgen_token`）调用 API，不必先登录。完整的 curl 手册（全部接口、变量约定、端到端脚本、错误码）写在仓库根目录 [README.md](../README.md) 的「用 curl 调用 HTTP API」。联调可设 `X_LOADGEN_NO_AUTH=1`。
 
 ## 命令
 
