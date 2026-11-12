@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0](https://github.com/jjdufu/x-loadgen/compare/v0.2.0...v0.3.0) (2026-11-12)
+
+### ⚠ BREAKING CHANGES
+
+* 重构为 Hoppscotch 风格双协议接口调试与高并发压测工作台 ([6d5fc5e](https://github.com/jjdufu/x-loadgen/commit/6d5fc5ef61dcf3eddc26db97e0006ddceeee594f))
+
+### Features
+
+* 重构为 Hoppscotch 风格双协议接口调试与高并发压测工作台 ([6d5fc5e](https://github.com/jjdufu/x-loadgen/commit/6d5fc5ef61dcf3eddc26db97e0006ddceeee594f))
+
 ## [0.2.0](https://github.com/jjdufu/x-loadgen/compare/v0.1.0...v0.2.0) (2026-11-12)
 
 ### ⚠ BREAKING CHANGES
