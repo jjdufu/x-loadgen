@@ -3,7 +3,7 @@
     <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          租户标识名称 (Name) *
+          租户名称 *
         </label>
         <UiInput
           :model-value="tenant.name"
@@ -15,7 +15,7 @@
 
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          流量权重 (Weight)
+          流量权重
         </label>
         <UiInput
           :model-value="tenant.weight"
@@ -28,14 +28,14 @@
 
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          换票 API Key (/auth/token) *
+          换票 API Key *
         </label>
         <div class="flex items-center gap-1.5">
           <UiInput
             :model-value="tenant.api_key ?? ''"
             :type="showApiKey ? 'text' : 'password'"
             mono
-            placeholder="客户端 api_key (支持 <<var>>)"
+            placeholder="支持 <<var>>"
             class="flex-1"
             @update:model-value="(v) => patch({ api_key: v })"
           />
@@ -58,7 +58,7 @@
         <div class="flex items-center gap-2">
           <ShieldCheck class="h-4 w-4 text-foreground shrink-0" />
           <span class="text-sm font-semibold text-foreground">
-            载荷信封加密 (Transport Envelope)
+            信封加密
           </span>
         </div>
 
@@ -84,19 +84,19 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              网关租户 ID (tenant_id) *
+              网关租户 ID *
             </label>
             <UiInput
               :model-value="tenant.tenant_id ?? ''"
               mono
-              placeholder="例如 t-001 或 UUID"
+              placeholder="例如 t-001"
               @update:model-value="(v) => patch({ tenant_id: v })"
             />
           </div>
 
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              密钥版本 (key_version) *
+              密钥版本 *
             </label>
             <UiInput
               :model-value="tenant.key_version ?? ''"
@@ -108,21 +108,21 @@
 
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              算法配置模式
+              算法配置
             </label>
             <UiSelect
               :model-value="useCustomCipher ? 'custom' : 'suite'"
               @update:model-value="toggleCipherSource"
             >
-              <option value="suite">命名密码套件 (Suite 推荐)</option>
-              <option value="custom">自定义数据 / MAC 算法组合</option>
+              <option value="suite">命名密码套件</option>
+              <option value="custom">自定义算法组合</option>
             </UiSelect>
           </div>
         </div>
 
         <div v-if="!useCustomCipher" class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            命名套件 (Suite) *
+            密码套件 *
           </label>
           <UiSelect
             :model-value="tenant.suite ?? 'suite/tenant-default-2026-11'"
@@ -145,7 +145,7 @@
         <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              对称加密算法 (data_alg) *
+              对称加密算法 *
             </label>
             <UiSelect
               :model-value="tenant.data_alg ?? 'aes-256-gcm'"
@@ -160,7 +160,7 @@
 
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              外挂消息认证码 (mac_alg)
+              外挂消息认证码
             </label>
             <UiSelect
               :model-value="tenant.mac_alg ?? ''"
@@ -177,7 +177,7 @@
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-              租户对称主密钥 Base64 (tenant_key_base64) *
+              对称主密钥 (Base64) *
             </label>
             <UiButton
               variant="ghost"
@@ -185,7 +185,7 @@
               @click="fillRandomBase64Key('tenant_key_base64', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
-              <span>生成 32B Base64 密钥</span>
+              <span>随机生成</span>
             </UiButton>
           </div>
           <div class="flex items-center gap-1.5">
@@ -193,7 +193,7 @@
               :model-value="tenant.tenant_key_base64 ?? ''"
               :type="showTenantKey ? 'text' : 'password'"
               mono
-              placeholder="标准 Base64 编码密钥"
+              placeholder="Base64 编码密钥"
               class="flex-1"
               @update:model-value="(v) => patch({ tenant_key_base64: v })"
             />
@@ -214,14 +214,14 @@
               :model-value="Boolean(tenant.allow_insecure)"
               @update:model-value="(v) => patch({ allow_insecure: v })"
             />
-            <span>允许 Legacy 算法 (ECB / DES / HMAC-MD5)</span>
+            <span>允许兼容算法 (ECB / DES / HMAC-MD5)</span>
           </label>
           <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
             <UiSwitch
               :model-value="Boolean(tenant.require_signature)"
               @update:model-value="(v) => patch({ require_signature: v ? true : null })"
             />
-            <span>强制校验信封 MAC 签名 (require_signature)</span>
+            <span>强制校验信封签名</span>
           </label>
         </div>
       </template>
@@ -233,7 +233,7 @@
         <div class="flex items-center gap-2">
           <KeyRound class="h-4 w-4 text-foreground shrink-0" />
           <span class="text-sm font-semibold text-foreground">
-            请求绑定签名 (x-mazbri-* Request Binding)
+            请求绑定签名
           </span>
         </div>
         <UiButton
@@ -244,14 +244,14 @@
           @click="generateKeypair"
         >
           <Sparkles class="h-3.5 w-3.5" />
-          <span>一键生成非对称密钥对</span>
+          <span>生成密钥对</span>
         </UiButton>
       </div>
 
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            签名算法 (binding_alg)
+            签名算法
           </label>
           <UiSelect
             :model-value="tenant.binding_alg ?? ''"
@@ -266,7 +266,7 @@
 
         <div v-if="tenant.binding_alg" class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            签名密钥 ID (binding_kid · x-mazbri-key-id) *
+            签名密钥 ID *
           </label>
           <UiInput
             :model-value="tenant.binding_kid ?? ''"
@@ -281,7 +281,7 @@
         <div v-if="!asymmetricBinding" class="space-y-1.5">
           <div class="flex items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-              对称签名密钥 Base64 (binding_key) *
+              对称签名密钥 (Base64) *
             </label>
             <UiButton
               variant="ghost"
@@ -289,7 +289,7 @@
               @click="fillRandomBase64Key('binding_key', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
-              <span>随机生成 HMAC Base64</span>
+              <span>随机生成</span>
             </UiButton>
           </div>
           <div class="flex items-center gap-1.5">
@@ -297,7 +297,7 @@
               :model-value="tenant.binding_key ?? ''"
               :type="showBindingKey ? 'text' : 'password'"
               mono
-              placeholder="标准 Base64 编码 HMAC 密钥"
+              placeholder="Base64 编码 HMAC 密钥"
               class="flex-1"
               @update:model-value="(v) => patch({ binding_key: v })"
             />
@@ -315,7 +315,7 @@
         <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              私钥 PEM (binding_key — PKCS#8 PEM) *
+              私钥 PEM *
             </label>
             <UiTextarea
               :model-value="tenant.binding_key ?? ''"
@@ -329,7 +329,7 @@
           <div class="space-y-1.5">
             <div class="flex items-center justify-between gap-2">
               <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                公钥 PEM (登记到 Mazbri 网关)
+                公钥 PEM
               </label>
               <UiButton
                 v-if="tenant.binding_public_key"
@@ -346,7 +346,7 @@
               :rows="5"
               readonly
               mono
-              placeholder="点击「一键生成非对称密钥对」后自动回填 SPKI 公钥 PEM"
+              placeholder="点击「生成密钥对」后自动回填公钥 PEM"
               class="bg-muted/30"
             />
           </div>
@@ -398,9 +398,9 @@ const showBindingKey = ref(false);
 const generatingKeypair = ref(false);
 
 const encryptionModes = [
-  { value: "none", label: "明文 (none)" },
-  { value: "request", label: "仅请求加密 (request)" },
-  { value: "full", label: "双向信封加密 (full)" },
+  { value: "none", label: "明文" },
+  { value: "request", label: "仅请求加密" },
+  { value: "full", label: "双向加密" },
 ] as const;
 
 const tenant = computed(() => props.modelValue);

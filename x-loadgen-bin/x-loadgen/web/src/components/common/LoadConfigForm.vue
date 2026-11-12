@@ -4,20 +4,20 @@
     <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          发压模型 (Load Model)
+          发压模型
         </label>
         <UiSelect
           :model-value="config.model"
           @update:model-value="setModel"
         >
-          <option value="open_loop">开放环恒定速率 (open_loop / 固定 QPS)</option>
-          <option value="closed_loop">闭合环并发饱和 (closed_loop / 仅限并发)</option>
+          <option value="open_loop">恒定速率 (固定 QPS)</option>
+          <option value="closed_loop">并发饱和 (闭环)</option>
         </UiSelect>
       </div>
 
       <div v-if="config.model === 'open_loop'" class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          目标速率 (QPS) *
+          目标 QPS *
         </label>
         <UiInput
           :model-value="config.qps ?? 20"
@@ -30,7 +30,7 @@
 
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          最大并发数 (Concurrency) *
+          最大并发数 *
         </label>
         <UiInput
           :model-value="config.concurrency"
@@ -46,7 +46,7 @@
     <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <span class="text-sm font-semibold text-foreground">
-          单轮压测预算 (二选一互斥)
+          单轮压测预算
         </span>
         <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
           <button
@@ -59,7 +59,7 @@
             "
             @click="switchBudget('duration')"
           >
-            按持续时长 (秒)
+            按持续时长
           </button>
           <button
             type="button"
@@ -71,7 +71,7 @@
             "
             @click="switchBudget('requests')"
           >
-            按总请求数 (次)
+            按请求总数
           </button>
         </div>
       </div>
@@ -79,7 +79,7 @@
       <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div v-if="budgetKind === 'duration'" class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            持续秒数 (duration_secs) *
+            持续时长 (秒) *
           </label>
           <UiInput
             :model-value="config.duration_secs ?? 10"
@@ -97,7 +97,7 @@
         </div>
         <div v-else class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            请求总数 (requests) *
+            请求总数 *
           </label>
           <UiInput
             :model-value="config.requests ?? 100"
@@ -116,7 +116,7 @@
 
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            预热时长 (warmup_secs)
+            预热时长 (秒)
           </label>
           <UiInput
             :model-value="config.warmup_secs"
@@ -129,7 +129,7 @@
 
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            线性爬坡 (ramp_secs)
+            线性爬坡 (秒)
           </label>
           <UiInput
             :model-value="config.ramp_secs"
@@ -147,9 +147,9 @@
       <summary
         class="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-foreground select-none"
       >
-        <span>多进程集群、循环窗口与超时配置</span>
+        <span>集群进程、循环与超时配置</span>
         <span class="font-mono text-xs text-muted-foreground tabular-nums">
-          processes={{ config.processes }} · timeout={{ config.timeout_secs }}s
+          {{ config.processes }} 进程 · 超时 {{ config.timeout_secs }}s
         </span>
       </summary>
       <div class="space-y-4 border-t border-border p-4">
@@ -178,8 +178,8 @@
               :model-value="config.qps_mode"
               @update:model-value="(v) => patch({ qps_mode: v })"
             >
-              <option value="total">全局均摊 (total)</option>
-              <option value="per_process">每进程独立 (per_process)</option>
+              <option value="total">全局均摊</option>
+              <option value="per_process">每进程独立</option>
             </UiSelect>
           </div>
 
@@ -218,7 +218,7 @@
               :model-value="config.loop_enabled"
               @update:model-value="(v) => patch({ loop_enabled: v })"
             />
-            <span>启用多轮循环压测 (Loop Mode)</span>
+            <span>启用多轮循环压测</span>
           </label>
           <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
             <UiSwitch
@@ -232,7 +232,7 @@
         <div v-if="config.loop_enabled" class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              循环轮数 (rounds，留空为无限直到手动停止)
+              循环轮数（留空不限轮数）
             </label>
             <UiInput
               :model-value="config.rounds ?? ''"
@@ -251,7 +251,7 @@
 
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              轮间静默间隔秒数 (loop_interval_secs)
+              轮间间隔 (秒)
             </label>
             <UiInput
               :model-value="config.loop_interval_secs"
@@ -272,7 +272,7 @@
       <summary
         class="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-foreground select-none"
       >
-        <span>SLA 压测判定阈值 (Verdict Assertions 可选)</span>
+        <span>SLA 判定阈值（可选）</span>
         <span class="text-xs text-muted-foreground">
           p95 / p99 / 错误率 / QPS 达成率
         </span>

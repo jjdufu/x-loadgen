@@ -15,12 +15,14 @@ import {
   createDefaultRequestDraft,
   normalizeDraftForApi,
 } from "../helpers/format";
+import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
 
 export interface WorkspaceTab {
   tabId: string;
   draft: RequestDraft;
   savedSnapshotJson: string | null;
+  baselineSnapshotJson: string;
   requestSubTab:
     | "params"
     | "body"
@@ -48,7 +50,7 @@ export interface LoadRunnerLaunchContext {
   collectionName?: string;
 }
 
-const TABS_STORAGE_KEY = "x-loadgen.workspace.tabs.v2";
+const TABS_STORAGE_KEY = "x-loadgen.workspace.tabs.v3";
 const ACTIVE_TAB_STORAGE_KEY = "x-loadgen.workspace.activeTab.v2";
 const ENV_STORAGE_KEY = "x-loadgen.workspace.envId.v2";
 const LAYOUT_STORAGE_KEY = "x-loadgen.workspace.layout.v3";
@@ -62,12 +64,12 @@ export function createWorkspaceTab(
   isSaved = false,
 ): WorkspaceTab {
   const initial = draft ? cloneJson(draft) : createDefaultRequestDraft("http");
+  const snapshot = JSON.stringify(normalizeDraftForApi(initial));
   return {
     tabId: makeTabId(),
     draft: initial,
-    savedSnapshotJson: isSaved
-      ? JSON.stringify(normalizeDraftForApi(initial))
-      : null,
+    savedSnapshotJson: isSaved ? snapshot : null,
+    baselineSnapshotJson: snapshot,
     requestSubTab: initial.protocol === "mazbri" ? "auth" : "params",
     responseSubTab: "json",
     sending: false,
@@ -83,15 +85,26 @@ function loadInitialTabs(): WorkspaceTab[] {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return [createWorkspaceTab()];
     }
-    return parsed.map((item) => ({
-      tabId: item.tabId || makeTabId(),
-      draft: item.draft ?? createDefaultRequestDraft("http"),
-      savedSnapshotJson: item.savedSnapshotJson ?? null,
-      requestSubTab: item.requestSubTab ?? "params",
-      responseSubTab: item.responseSubTab ?? "json",
-      sending: false,
-      response: item.response ?? null,
-    }));
+    return parsed.map((item) => {
+      const draft = item.draft ?? createDefaultRequestDraft("http");
+      const defaultBaseline = JSON.stringify(
+        normalizeDraftForApi(
+          createDefaultRequestDraft(
+            draft.protocol === "mazbri" ? "mazbri" : "http",
+          ),
+        ),
+      );
+      return {
+        tabId: item.tabId || makeTabId(),
+        draft,
+        savedSnapshotJson: item.savedSnapshotJson ?? null,
+        baselineSnapshotJson: item.baselineSnapshotJson ?? defaultBaseline,
+        requestSubTab: item.requestSubTab ?? "params",
+        responseSubTab: item.responseSubTab ?? "json",
+        sending: false,
+        response: item.response ?? null,
+      };
+    });
   } catch {
     return [createWorkspaceTab()];
   }
@@ -152,13 +165,14 @@ export const activeTab = computed<WorkspaceTab>(() => {
 });
 
 export function isTabDirty(tab: WorkspaceTab): boolean {
-  if (!tab.savedSnapshotJson) return true;
-  return (
-    JSON.stringify(normalizeDraftForApi(tab.draft)) !== tab.savedSnapshotJson
-  );
+  const current = JSON.stringify(normalizeDraftForApi(tab.draft));
+  if (tab.savedSnapshotJson) {
+    return current !== tab.savedSnapshotJson;
+  }
+  return current !== tab.baselineSnapshotJson;
 }
 
-// Layout state
+// Layout state (responsePaneOpen defaults to false so bottom response bar is hidden initially)
 export const leftSidebarExpanded = ref<boolean>(initialLayout.leftExpanded);
 export const rightSidebarOpen = ref<boolean>(initialLayout.rightOpen);
 export const rightSidebarSection = ref<RightSidebarSection>(
@@ -190,6 +204,7 @@ watch(
         tabId: t.tabId,
         draft: t.draft,
         savedSnapshotJson: t.savedSnapshotJson,
+        baselineSnapshotJson: t.baselineSnapshotJson,
         requestSubTab: t.requestSubTab,
         responseSubTab: t.responseSubTab,
       }));
@@ -246,7 +261,7 @@ export const effectiveVariables = computed<
         key: v.key.trim(),
         value: v.value,
         secret: v.secret,
-        scope: "Global",
+        scope: "全局变量",
       });
     }
   }
@@ -256,7 +271,7 @@ export const effectiveVariables = computed<
         key: v.key.trim(),
         value: v.value,
         secret: v.secret,
-        scope: activeEnvironmentDetail.value?.name ?? "Environment",
+        scope: activeEnvironmentDetail.value?.name ?? "当前环境",
       });
     }
   }
@@ -324,13 +339,65 @@ export async function bootstrapWorkspace(): Promise<void> {
 }
 
 // Tab operations
-export function addNewRequestTab(protocol: "http" | "mazbri" = "http"): void {
-  const tab = createWorkspaceTab(createDefaultRequestDraft(protocol), false);
+export function addNewRequestTab(protocol?: "http" | "mazbri"): void {
+  const inherited =
+    protocol ??
+    (activeTab.value?.draft.protocol === "mazbri" ? "mazbri" : "http");
+  const tab = createWorkspaceTab(createDefaultRequestDraft(inherited), false);
   tabs.value.push(tab);
   activeTabId.value = tab.tabId;
 }
 
-export function closeWorkspaceTab(tabId: string): void {
+export function switchActiveTabProtocol(next?: "http" | "mazbri"): void {
+  const tab = activeTab.value;
+  const draft = tab.draft;
+  const target: "http" | "mazbri" =
+    next ?? (draft.protocol === "mazbri" ? "http" : "mazbri");
+  if (draft.protocol === target) return;
+
+  const wasUntouched = !tab.savedSnapshotJson && !isTabDirty(tab);
+  draft.protocol = target;
+
+  if (target === "mazbri") {
+    tab.requestSubTab = "auth";
+    if (!draft.endpoint || draft.endpoint.startsWith("http")) {
+      draft.endpoint = "/v1/demo";
+    }
+    if (draft.method === "GET" && !draft.body.content_type) {
+      draft.method = "POST";
+      draft.body.content_type = "application/json";
+      if (!draft.body.body) {
+        draft.body.body = '{\n  "ping": "mazbri"\n}';
+      }
+    }
+  } else {
+    if (draft.endpoint === "/v1/demo") {
+      draft.endpoint = "";
+    }
+    if (tab.requestSubTab === "auth" && draft.auth.auth_type === "inherit") {
+      tab.requestSubTab = "params";
+    }
+  }
+
+  if (wasUntouched) {
+    tab.baselineSnapshotJson = JSON.stringify(normalizeDraftForApi(draft));
+  }
+}
+
+export async function closeWorkspaceTab(tabId: string): Promise<void> {
+  const target = tabs.value.find((t) => t.tabId === tabId);
+  if (!target) return;
+
+  if (isTabDirty(target)) {
+    const confirmed = await askConfirm({
+      title: "关闭未保存标签页",
+      description: `「${target.draft.name || "未命名请求"}」存在未保存修改，确定放弃修改并关闭吗？`,
+      confirmText: "放弃并关闭",
+      variant: "destructive",
+    });
+    if (!confirmed) return;
+  }
+
   if (tabs.value.length <= 1) {
     const fresh = createWorkspaceTab();
     tabs.value = [fresh];
@@ -374,7 +441,9 @@ export function openDraftInNewTab(draft: RequestDraft): void {
   const tab = createWorkspaceTab(cloneJson(draft), false);
   if (
     draft.body?.content_type &&
-    (draft.method === "POST" || draft.method === "PUT" || draft.method === "PATCH")
+    (draft.method === "POST" ||
+      draft.method === "PUT" ||
+      draft.method === "PATCH")
   ) {
     tab.requestSubTab = "body";
   }
@@ -388,9 +457,11 @@ export async function saveActiveTab(): Promise<void> {
     const normalized = normalizeDraftForApi(tab.draft);
     const saved = await api.updateRequest(tab.draft.id, normalized);
     tab.draft = cloneJson(saved);
-    tab.savedSnapshotJson = JSON.stringify(normalizeDraftForApi(tab.draft));
+    const snap = JSON.stringify(normalizeDraftForApi(tab.draft));
+    tab.savedSnapshotJson = snap;
+    tab.baselineSnapshotJson = snap;
     await refreshCollections();
-    toast.success(`已保存请求「${saved.name}」`);
+    toast.success(`已保存「${saved.name}」`);
   } else {
     saveModalForceNew.value = false;
     saveModalOpen.value = true;
@@ -400,6 +471,13 @@ export async function saveActiveTab(): Promise<void> {
 export async function sendActiveTabProbe(): Promise<void> {
   const tab = activeTab.value;
   if (tab.sending) return;
+  if (!tab.draft.endpoint.trim()) {
+    toast.error(
+      tab.draft.protocol === "mazbri" ? "请输入网关业务路径" : "请输入请求地址",
+    );
+    return;
+  }
+  responsePaneOpen.value = true;
   tab.sending = true;
   try {
     const normalized = normalizeDraftForApi(tab.draft);

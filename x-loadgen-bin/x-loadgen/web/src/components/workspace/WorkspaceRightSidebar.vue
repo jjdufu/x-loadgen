@@ -28,14 +28,14 @@
       <template v-if="rightSidebarSection === 'collections'">
         <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
           <span class="text-xs font-semibold tracking-tight text-foreground">
-            接口集合 (Collections)
+            接口集合
           </span>
           <div class="flex items-center gap-0.5">
             <UiButton
               variant="ghost"
               size="icon-xs"
-              title="新建根集合"
-              aria-label="新建根集合"
+              title="新建集合"
+              aria-label="新建集合"
               @click="openCreateCollection(null)"
             >
               <FolderPlus class="h-3.5 w-3.5" />
@@ -52,7 +52,7 @@
             <UiButton
               variant="ghost"
               size="icon-xs"
-              title="导出全部集合 JSON"
+              title="导出集合 JSON"
               aria-label="导出集合 JSON"
               @click="exportData('collections')"
             >
@@ -70,7 +70,7 @@
             {{
               parentForNewCollection
                 ? `新建子目录于「${parentForNewCollection.name}」`
-                : "新建根集合"
+                : "新建集合"
             }}
           </div>
           <UiInput
@@ -90,9 +90,8 @@
         </div>
 
         <div class="border-b border-border p-2.5">
-          <UiInput
+          <UiSearchInput
             v-model="searchText"
-            size="sm"
             placeholder="搜索集合或请求..."
           />
         </div>
@@ -104,15 +103,16 @@
           >
             <Folder class="h-8 w-8 opacity-35" />
             <p class="text-xs leading-relaxed">
-              暂无集合，可将调试好的 HTTP 或 Mazbri 请求归档并发起集合加权压测
+              {{ searchText.trim() ? "无匹配的集合或请求" : "暂无集合，可将请求归档并发起加权压测" }}
             </p>
             <UiButton
+              v-if="!searchText.trim()"
               variant="outline"
               size="sm"
               @click="openCreateCollection(null)"
             >
               <FolderPlus class="h-3.5 w-3.5" />
-              <span>新建首个集合</span>
+              <span>新建集合</span>
             </UiButton>
           </div>
 
@@ -122,6 +122,7 @@
             :node="col"
             @create-request="createNewRequestInside"
             @create-subfolder="openCreateCollection"
+            @rename-collection="handleRenameCollection"
             @delete-collection="handleDeleteCollection"
             @delete-request="handleDeleteRequest"
           />
@@ -181,10 +182,10 @@
           >
             <div>
               <div class="text-xs font-semibold text-foreground">
-                Global (全局变量)
+                全局变量
               </div>
               <div class="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                {{ globalEnvRow.variable_count }} 个全局变量
+                {{ globalEnvRow.variable_count }} 个变量
               </div>
             </div>
             <Edit3 class="h-3.5 w-3.5 text-muted-foreground" />
@@ -217,14 +218,14 @@
                 </span>
               </div>
               <div class="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                {{ env.variable_count }} 变量 · {{ env.tenant_count }} Mazbri 租户
+                {{ env.variable_count }} 变量 · {{ env.tenant_count }} 租户
               </div>
             </div>
 
             <UiButton
               variant="ghost"
               size="icon-xs"
-              title="编辑变量与 Mazbri 租户密钥池"
+              title="编辑环境"
               @click.stop="openEnvironmentEditor(env.id)"
             >
               <Edit3 class="h-3.5 w-3.5" />
@@ -237,34 +238,42 @@
       <template v-else>
         <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
           <span class="text-xs font-semibold tracking-tight text-foreground">
-            负载配置预设
+            负载预设
           </span>
           <UiButton
             variant="ghost"
             size="icon-xs"
-            title="前往负载预设管理页"
+            title="负载预设"
             @click="router.push({ name: 'profiles' })"
           >
             <ExternalLink class="h-3.5 w-3.5" />
           </UiButton>
         </div>
 
+        <div class="border-b border-border p-2.5">
+          <UiSearchInput
+            v-model="profileSearchText"
+            placeholder="搜索预设名称..."
+          />
+        </div>
+
         <div class="flex-1 space-y-2 overflow-y-auto p-2.5">
           <div
-            v-if="loadProfiles.length === 0"
+            v-if="filteredProfiles.length === 0"
             class="space-y-3 py-10 text-center text-xs text-muted-foreground"
           >
-            <p>暂无已保存的负载预设</p>
+            <p>{{ profileSearchText.trim() ? "无匹配的负载预设" : "暂无负载预设" }}</p>
             <UiButton
+              v-if="!profileSearchText.trim()"
               variant="outline"
               size="sm"
               @click="router.push({ name: 'profiles' })"
             >
-              前往创建预设
+              新建预设
             </UiButton>
           </div>
           <div
-            v-for="p in loadProfiles"
+            v-for="p in filteredProfiles"
             :key="p.id"
             class="cursor-pointer rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent/50"
             @click="router.push({ name: 'profiles' })"
@@ -306,6 +315,7 @@ import {
 import { api } from "../../api/workspace";
 import type { CollectionNode, SavedRequest } from "../../api/types";
 import { createDefaultRequestDraft } from "../../helpers/format";
+import { askConfirm } from "../../modules/confirm";
 import { toast } from "../../modules/toast";
 import {
   activeEnvironmentId,
@@ -322,11 +332,13 @@ import {
 } from "../../stores/workspace";
 import UiButton from "../ui/UiButton.vue";
 import UiInput from "../ui/UiInput.vue";
+import UiSearchInput from "../ui/UiSearchInput.vue";
 import UiSwitch from "../ui/UiSwitch.vue";
 import CollectionTreeNode from "./CollectionTreeNode.vue";
 
 const router = useRouter();
 const searchText = ref("");
+const profileSearchText = ref("");
 const creatingCollection = ref(false);
 const newCollectionName = ref("");
 const parentForNewCollection = ref<CollectionNode | null>(null);
@@ -335,9 +347,9 @@ const fileInputEl = ref<HTMLInputElement | null>(null);
 const pendingImportKind = ref<"collections" | "environments">("collections");
 
 const sections: { id: RightSidebarSection; label: string; icon: unknown }[] = [
-  { id: "collections", label: "集合与目录 (Collections)", icon: Folder },
-  { id: "environments", label: "环境与密钥池 (Environments)", icon: Layers },
-  { id: "profiles", label: "负载预设 (Load Profiles)", icon: Gauge },
+  { id: "collections", label: "接口集合", icon: Folder },
+  { id: "environments", label: "环境与密钥池", icon: Layers },
+  { id: "profiles", label: "负载预设", icon: Gauge },
 ];
 
 const globalEnvRow = computed(() =>
@@ -371,6 +383,16 @@ const filteredCollections = computed(() =>
   filterTree(collections.value, searchText.value.trim()),
 );
 
+const filteredProfiles = computed(() => {
+  const q = profileSearchText.value.trim().toLowerCase();
+  if (!q) return loadProfiles.value;
+  return loadProfiles.value.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.note ?? "").toLowerCase().includes(q),
+  );
+});
+
 function openCreateCollection(parent: CollectionNode | null): void {
   parentForNewCollection.value = parent;
   newCollectionName.value = "";
@@ -391,10 +413,29 @@ async function submitCreateCollection(): Promise<void> {
   toast.success(`已创建集合「${name}」`);
 }
 
+async function handleRenameCollection(
+  node: CollectionNode,
+  newName: string,
+): Promise<void> {
+  await api.updateCollection(node.id, {
+    parent_id: node.parent_id ?? null,
+    name: newName,
+    sort_order: node.sort_order,
+    default_protocol: node.default_protocol,
+    auth: node.auth,
+    headers: node.headers,
+    variables: node.variables,
+    description: node.description ?? null,
+  });
+  await refreshCollections();
+  toast.success(`集合已重命名为「${newName}」`);
+}
+
 async function createNewRequestInside(node: CollectionNode): Promise<void> {
   const proto = node.default_protocol === "mazbri" ? "mazbri" : "http";
   const draft = createDefaultRequestDraft(proto);
   draft.collection_id = node.id;
+  draft.endpoint = proto === "mazbri" ? "/v1/demo" : "/health";
   const created = await api.createRequest(draft);
   await refreshCollections();
   openSavedRequestInTab(created);
@@ -402,14 +443,26 @@ async function createNewRequestInside(node: CollectionNode): Promise<void> {
 }
 
 async function handleDeleteCollection(node: CollectionNode): Promise<void> {
-  if (!confirm(`确定删除集合「${node.name}」及其下属全部请求吗？`)) return;
+  const confirmed = await askConfirm({
+    title: "删除集合",
+    description: `确定删除集合「${node.name}」及其下属全部请求吗？`,
+    confirmText: "删除",
+    variant: "destructive",
+  });
+  if (!confirmed) return;
   await api.deleteCollection(node.id);
   await refreshCollections();
   toast.success("集合已删除");
 }
 
 async function handleDeleteRequest(req: SavedRequest): Promise<void> {
-  if (!confirm(`确定删除请求「${req.name}」吗？`)) return;
+  const confirmed = await askConfirm({
+    title: "删除请求",
+    description: `确定删除请求「${req.name}」吗？`,
+    confirmText: "删除",
+    variant: "destructive",
+  });
+  if (!confirmed) return;
   await api.deleteRequest(req.id);
   await refreshCollections();
   toast.success("请求已删除");
@@ -432,11 +485,11 @@ async function onFileSelected(ev: Event): Promise<void> {
     if (pendingImportKind.value === "collections") {
       await api.importCollections(parsed);
       await refreshCollections();
-      toast.success("集合 JSON 导入成功");
+      toast.success("集合导入成功");
     } else {
       await api.importEnvironments(parsed);
       await refreshEnvironments();
-      toast.success("环境 JSON 导入成功");
+      toast.success("环境导入成功");
     }
   } catch (err) {
     toast.error(
@@ -463,6 +516,6 @@ async function exportData(kind: "collections" | "environments"): Promise<void> {
   a.download = `x-loadgen-${kind}-${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  toast.success(`已导出 ${kind} JSON`);
+  toast.success(`已导出${kind === "collections" ? "集合" : "环境"}配置`);
 }
 </script>

@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex flex-wrap lg:flex-nowrap items-center gap-2.5 border-b border-border bg-background px-4 py-2.5"
+    class="flex flex-wrap items-center gap-2 border-b border-border bg-background px-4 py-2.5"
   >
     <!-- Shadcn Monochrome Segmented Protocol Switcher -->
     <div
@@ -10,26 +10,26 @@
     >
       <button
         type="button"
-        class="inline-flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
         :class="
           draft.protocol === 'http'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'
         "
-        @click="switchProtocol('http')"
+        @click="switchActiveTabProtocol('http')"
       >
         <Globe class="h-3.5 w-3.5" />
         <span>HTTP 通用</span>
       </button>
       <button
         type="button"
-        class="inline-flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
         :class="
           draft.protocol === 'mazbri'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'
         "
-        @click="switchProtocol('mazbri')"
+        @click="switchActiveTabProtocol('mazbri')"
       >
         <ShieldCheck class="h-3.5 w-3.5" />
         <span>Mazbri 网关</span>
@@ -38,7 +38,7 @@
 
     <!-- Unified Method + Geist Mono URL Input -->
     <div
-      class="flex h-9 min-w-[240px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-1 focus-within:ring-ring"
+      class="flex h-9 min-w-[220px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-1 focus-within:ring-ring"
     >
       <div class="relative flex h-full items-center border-r border-border bg-muted/35">
         <select
@@ -52,7 +52,6 @@
             v-for="m in HTTP_METHODS"
             :key="m"
             :value="m"
-            class="bg-background text-foreground"
           >
             {{ m }}
           </option>
@@ -64,8 +63,8 @@
 
       <span
         v-if="draft.protocol === 'mazbri'"
-        title="Mazbri 模式：填写网关内部业务路由 path，外层自动经 /api/v1/gateway 密封转发"
-        class="ml-2.5 shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+        title="Mazbri 模式：填写网关内部业务路由路径，外层自动经 /api/v1/gateway 密封转发"
+        class="ml-2 shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
       >
         inner.path
       </span>
@@ -76,8 +75,8 @@
         aria-label="请求地址或路径"
         :placeholder="
           draft.protocol === 'mazbri'
-            ? '输入网关内部业务路径，如 /v1/orders/<<orderId>>'
-            : '输入完整 URL (https://...) 或环境相对路径 (/api/v1/...)，支持 <<var>> 与 {{seq}}'
+            ? '输入网关业务路径，如 /v1/orders/<<orderId>>'
+            : '输入完整 URL 或环境相对路径，支持 <<var>> 与 {{seq}}'
         "
         class="h-full min-w-0 flex-1 bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
         @input="draft.endpoint = ($event.target as HTMLInputElement).value"
@@ -85,10 +84,11 @@
       />
     </div>
 
-    <!-- Clean Action Button Hierarchy: 1 Primary + Outline Secondary + More Dropdown -->
-    <div class="flex shrink-0 items-center gap-2">
+    <!-- Action Buttons: wraps cleanly in narrow horizontal split without clipping -->
+    <div class="ml-auto flex shrink-0 items-center gap-1.5">
       <UiButton
         variant="default"
+        class="px-3"
         :loading="activeTab.sending"
         @click="sendActiveTabProbe"
       >
@@ -98,7 +98,8 @@
 
       <UiButton
         variant="outline"
-        title="以此请求发起并发压测"
+        class="px-3"
+        title="发起压测"
         @click="openSingleLoadRunner(draft)"
       >
         <Zap class="h-3.5 w-3.5" />
@@ -107,7 +108,8 @@
 
       <UiButton
         variant="outline"
-        title="保存请求到集合 (Ctrl + S)"
+        class="px-3"
+        title="保存请求"
         @click="saveActiveTab"
       >
         <Save class="h-3.5 w-3.5" />
@@ -119,8 +121,8 @@
           <UiButton
             variant="ghost"
             size="icon"
-            title="更多请求操作"
-            aria-label="更多请求操作"
+            title="更多操作"
+            aria-label="更多操作"
           >
             <MoreHorizontal class="h-4 w-4" />
           </UiButton>
@@ -132,11 +134,11 @@
         </UiDropdownItem>
         <UiDropdownItem @select="openSaveAs">
           <CopyPlus class="h-4 w-4 text-muted-foreground" />
-          <span>另存为新请求...</span>
+          <span>另存为...</span>
         </UiDropdownItem>
         <UiDropdownItem @select="duplicateWorkspaceTab(activeTab.tabId)">
           <Copy class="h-4 w-4 text-muted-foreground" />
-          <span>复制当前标签页</span>
+          <span>复制标签页</span>
         </UiDropdownItem>
       </UiDropdown>
     </div>
@@ -167,30 +169,13 @@ import {
   saveModalForceNew,
   saveModalOpen,
   sendActiveTabProbe,
+  switchActiveTabProtocol,
 } from "../../stores/workspace";
 import UiButton from "../ui/UiButton.vue";
 import UiDropdown from "../ui/UiDropdown.vue";
 import UiDropdownItem from "../ui/UiDropdownItem.vue";
 
 const draft = computed(() => activeTab.value.draft);
-
-function switchProtocol(next: "http" | "mazbri"): void {
-  if (draft.value.protocol === next) return;
-  draft.value.protocol = next;
-  if (next === "mazbri") {
-    activeTab.value.requestSubTab = "auth";
-    if (draft.value.endpoint.startsWith("http")) {
-      draft.value.endpoint = "/v1/demo";
-    }
-    if (draft.value.method === "GET" && !draft.value.body.content_type) {
-      draft.value.method = "POST";
-      draft.value.body.content_type = "application/json";
-      if (!draft.value.body.body) {
-        draft.value.body.body = '{\n  "ping": "mazbri"\n}';
-      }
-    }
-  }
-}
 
 function openSaveAs(): void {
   saveModalForceNew.value = true;

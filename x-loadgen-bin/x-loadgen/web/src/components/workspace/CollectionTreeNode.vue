@@ -4,7 +4,7 @@
     <div
       class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-accent/60"
       :style="{ paddingLeft: `${depth * 14 + 8}px` }"
-      @click="expanded = !expanded"
+      @click="!renaming && (expanded = !expanded)"
     >
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <component
@@ -12,21 +12,36 @@
           class="h-3.5 w-3.5 shrink-0 text-muted-foreground"
         />
         <Folder class="h-3.5 w-3.5 shrink-0 text-foreground/80" />
-        <span class="truncate text-xs font-medium text-foreground">
-          {{ node.name }}
-        </span>
-        <span class="font-mono text-[10px] text-muted-foreground tabular-nums">
-          ({{ totalCount }})
-        </span>
+        <input
+          v-if="renaming"
+          ref="renameInputEl"
+          v-model="renameDraft"
+          type="text"
+          aria-label="集合名称"
+          class="h-6 min-w-0 flex-1 rounded border border-input bg-background px-1.5 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          @click.stop
+          @keydown.enter.prevent="commitRename"
+          @keydown.esc.prevent="cancelRename"
+          @blur="commitRename"
+        />
+        <template v-else>
+          <span class="truncate text-xs font-medium text-foreground">
+            {{ node.name }}
+          </span>
+          <span class="font-mono text-[10px] text-muted-foreground tabular-nums">
+            ({{ totalCount }})
+          </span>
+        </template>
       </div>
 
       <div
+        v-if="!renaming"
         class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
         @click.stop
       >
         <button
           type="button"
-          title="按权重压测整个集合"
+          title="压测集合"
           aria-label="压测集合"
           class="rounded p-1 text-foreground hover:bg-background"
           @click="openCollectionLoadRunner(node.id, node.name)"
@@ -35,7 +50,7 @@
         </button>
         <button
           type="button"
-          title="在此集合新建请求"
+          title="新建请求"
           aria-label="在此集合新建请求"
           class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
           @click="emit('create-request', node)"
@@ -44,12 +59,21 @@
         </button>
         <button
           type="button"
-          title="新建子文件夹"
-          aria-label="新建子文件夹"
+          title="新建子目录"
+          aria-label="新建子目录"
           class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
           @click="emit('create-subfolder', node)"
         >
           <FolderPlus class="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          title="重命名集合"
+          aria-label="重命名集合"
+          class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+          @click="startRename"
+        >
+          <Pencil class="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
@@ -72,6 +96,7 @@
         :depth="depth + 1"
         @create-request="emit('create-request', $event)"
         @create-subfolder="emit('create-subfolder', $event)"
+        @rename-collection="(col, name) => emit('rename-collection', col, name)"
         @delete-collection="emit('delete-collection', $event)"
         @delete-request="emit('delete-request', $event)"
       />
@@ -110,7 +135,7 @@
         >
           <button
             type="button"
-            title="直接压测此请求"
+            title="压测此请求"
             aria-label="压测此请求"
             class="rounded p-1 text-foreground hover:bg-background"
             @click="openSingleLoadRunner(req)"
@@ -133,13 +158,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   ChevronDown,
   ChevronRight,
   FilePlus2,
   Folder,
   FolderPlus,
+  Pencil,
   Play,
   Trash2,
   Zap,
@@ -170,13 +196,39 @@ const props = withDefaults(
 const emit = defineEmits<{
   "create-request": [node: CollectionNode];
   "create-subfolder": [node: CollectionNode];
+  "rename-collection": [node: CollectionNode, newName: string];
   "delete-collection": [node: CollectionNode];
   "delete-request": [req: SavedRequest];
 }>();
 
 const expanded = ref(true);
+const renaming = ref(false);
+const renameDraft = ref("");
+const renameInputEl = ref<HTMLInputElement | null>(null);
 
 const totalCount = computed(
   () => props.node.requests.length + props.node.folders.length,
 );
+
+function startRename(): void {
+  renameDraft.value = props.node.name;
+  renaming.value = true;
+  void nextTick(() => {
+    renameInputEl.value?.focus();
+    renameInputEl.value?.select();
+  });
+}
+
+function cancelRename(): void {
+  renaming.value = false;
+}
+
+function commitRename(): void {
+  if (!renaming.value) return;
+  const trimmed = renameDraft.value.trim();
+  renaming.value = false;
+  if (trimmed && trimmed !== props.node.name) {
+    emit("rename-collection", props.node, trimmed);
+  }
+}
 </script>

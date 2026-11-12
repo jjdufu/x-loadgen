@@ -9,7 +9,7 @@
       class="border-transparent bg-transparent shadow-none hover:bg-accent/60 font-medium"
       @update:model-value="onSelectEnv"
     >
-      <option value="">无环境 (No Env)</option>
+      <option value="">无环境</option>
       <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
         {{ env.name }}
       </option>
@@ -18,8 +18,8 @@
     <UiButton
       variant="ghost"
       size="icon-xs"
-      title="环境与变量速览"
-      aria-label="环境速览"
+      title="变量速览"
+      aria-label="变量速览"
       @click="peekOpen = !peekOpen"
     >
       <Eye class="h-3.5 w-3.5" />
@@ -28,7 +28,7 @@
     <UiButton
       variant="ghost"
       size="icon-xs"
-      title="新建环境 / Mazbri 密钥池"
+      title="新建环境"
       aria-label="新建环境"
       @click="openEnvironmentEditor(null)"
     >
@@ -42,7 +42,7 @@
     >
       <div class="flex items-center justify-between border-b border-border pb-2.5">
         <span class="text-sm font-semibold truncate pr-2">
-          {{ activeEnvironmentDetail?.name ?? "仅 Global 全局变量" }}
+          {{ activeEnvironmentDetail?.name ?? "全局变量" }}
         </span>
         <button
           type="button"
@@ -69,11 +69,11 @@
       </div>
 
       <div class="space-y-1.5 max-h-44 overflow-y-auto pt-1">
-        <div class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <div class="text-[11px] font-medium text-muted-foreground">
           生效模板变量 (&lt;&lt;var&gt;&gt;)
         </div>
         <div v-if="effectiveVariables.length === 0" class="py-2 text-xs text-muted-foreground">
-          当前暂无生效变量
+          暂无生效变量
         </div>
         <div
           v-for="v in effectiveVariables"
@@ -89,7 +89,7 @@
 
       <div class="flex items-center justify-between gap-2 border-t border-border pt-3">
         <UiButton variant="outline" size="sm" @click="editGlobal">
-          编辑 Global
+          全局变量
         </UiButton>
         <UiButton
           v-if="activeEnvironmentId"
@@ -97,7 +97,7 @@
           size="sm"
           @click="editActive"
         >
-          编辑当前环境
+          编辑环境
         </UiButton>
         <UiButton v-else variant="default" size="sm" @click="createNew">
           新建环境

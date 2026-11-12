@@ -14,21 +14,21 @@
       <div v-if="!isGlobal" class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            环境名称 (Environment Name) *
+            环境名称 *
           </label>
           <UiInput
             v-model="form.name"
-            placeholder="例如 Staging / Mock Mazbri 网关"
+            placeholder="例如 测试环境 / 模拟网关"
           />
         </div>
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            默认网关地址 (gateway_base_url，供相对路径与 Mazbri 使用)
+            默认网关地址（供相对路径与 Mazbri 使用）
           </label>
           <UiInput
             v-model="gatewayUrl"
             mono
-            placeholder="例如 http://127.0.0.1:18080 或 https://api.example.com"
+            placeholder="例如 http://127.0.0.1:18080"
           />
         </div>
       </div>
@@ -61,9 +61,9 @@
       <div v-if="activeSubTab === 'vars'" class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-xs text-muted-foreground leading-relaxed">
-            在 URL、参数、请求头、Body 或密钥中使用
+            在地址、参数、请求头、请求体或密钥中使用
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&lt;&lt;变量名&gt;&gt;</code>
-            引用；压测引擎同时内置
+            引用；同时内置
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;seq&#125;&#125;</code> /
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;uuid&#125;&#125;</code> /
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;timestamp_ms&#125;&#125;</code>。
@@ -115,7 +115,7 @@
             <div class="flex h-9 shrink-0 items-center gap-0.5 px-2">
               <button
                 type="button"
-                :title="v.secret ? '当前为敏感变量（导出默认脱敏）' : '标记为敏感变量'"
+                :title="v.secret ? '敏感变量（导出默认脱敏）' : '标记为敏感变量'"
                 class="rounded p-1.5 transition-colors hover:bg-accent"
                 :class="v.secret ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'"
                 @click="v.secret = !v.secret"
@@ -140,12 +140,11 @@
       <div v-else-if="activeSubTab === 'tenants' && !isGlobal" class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <p class="text-xs text-muted-foreground leading-relaxed max-w-2xl">
-            当请求协议选择 <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">mazbri</code>
-            且租户来源为「环境加权池」时，压测引擎将按权重自动轮询下方租户执行换 Token、请求签名与信封加解密。
+            当 Mazbri 请求选择「环境租户池」时，压测引擎将按权重自动轮询下方租户执行换票、签名与信封加解密。
           </p>
           <UiButton variant="outline" size="sm" @click="addTenant">
             <Plus class="h-3.5 w-3.5" />
-            <span>新增 Mazbri 租户</span>
+            <span>新增租户</span>
           </UiButton>
         </div>
 
@@ -154,11 +153,11 @@
           class="rounded-lg border border-dashed border-border py-10 text-center space-y-3"
         >
           <p class="text-sm text-muted-foreground">
-            当前环境尚未配置 Mazbri 租户（纯 HTTP 压测无需配置）
+            尚未配置 Mazbri 租户（纯 HTTP 请求无需配置）
           </p>
           <UiButton variant="outline" size="sm" @click="addTenant">
             <Plus class="h-3.5 w-3.5" />
-            <span>添加首个 Mazbri 租户</span>
+            <span>新增租户</span>
           </UiButton>
         </div>
 
@@ -177,7 +176,7 @@
               @click="selectedTenantIdx = idx"
             >
               <span>{{ t.name || `tenant-${idx + 1}` }}</span>
-              <span class="opacity-70">w:{{ t.weight }}</span>
+              <span class="opacity-70">权重 {{ t.weight }}</span>
             </button>
           </div>
 
@@ -190,7 +189,7 @@
                 @click="removeTenant(selectedTenantIdx)"
               >
                 <Trash2 class="h-3.5 w-3.5" />
-                <span>移除当前租户</span>
+                <span>移除租户</span>
               </UiButton>
             </div>
             <TenantCryptoForm
@@ -206,10 +205,10 @@
       <div v-else-if="activeSubTab === 'auth' && !isGlobal" class="space-y-4">
         <div class="max-w-sm space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            默认 HTTP 鉴权方式（请求设为 Inherit 时自动继承）
+            默认认证方式（请求选择「继承默认」时生效）
           </label>
           <UiSelect v-model="httpAuth.auth_type">
-            <option value="none">无认证 (None)</option>
+            <option value="none">无认证</option>
             <option value="bearer">Bearer Token</option>
             <option value="basic">Basic Auth</option>
             <option value="api-key">API Key</option>
@@ -241,13 +240,13 @@
         <div v-else-if="httpAuth.auth_type === 'api-key'" class="grid max-w-2xl grid-cols-3 gap-4">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              参数名 (Key)
+              参数名
             </label>
             <UiInput v-model="httpAuthKey" mono placeholder="X-API-Key" />
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              参数值 (Value)
+              参数值
             </label>
             <UiInput v-model="httpAuthVal" type="password" mono />
           </div>
@@ -256,8 +255,8 @@
               注入位置
             </label>
             <UiSelect v-model="httpAuthAddTo">
-              <option value="HEADERS">请求头 (Headers)</option>
-              <option value="QUERY_PARAMS">查询参数 (Query)</option>
+              <option value="HEADERS">请求头</option>
+              <option value="QUERY_PARAMS">查询参数</option>
             </UiSelect>
           </div>
         </div>
@@ -267,12 +266,12 @@
       <div v-else-if="activeSubTab === 'tls' && !isGlobal" class="space-y-4">
         <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
           <UiSwitch v-model="tls.insecure_skip_verify" />
-          <span>跳过服务端 TLS 证书校验 (insecure_skip_verify)</span>
+          <span>跳过服务端 TLS 证书校验</span>
         </label>
 
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            自定义根证书 CA PEM 或服务端文件路径 (ca_cert)
+            自定义根证书 CA PEM 或路径
           </label>
           <UiTextarea
             v-model="caCert"
@@ -285,7 +284,7 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              双向认证客户端证书 (client_cert)
+              客户端证书 (mTLS)
             </label>
             <UiTextarea
               v-model="clientCert"
@@ -296,7 +295,7 @@
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              双向认证客户端私钥 (client_key)
+              客户端私钥 (mTLS)
             </label>
             <UiTextarea
               v-model="clientKey"
@@ -319,13 +318,13 @@
             @click="handleDelete"
           >
             <Trash2 class="h-4 w-4" />
-            <span>删除此环境</span>
+            <span>删除环境</span>
           </UiButton>
         </div>
         <div class="flex items-center gap-2">
           <UiButton variant="outline" @click="close">取消</UiButton>
           <UiButton variant="default" :loading="saving" @click="handleSave">
-            保存环境配置
+            保存
           </UiButton>
         </div>
       </div>
@@ -349,6 +348,7 @@ import {
   createDefaultTls,
   normalizeTenantForApi,
 } from "../../helpers/format";
+import { askConfirm } from "../../modules/confirm";
 import { toast } from "../../modules/toast";
 import {
   activeEnvironmentId,
@@ -387,7 +387,7 @@ const modalTabs = computed(() => {
   }[] = [
     {
       id: "vars",
-      label: "环境变量 (<<var>>)",
+      label: "环境变量",
       count: form.value.variables.length,
     },
   ];
@@ -395,10 +395,10 @@ const modalTabs = computed(() => {
     base.push(
       {
         id: "tenants",
-        label: "Mazbri 租户密钥池",
+        label: "Mazbri 租户池",
         count: tenants.value.length,
       },
-      { id: "auth", label: "默认 HTTP 认证", count: 0 },
+      { id: "auth", label: "默认认证", count: 0 },
       { id: "tls", label: "TLS / mTLS", count: 0 },
     );
   }
@@ -444,10 +444,10 @@ const clientKey = computed({
 });
 
 const modalTitle = computed(() => {
-  if (isGlobal.value) return "编辑全局变量 (Global Variables)";
+  if (isGlobal.value) return "编辑全局变量";
   return editingEnvId.value
     ? `编辑环境：${form.value.name || "未命名"}`
-    : "新建环境与密钥池";
+    : "新建环境";
 });
 
 watch(
@@ -528,11 +528,11 @@ async function handleSave(): Promise<void> {
 
     if (editingEnvId.value) {
       await api.updateEnvironment(editingEnvId.value, payload);
-      toast.success(`环境「${payload.name}」已更新`);
+      toast.success(`环境「${isGlobal.value ? "全局变量" : payload.name}」已更新`);
     } else {
       const created = await api.createEnvironment(payload);
       activeEnvironmentId.value = created.id;
-      toast.success(`环境「${created.name}」已创建并激活`);
+      toast.success(`环境「${created.name}」已创建`);
     }
     await refreshEnvironments();
     close();
@@ -543,7 +543,13 @@ async function handleSave(): Promise<void> {
 
 async function handleDelete(): Promise<void> {
   if (!editingEnvId.value || isGlobal.value) return;
-  if (!confirm(`确定删除环境「${form.value.name}」吗？`)) return;
+  const confirmed = await askConfirm({
+    title: "删除环境",
+    description: `确定删除环境「${form.value.name}」吗？`,
+    confirmText: "删除",
+    variant: "destructive",
+  });
+  if (!confirmed) return;
   await api.deleteEnvironment(editingEnvId.value);
   if (activeEnvironmentId.value === editingEnvId.value) {
     activeEnvironmentId.value = null;

@@ -21,7 +21,7 @@ export const HTTP_METHODS = [
 ] as const;
 
 export const BODY_CONTENT_TYPES = [
-  { value: "", label: "None (无请求体)" },
+  { value: "", label: "无请求体" },
   { value: "application/json", label: "application/json" },
   {
     value: "application/x-www-form-urlencoded",
@@ -35,7 +35,7 @@ export const BODY_CONTENT_TYPES = [
 export const MAZBRI_SUITES = [
   {
     value: "suite/tenant-default-2026-11",
-    label: "suite/tenant-default-2026-11 (AES-256-GCM 推荐默认)",
+    label: "suite/tenant-default-2026-11 (AES-256-GCM 默认)",
   },
   {
     value: "suite/gm-sm4-hmac-sm3",
@@ -60,10 +60,10 @@ export const MAZBRI_DATA_ALGS = [
   { value: "aes-128-ctr", label: "aes-128-ctr" },
   { value: "aes-256-cfb", label: "aes-256-cfb" },
   { value: "aes-128-cfb", label: "aes-128-cfb" },
-  { value: "aes-256-ecb", label: "aes-256-ecb (Legacy 需开启允许不安全)" },
-  { value: "aes-128-ecb", label: "aes-128-ecb (Legacy 需开启允许不安全)" },
-  { value: "sm4-ecb-pkcs7", label: "sm4-ecb-pkcs7 (Legacy 需开启允许不安全)" },
-  { value: "des-cbc-pkcs5", label: "des-cbc-pkcs5 (Legacy 需开启允许不安全)" },
+  { value: "aes-256-ecb", label: "aes-256-ecb (需开启兼容算法)" },
+  { value: "aes-128-ecb", label: "aes-128-ecb (需开启兼容算法)" },
+  { value: "sm4-ecb-pkcs7", label: "sm4-ecb-pkcs7 (需开启兼容算法)" },
+  { value: "des-cbc-pkcs5", label: "des-cbc-pkcs5 (需开启兼容算法)" },
 ] as const;
 
 export const MAZBRI_MAC_ALGS = [
@@ -72,17 +72,17 @@ export const MAZBRI_MAC_ALGS = [
   { value: "hmac-sha384", label: "hmac-sha384" },
   { value: "hmac-sha512", label: "hmac-sha512" },
   { value: "hmac-sm3", label: "hmac-sm3 (国密)" },
-  { value: "hmac-md5", label: "hmac-md5 (Legacy 需开启允许不安全)" },
+  { value: "hmac-md5", label: "hmac-md5 (需开启兼容算法)" },
 ] as const;
 
 export const MAZBRI_BINDING_ALGS = [
-  { value: "", label: "不启用请求绑定签名 (x-mazbri-*)" },
-  { value: "hmac-sha256", label: "hmac-sha256 (对称 Base64)", asymmetric: false },
-  { value: "hmac-sha384", label: "hmac-sha384 (对称 Base64)", asymmetric: false },
-  { value: "hmac-sha512", label: "hmac-sha512 (对称 Base64)", asymmetric: false },
-  { value: "hmac-sm3", label: "hmac-sm3 (国密对称 Base64)", asymmetric: false },
+  { value: "", label: "不启用请求绑定签名" },
+  { value: "hmac-sha256", label: "hmac-sha256 (对称密钥)", asymmetric: false },
+  { value: "hmac-sha384", label: "hmac-sha384 (对称密钥)", asymmetric: false },
+  { value: "hmac-sha512", label: "hmac-sha512 (对称密钥)", asymmetric: false },
+  { value: "hmac-sm3", label: "hmac-sm3 (国密对称)", asymmetric: false },
   { value: "ed25519", label: "ed25519 (非对称密钥对)", asymmetric: true },
-  { value: "sm2-sign", label: "sm2-sign (国密 SM2 非对称)", asymmetric: true },
+  { value: "sm2-sign", label: "sm2-sign (国密 SM2)", asymmetric: true },
   {
     value: "ecdsa-p256-sha256",
     label: "ecdsa-p256-sha256 (ECDSA P-256)",
@@ -196,6 +196,49 @@ export function formatTimeMs(ms: number | null | undefined): string {
   return new Date(ms).toLocaleString("zh-CN", { hour12: false });
 }
 
+export function formatRunStatus(status: string | null | undefined): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "stopping":
+      return "停止中";
+    case "finished":
+      return "已完成";
+    case "stopped":
+      return "已停止";
+    case "interrupted":
+      return "已中断";
+    case "failed":
+      return "失败";
+    default:
+      return status || "-";
+  }
+}
+
+export function formatRunMode(mode: string | null | undefined): string {
+  switch (mode) {
+    case "once":
+      return "单轮";
+    case "loop":
+      return "循环";
+    default:
+      return mode || "-";
+  }
+}
+
+export function formatVerdictResult(result: string | null | undefined): string {
+  switch (result) {
+    case "pass":
+      return "通过";
+    case "fail":
+      return "未通过";
+    case "pending":
+      return "评估中";
+    default:
+      return "未配置";
+  }
+}
+
 export function createEmptyKvRow(): KeyValueRow {
   return { key: "", value: "", active: true, description: "" };
 }
@@ -274,13 +317,10 @@ export function createDefaultRequestDraft(
   return {
     id: null,
     collection_id: null,
-    name: protocol === "mazbri" ? "新建 Mazbri 请求" : "新建 HTTP 请求",
+    name: "新建请求",
     protocol,
     method: protocol === "mazbri" ? "POST" : "GET",
-    endpoint:
-      protocol === "mazbri"
-        ? "/v1/demo"
-        : "http://127.0.0.1:8757/health",
+    endpoint: protocol === "mazbri" ? "/v1/demo" : "",
     params: [],
     headers: [],
     body:

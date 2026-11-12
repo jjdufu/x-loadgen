@@ -16,7 +16,7 @@
     <template #footer>
       <UiButton variant="outline" @click="curlModalOpen = false">取消</UiButton>
       <UiButton variant="default" @click="applyCurl">
-        解析并填入当前标签页
+        导入
       </UiButton>
     </template>
   </UiDialog>

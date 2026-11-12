@@ -43,10 +43,10 @@
       <KeyValueEditor
         v-if="activeTab.requestSubTab === 'params'"
         v-model="draft.params"
-        title="Query Parameters"
+        title="查询参数"
         key-placeholder="参数名 (如 page)"
         value-placeholder="参数值 (支持 <<var>> / {{seq}})"
-        empty-text="当前请求没有附加 URL 查询参数"
+        empty-text="暂无查询参数"
       />
 
       <!-- 2. Request Body -->
@@ -56,7 +56,7 @@
         >
           <div class="flex items-center gap-2.5">
             <span class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-              Content-Type
+              媒体类型
             </span>
             <UiSelect
               :model-value="draft.body.content_type ?? ''"
@@ -72,7 +72,7 @@
           </div>
 
           <span v-if="draft.protocol === 'mazbri'" class="text-xs text-muted-foreground">
-            Mazbri 模式下载荷将密封进
+            Mazbri 模式下载荷将密封至
             <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">
               GatewayRequest.body
             </code>
@@ -83,13 +83,13 @@
           v-if="!draft.body.content_type"
           class="flex flex-col items-center justify-center py-12 text-muted-foreground"
         >
-          <p class="mb-3 text-sm">此请求当前不包含请求体 (None)</p>
+          <p class="mb-3 text-sm">当前无请求体</p>
           <UiButton
             variant="outline"
             size="sm"
             @click="setContentType('application/json')"
           >
-            使用 application/json 请求体
+            使用 JSON 请求体
           </UiButton>
         </div>
 
@@ -99,7 +99,7 @@
           :title="draft.body.content_type"
           key-placeholder="字段名"
           value-placeholder="字段值 (支持 <<var>>)"
-          empty-text="表单字段为空"
+          empty-text="暂无表单字段"
         />
 
         <div v-else class="p-4">
@@ -118,10 +118,10 @@
       <KeyValueEditor
         v-else-if="activeTab.requestSubTab === 'headers'"
         v-model="draft.headers"
-        title="HTTP Request Headers"
-        key-placeholder="Header 名称 (如 X-Trace-Id)"
-        value-placeholder="Header 值 (支持 <<var>>)"
-        empty-text="当前未配置自定义请求头"
+        title="请求头"
+        key-placeholder="请求头名称 (如 X-Trace-Id)"
+        value-placeholder="请求头值 (支持 <<var>>)"
+        empty-text="暂无自定义请求头"
       />
 
       <!-- 4. Auth / Mazbri Crypto -->
@@ -135,9 +135,9 @@
               <label class="text-sm font-medium text-foreground whitespace-nowrap">
                 认证类型
               </label>
-              <UiSelect v-model="draft.auth.auth_type" wrapper-class="w-64">
-                <option value="inherit">继承集合 / 环境默认 (Inherit)</option>
-                <option value="none">无认证 (None)</option>
+              <UiSelect v-model="draft.auth.auth_type" wrapper-class="w-56">
+                <option value="inherit">继承默认</option>
+                <option value="none">无认证</option>
                 <option value="bearer">Bearer Token</option>
                 <option value="basic">Basic Auth</option>
                 <option value="api-key">API Key</option>
@@ -146,7 +146,7 @@
 
             <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground whitespace-nowrap">
               <UiSwitch v-model="draft.auth.auth_active" />
-              <span>启用当前鉴权配置</span>
+              <span>启用鉴权</span>
             </label>
           </div>
 
@@ -154,7 +154,7 @@
             v-if="draft.auth.auth_type === 'inherit'"
             class="rounded-lg border border-border bg-muted/35 p-4 text-sm text-muted-foreground"
           >
-            运行时将自动依次向上继承所属文件夹、根集合或当前激活环境的默认 HTTP 认证配置。
+            运行时将依次向上继承所属目录、根集合或当前环境的默认认证配置。
           </div>
 
           <div
@@ -182,7 +182,7 @@
           >
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                用户名 (Username)
+                用户名
               </label>
               <UiInput
                 :model-value="draft.auth.username ?? ''"
@@ -192,7 +192,7 @@
             </div>
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                密码 (Password)
+                密码
               </label>
               <UiInput
                 :model-value="draft.auth.password ?? ''"
@@ -209,7 +209,7 @@
           >
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                Key 名称
+                参数名
               </label>
               <UiInput
                 :model-value="draft.auth.key ?? ''"
@@ -220,7 +220,7 @@
             </div>
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                Key 值
+                参数值
               </label>
               <UiInput
                 :model-value="draft.auth.value ?? ''"
@@ -237,8 +237,8 @@
                 :model-value="draft.auth.add_to ?? 'HEADERS'"
                 @update:model-value="(v) => (draft.auth.add_to = v)"
               >
-                <option value="HEADERS">请求头 (Headers)</option>
-                <option value="QUERY_PARAMS">URL 参数 (Query)</option>
+                <option value="HEADERS">请求头</option>
+                <option value="QUERY_PARAMS">查询参数</option>
               </UiSelect>
             </div>
           </div>
@@ -249,7 +249,7 @@
           <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                Mazbri 产品标识 (product_id) *
+                产品标识 *
               </label>
               <UiInput
                 v-model="draft.mazbri.product_id"
@@ -259,7 +259,7 @@
             </div>
             <div class="space-y-1.5">
               <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                网关地址覆盖 (gateway_base_url，留空则继承激活环境)
+                网关地址覆盖（留空继承当前环境）
               </label>
               <UiInput
                 :model-value="draft.mazbri.gateway_base_url ?? ''"
@@ -275,7 +275,7 @@
           <div class="rounded-lg border border-border bg-card p-4 space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <span class="text-sm font-semibold text-foreground">
-                Mazbri 租户凭据与密钥池来源
+                Mazbri 租户凭据来源
               </span>
               <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
                 <button
@@ -288,7 +288,7 @@
                   "
                   @click="setTenantSource('environment')"
                 >
-                  使用环境加权租户池 (推荐)
+                  环境租户池
                 </button>
                 <button
                   type="button"
@@ -300,7 +300,7 @@
                   "
                   @click="setTenantSource('inline')"
                 >
-                  请求内联独立租户凭据
+                  内联租户
                 </button>
               </div>
             </div>
@@ -308,12 +308,12 @@
             <div v-if="draft.mazbri.tenant_source === 'environment'" class="space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="text-sm text-muted-foreground">
-                  当前激活环境：
+                  当前环境：
                   <strong class="font-medium text-foreground">
-                    {{ activeEnvironmentDetail?.name ?? "未选择命名环境" }}
+                    {{ activeEnvironmentDetail?.name ?? "未选择环境" }}
                   </strong>
                   <span class="ml-1 text-xs">
-                    （共 {{ activeEnvironmentDetail?.tenants.length ?? 0 }} 个租户）
+                    （{{ activeEnvironmentDetail?.tenants.length ?? 0 }} 个租户）
                   </span>
                 </div>
                 <UiButton
@@ -321,26 +321,26 @@
                   size="sm"
                   @click="openEnvironmentEditor(activeEnvironmentId)"
                 >
-                  管理环境租户密钥池
+                  管理租户池
                 </UiButton>
               </div>
 
               <div v-if="activeEnvironmentDetail?.tenants.length" class="max-w-md space-y-1.5">
                 <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                  指定固定租户（可选，留空则按权重自动轮询）
+                  指定租户（留空按权重轮询）
                 </label>
                 <UiSelect
                   :model-value="draft.mazbri.tenant_name ?? ''"
                   mono
                   @update:model-value="(v) => (draft.mazbri.tenant_name = v || null)"
                 >
-                  <option value="">按权重轮询池中全部租户</option>
+                  <option value="">按权重轮询全部租户</option>
                   <option
                     v-for="t in activeEnvironmentDetail.tenants"
                     :key="t.id || t.name"
                     :value="t.name"
                   >
-                    {{ t.name }} (mode={{ t.encryption_mode }}, weight={{ t.weight }})
+                    {{ t.name }} ({{ t.encryption_mode }} · 权重 {{ t.weight }})
                   </option>
                 </UiSelect>
               </div>
@@ -363,16 +363,16 @@
         >
           <div class="flex items-center gap-3">
             <label class="text-sm font-medium text-foreground whitespace-nowrap">
-              传输层期望状态
+              传输期望
             </label>
-            <UiSelect v-model="draft.assertions.expect_transport" wrapper-class="w-72">
-              <option value="ok">期望成功响应 (ok / HTTP 2xx)</option>
-              <option value="reject">期望网关拦截拒绝 (reject / 负向安全测试)</option>
+            <UiSelect v-model="draft.assertions.expect_transport" wrapper-class="w-60">
+              <option value="ok">成功响应 (HTTP 2xx)</option>
+              <option value="reject">网关拦截拒绝 (负向测试)</option>
             </UiSelect>
           </div>
           <UiButton variant="outline" size="sm" @click="addCheck">
             <Plus class="h-3.5 w-3.5" />
-            <span>添加 JSON 字段断言</span>
+            <span>添加断言</span>
           </UiButton>
         </div>
 

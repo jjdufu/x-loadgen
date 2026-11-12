@@ -1,15 +1,15 @@
 <template>
   <UiDialog
     :open="saveModalOpen"
-    :title="saveModalForceNew ? '另存请求到集合' : '保存请求到集合'"
-    description="归档后的请求可随时打开复用，或与同集合内其他接口组合执行加权压测。"
+    :title="saveModalForceNew ? '另存请求' : '保存请求'"
+    description="归档后的请求可随时复用，或与同集合内其他接口组合执行加权压测。"
     max-width="lg"
     @close="saveModalOpen = false"
   >
     <div class="space-y-4">
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          请求名称 (Request Name) *
+          请求名称 *
         </label>
         <UiInput
           v-model="requestName"
@@ -20,7 +20,7 @@
       <div class="space-y-1.5">
         <div class="flex items-center justify-between gap-2">
           <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-            所属集合 / 文件夹 (Collection) *
+            所属集合 *
           </label>
           <UiButton
             v-if="folderOptions.length > 0"
@@ -29,7 +29,7 @@
             @click="creatingFolder = !creatingFolder"
           >
             <FolderPlus class="h-3.5 w-3.5" />
-            <span>{{ creatingFolder ? "返回选择已有集合" : "快速新建集合" }}</span>
+            <span>{{ creatingFolder ? "选择已有集合" : "新建集合" }}</span>
           </UiButton>
         </div>
 
@@ -47,7 +47,7 @@
 
       <div class="space-y-1.5">
         <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          集合压测默认权重 (Weight)
+          默认压测权重
         </label>
         <UiInput
           :model-value="weight"
@@ -63,7 +63,7 @@
     <template #footer>
       <UiButton variant="outline" @click="saveModalOpen = false">取消</UiButton>
       <UiButton variant="default" :loading="saving" @click="confirmSave">
-        确认保存
+        保存
       </UiButton>
     </template>
   </UiDialog>
@@ -102,7 +102,7 @@ const folderOptions = computed(() =>
 watch(saveModalOpen, (open) => {
   if (!open) return;
   const draft = activeTab.value.draft;
-  requestName.value = draft.name || "未命名请求";
+  requestName.value = draft.name || "新建请求";
   weight.value = Math.max(1, draft.weight || 1);
   creatingFolder.value = folderOptions.value.length === 0;
   newFolderName.value = "";
@@ -143,9 +143,9 @@ async function confirmSave(): Promise<void> {
         : await api.createRequest({ ...payload, id: null });
 
     activeTab.value.draft = cloneJson(saved);
-    activeTab.value.savedSnapshotJson = JSON.stringify(
-      normalizeDraftForApi(activeTab.value.draft),
-    );
+    const snap = JSON.stringify(normalizeDraftForApi(activeTab.value.draft));
+    activeTab.value.savedSnapshotJson = snap;
+    activeTab.value.baselineSnapshotJson = snap;
     await refreshCollections();
     toast.success("请求已保存至集合");
     saveModalOpen.value = false;

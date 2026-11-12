@@ -21,7 +21,7 @@
         type="text"
         aria-label="请求名称"
         placeholder="输入请求名称..."
-        class="min-w-[160px] max-w-xs rounded px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
+        class="min-w-[140px] max-w-xs rounded bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
         @input="draft.name = ($event.target as HTMLInputElement).value"
       />
 

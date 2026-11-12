@@ -1,39 +1,47 @@
 <template>
-  <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+  <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
     <!-- Loading State -->
     <div
       v-if="activeTab.sending"
       class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-muted-foreground"
     >
+      <UiButton
+        variant="ghost"
+        size="icon-xs"
+        title="收起响应栏"
+        aria-label="收起响应栏"
+        class="absolute right-3 top-2.5"
+        @click="responsePaneOpen = false"
+      >
+        <X class="h-3.5 w-3.5" />
+      </UiButton>
       <Loader2 class="h-6 w-6 animate-spin text-foreground" />
-      <span class="text-sm">正在发送请求并解析响应...</span>
+      <span class="text-sm">正在发送请求...</span>
     </div>
 
     <!-- Empty Initial State -->
     <div
       v-else-if="!resp"
-      class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center select-none"
+      class="flex flex-1 flex-col items-center justify-center gap-2.5 p-8 text-center select-none"
     >
-      <div
-        class="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground"
+      <UiButton
+        variant="ghost"
+        size="icon-xs"
+        title="收起响应栏"
+        aria-label="收起响应栏"
+        class="absolute right-3 top-2.5"
+        @click="responsePaneOpen = false"
       >
-        <Send class="h-5 w-5" />
+        <X class="h-3.5 w-3.5" />
+      </UiButton>
+      <div
+        class="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground"
+      >
+        <Send class="h-4 w-4" />
       </div>
-      <div class="space-y-1.5 max-w-md">
-        <p class="text-sm font-medium text-foreground">
-          准备就绪 — 点击「发送」执行单次接口调试，或点击「压测」启动高并发任务
-        </p>
-        <p class="text-xs text-muted-foreground">
-          单次调试
-          <kbd class="mx-0.5 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            Ctrl Enter
-          </kbd>
-          · 保存请求
-          <kbd class="mx-0.5 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            Ctrl S
-          </kbd>
-        </p>
-      </div>
+      <p class="max-w-sm text-xs text-muted-foreground">
+        点击「发送」调试当前请求，响应结果将在此展示
+      </p>
     </div>
 
     <!-- Active Probe Response -->
@@ -50,7 +58,7 @@
             {{
               resp.http_status
                 ? `${resp.http_status} ${resp.status_text ?? ""}`.trim()
-                : resp.error_class || "ERR"
+                : resp.error_class || "异常"
             }}
           </span>
 
@@ -71,7 +79,7 @@
           </div>
 
           <UiBadge :variant="resp.passed_assertions ? 'success' : 'destructive'">
-            {{ resp.passed_assertions ? "✓ 断言通过" : "✕ 断言未通过" }}
+            {{ resp.passed_assertions ? "断言通过" : "断言未通过" }}
           </UiBadge>
         </div>
 
@@ -93,6 +101,15 @@
             @click="downloadResponse"
           >
             <Download class="h-3.5 w-3.5" />
+          </UiButton>
+          <UiButton
+            variant="ghost"
+            size="icon-xs"
+            title="收起响应栏"
+            aria-label="收起响应栏"
+            @click="responsePaneOpen = false"
+          >
+            <X class="h-3.5 w-3.5" />
           </UiButton>
         </div>
       </div>
@@ -199,7 +216,7 @@
                 : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400'
             "
           >
-            传输与业务综合判定：{{ resp.passed_assertions ? "全部通过 (PASS)" : "未通过 (FAIL)" }}
+            传输与业务综合判定：{{ resp.passed_assertions ? "全部通过" : "未通过" }}
           </div>
 
           <div
@@ -216,7 +233,7 @@
                     : 'text-rose-600 dark:text-rose-400'
                 "
               >
-                {{ item.passed ? "✓ PASS" : "✕ FAIL" }}
+                {{ item.passed ? "通过" : "未通过" }}
               </span>
               <span class="font-semibold text-foreground">{{ item.path }}</span>
             </div>
@@ -304,7 +321,7 @@
             class="space-y-1.5"
           >
             <div class="font-medium text-foreground">
-              x-mazbri-* 请求绑定签名头 ({{ resp.mazbri_wire.invoke_url }})
+              请求绑定签名头 ({{ resp.mazbri_wire.invoke_url }})
             </div>
             <div class="divide-y divide-border overflow-hidden rounded-lg border border-border font-mono">
               <div
@@ -321,7 +338,7 @@
           <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <div class="space-y-1.5">
               <div class="font-medium text-foreground">
-                内部明文 GatewayRequest JSON (加密前)
+                加密前内部请求载荷
               </div>
               <pre
                 class="max-h-60 overflow-auto rounded-lg border border-border bg-muted/35 p-3 font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground"
@@ -329,7 +346,7 @@
             </div>
             <div class="space-y-1.5">
               <div class="font-medium text-foreground">
-                线上实际发送信封报文 (Wire Request Envelope)
+                实际发送信封报文
               </div>
               <pre
                 class="max-h-60 overflow-auto rounded-lg border border-border bg-muted/35 p-3 font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground"
@@ -343,7 +360,7 @@
           >
             <div class="space-y-1.5">
               <div class="font-medium text-foreground">
-                网关原始响应报文 (Wire Response · HTTP {{ resp.mazbri_wire.wire_response_status ?? "-" }})
+                网关原始响应报文 (HTTP {{ resp.mazbri_wire.wire_response_status ?? "-" }})
               </div>
               <pre
                 class="max-h-60 overflow-auto rounded-lg border border-border bg-muted/35 p-3 font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground"
@@ -357,7 +374,7 @@
               class="space-y-1.5"
             >
               <div class="font-medium text-foreground">
-                客户端解封后 GatewayResponseEnvelope
+                客户端解封响应载荷
               </div>
               <pre
                 class="max-h-60 overflow-auto rounded-lg border border-border bg-muted/35 p-3 font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground"
@@ -372,7 +389,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { AlertTriangle, Copy, Download, Loader2, Send } from "lucide-vue-next";
+import { AlertTriangle, Copy, Download, Loader2, Send, X } from "lucide-vue-next";
 import {
   formatBytes,
   formatLatencyUs,
@@ -380,7 +397,11 @@ import {
   statusCategoryClass,
 } from "../../helpers/format";
 import { toast } from "../../modules/toast";
-import { activeTab, type WorkspaceTab } from "../../stores/workspace";
+import {
+  activeTab,
+  responsePaneOpen,
+  type WorkspaceTab,
+} from "../../stores/workspace";
 import CodeMirrorEditor from "../common/CodeMirrorEditor.vue";
 import UiBadge from "../ui/UiBadge.vue";
 import UiButton from "../ui/UiButton.vue";

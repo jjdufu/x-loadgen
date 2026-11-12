@@ -6,7 +6,7 @@
         <div
           v-for="tab in tabs"
           :key="tab.tabId"
-          class="group relative flex h-full min-w-[148px] max-w-[240px] cursor-pointer items-center gap-2 border-r border-border px-3.5 text-xs transition-colors"
+          class="group relative flex h-full min-w-[140px] max-w-[230px] cursor-pointer items-center gap-2 border-r border-border px-3.5 text-xs transition-colors"
           :class="
             activeTabId === tab.tabId
               ? 'bg-background text-foreground font-medium'
@@ -49,24 +49,15 @@
           </button>
         </div>
 
-        <div class="flex shrink-0 items-center gap-0.5 px-2">
+        <div class="flex shrink-0 items-center px-1.5">
           <UiButton
             variant="ghost"
             size="icon-xs"
-            title="新建 HTTP 请求标签页 (Alt + N)"
-            aria-label="新建 HTTP 请求标签页"
-            @click="addNewRequestTab('http')"
+            title="新建请求"
+            aria-label="新建请求"
+            @click="addNewRequestTab()"
           >
             <Plus class="h-3.5 w-3.5" />
-          </UiButton>
-          <UiButton
-            variant="ghost"
-            size="icon-xs"
-            title="新建 Mazbri 加密网关请求标签页 (Alt + M)"
-            aria-label="新建 Mazbri 请求标签页"
-            @click="addNewRequestTab('mazbri')"
-          >
-            <ShieldPlus class="h-3.5 w-3.5" />
           </UiButton>
         </div>
       </div>
@@ -76,7 +67,7 @@
 
     <!-- Main Blur-Free Geist Splitpanes Area -->
     <Splitpanes class="geist-splitter min-h-0 flex-1 overflow-hidden">
-      <!-- Center Request + Response Split -->
+      <!-- Center Request + Collapsible Response Split -->
       <Pane
         :size="rightSidebarOpen ? 72 : 100"
         :min-size="45"
@@ -87,7 +78,7 @@
           class="geist-splitter min-h-0 flex-1 overflow-hidden"
         >
           <Pane
-            :size="54"
+            :size="responsePaneOpen ? 54 : 100"
             :min-size="26"
             class="flex min-h-0 flex-col overflow-hidden bg-background"
           >
@@ -97,6 +88,7 @@
           </Pane>
 
           <Pane
+            v-if="responsePaneOpen"
             :size="46"
             :min-size="22"
             class="flex min-h-0 flex-col overflow-hidden bg-background"
@@ -122,7 +114,7 @@
 
 <script setup lang="ts">
 import { Pane, Splitpanes } from "splitpanes";
-import { Plus, ShieldPlus, X } from "lucide-vue-next";
+import { Plus, X } from "lucide-vue-next";
 import UiButton from "../components/ui/UiButton.vue";
 import EnvironmentSelector from "../components/workspace/EnvironmentSelector.vue";
 import ProtocolAndBreadcrumbBar from "../components/workspace/ProtocolAndBreadcrumbBar.vue";
@@ -138,6 +130,7 @@ import {
   duplicateWorkspaceTab,
   horizontalSplit,
   isTabDirty,
+  responsePaneOpen,
   rightSidebarOpen,
   tabs,
 } from "../stores/workspace";

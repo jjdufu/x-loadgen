@@ -13,10 +13,10 @@
       >
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            运行环境与密钥池 (Environment)
+            运行环境
           </label>
           <UiSelect v-model="selectedEnvId">
-            <option value="">不使用命名环境 (仅 Global 变量)</option>
+            <option value="">无环境（仅全局变量）</option>
             <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
               {{ env.name }}
               {{ env.gateway_base_url ? `(${env.gateway_base_url})` : "" }}
@@ -26,13 +26,13 @@
 
         <div class="space-y-1.5">
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            载入已保存的负载预设 (Load Profile 可选)
+            负载预设（可选）
           </label>
           <UiSelect
             :model-value="selectedProfileId"
             @update:model-value="applyProfilePreset"
           >
-            <option value="">自定义参数 (不使用预设)</option>
+            <option value="">自定义参数</option>
             <option v-for="p in loadProfiles" :key="p.id" :value="p.id">
               {{ p.name }} ({{ p.model === "open_loop" ? `${p.qps} QPS` : "闭环" }} · {{ p.concurrency }} 并发)
             </option>
@@ -56,11 +56,11 @@
             {{ runnerContext.draft.method }}
           </span>
           <span class="truncate font-mono text-sm text-foreground">
-            {{ runnerContext.draft.endpoint }}
+            {{ runnerContext.draft.endpoint || "(未填写请求地址)" }}
           </span>
         </div>
         <span class="shrink-0 text-xs text-muted-foreground">
-          {{ runnerContext.draft.id ? "已保存请求" : "当前标签页草稿直压" }}
+          {{ runnerContext.draft.id ? "已保存请求" : "当前草稿" }}
         </span>
       </div>
 
@@ -72,14 +72,14 @@
           class="flex items-center justify-between border-b border-border bg-muted/40 px-4 py-2.5"
         >
           <span class="text-xs font-semibold text-foreground">
-            勾选参与集合混合压测的接口与流量权重 ({{ enabledCount }}/{{ collectionRows.length }})
+            参与压测的接口与权重 ({{ enabledCount }}/{{ collectionRows.length }})
           </span>
           <div class="flex items-center gap-1.5">
             <UiButton variant="ghost" size="xs" @click="toggleAll(true)">
               全选
             </UiButton>
             <UiButton variant="ghost" size="xs" @click="toggleAll(false)">
-              全不选
+              清空选择
             </UiButton>
           </div>
         </div>
@@ -88,7 +88,7 @@
           v-if="collectionRows.length === 0"
           class="p-8 text-center text-sm text-muted-foreground"
         >
-          该集合内暂无已保存请求，请先在集合中创建或保存请求。
+          该集合内暂无请求，请先创建或保存请求。
         </div>
 
         <div v-else class="max-h-56 divide-y divide-border overflow-y-auto">
@@ -148,7 +148,7 @@
     <template #footer>
       <div class="flex w-full items-center justify-between gap-3">
         <span class="hidden sm:inline text-xs text-muted-foreground">
-          支持单进程或多进程集群并发，运行中可实时调整目标速率与并发上限
+          运行期间可实时动态调整目标 QPS 与并发上限
         </span>
         <div class="flex items-center gap-2 ml-auto">
           <UiButton variant="outline" @click="runnerModalOpen = false">
@@ -156,7 +156,7 @@
           </UiButton>
           <UiButton variant="default" :loading="launching" @click="launchRun">
             <Play v-if="!launching" class="h-3.5 w-3.5" />
-            <span>立即启动压测</span>
+            <span>启动压测</span>
           </UiButton>
         </div>
       </div>
@@ -330,6 +330,10 @@ async function launchRun(): Promise<void> {
     body.collection_id = runnerContext.value.collectionId ?? null;
     body.selected_requests = selected;
   } else if (runnerContext.value.draft) {
+    if (!runnerContext.value.draft.endpoint.trim()) {
+      toast.error("请先在工作台填写请求地址或路径");
+      return;
+    }
     body.adhoc_request = normalizeDraftForApi(runnerContext.value.draft);
   }
 

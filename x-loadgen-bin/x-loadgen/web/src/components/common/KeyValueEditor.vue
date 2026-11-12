@@ -3,14 +3,14 @@
     <div
       class="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/50 px-4 py-2"
     >
-      <span class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <span class="text-xs font-medium tracking-tight text-muted-foreground">
         {{ title }}
       </span>
       <div class="flex items-center gap-1.5">
         <UiButton
           variant="ghost"
           size="xs"
-          :title="bulkMode ? '切换回表格编辑' : '批量编辑 (key: value)'"
+          :title="bulkMode ? '切换回表格模式' : '批量编辑'"
           @click="toggleBulkMode"
         >
           <FileEdit class="h-3.5 w-3.5" />
@@ -33,7 +33,7 @@
           @click="addRow"
         >
           <Plus class="h-3.5 w-3.5" />
-          <span>新增参数</span>
+          <span>添加</span>
         </UiButton>
       </div>
     </div>
@@ -59,7 +59,7 @@
       <p class="mb-3 text-sm">{{ emptyText }}</p>
       <UiButton variant="outline" size="sm" @click="addRow">
         <Plus class="h-3.5 w-3.5" />
-        <span>添加第一行</span>
+        <span>添加参数</span>
       </UiButton>
     </div>
 
