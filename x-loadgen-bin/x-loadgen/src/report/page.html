@@ -6,62 +6,132 @@
 <title>x-loadgen 压测报告 · __ID__</title>
 <style>
   :root {
-    --bg: #121215;
-    --surface: #18181c;
-    --surface-elevated: #202026;
-    --border: #2a2a33;
-    --text: #f4f4f5;
-    --muted: #a1a1aa;
-    --accent: #6366f1;
-    --emerald: #10b981;
-    --rose: #f43f5e;
-    --amber: #f59e0b;
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-muted: #fafafa;
+    --border: #e4e4e7;
+    --text: #09090b;
+    --muted: #71717a;
+    --primary: #18181b;
+    --primary-fg: #fafafa;
+    --emerald: #059669;
+    --emerald-bg: rgba(5, 150, 105, 0.08);
+    --emerald-border: rgba(5, 150, 105, 0.25);
+    --rose: #e11d48;
+    --rose-bg: rgba(225, 29, 72, 0.08);
+    --rose-border: rgba(225, 29, 72, 0.25);
+    --font-sans: "Geist Variable", "Geist", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #09090b;
+      --surface: #09090b;
+      --surface-muted: #121215;
+      --border: #27272a;
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --primary: #fafafa;
+      --primary-fg: #09090b;
+      --emerald: #34d399;
+      --emerald-bg: rgba(52, 211, 153, 0.1);
+      --emerald-border: rgba(52, 211, 153, 0.3);
+      --rose: #fb7185;
+      --rose-bg: rgba(251, 113, 133, 0.1);
+      --rose-border: rgba(251, 113, 133, 0.3);
+    }
   }
   * { box-sizing: border-box; }
   body {
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-    margin: 0; background: var(--bg); color: var(--text); line-height: 1.5;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   header {
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 18px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
-  main { max-width: 1180px; margin: 0 auto; padding: 20px 28px 56px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: var(--primary); color: var(--primary-fg);
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    letter-spacing: -0.03em;
+  }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 32px 64px; }
   section {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 18px 22px; margin-top: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-top: 20px;
   }
-  h1 { font-size: 18px; font-weight: 600; margin: 0; }
-  h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 14px; }
-  .muted { color: var(--muted); font-size: 12.5px; }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    margin: 0 0 16px;
+  }
+  .muted { color: var(--muted); font-size: 13px; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .badge {
-    display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
-    font-size: 12px; font-weight: 600; background: var(--surface-elevated); border: 1px solid var(--border);
+    display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 6px;
+    font-size: 12px; font-weight: 600; font-family: var(--font-mono);
+    background: var(--surface-muted); border: 1px solid var(--border);
   }
-  .badge-pass { color: var(--emerald); border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.1); }
-  .badge-fail { color: var(--rose); border-color: rgba(244,63,94,.35); background: rgba(244,63,94,.1); }
-  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-  th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; }
-  td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; font-variant-numeric: tabular-nums; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .badge-pass { color: var(--emerald); border-color: var(--emerald-border); background: var(--emerald-bg); }
+  .badge-fail { color: var(--rose); border-color: var(--rose-border); background: var(--rose-bg); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    color: var(--muted); font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px; text-align: left; white-space: nowrap;
+  }
+  td {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px; text-align: left;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px; }
   .card {
-    background: var(--surface-elevated); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 14px;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
   }
-  .card span { font-size: 11.5px; color: var(--muted); display: block; }
-  .card b { display: block; font-size: 18px; margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .chart { width: 100%; height: 280px; }
+  .card span { font-size: 12px; color: var(--muted); display: block; white-space: nowrap; }
+  .card b {
+    display: block; font-size: 20px; font-weight: 600; margin-top: 4px;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .chart { width: 100%; height: 290px; }
 </style>
 </head>
 <body>
 <header>
   <div class="brand">
-    <span class="brand-dot"></span>
+    <span class="brand-mark">XL</span>
     <div>
       <h1 id="title">压测报告</h1>
-      <div class="muted">任务 __ID__ · 状态 __STATUS__</div>
+      <div class="muted mono">任务 __ID__ · 状态 __STATUS__</div>
     </div>
   </div>
   <div id="verdict-badge"></div>
@@ -70,7 +140,7 @@
   <section>
     <h2>总览指标</h2>
     <div class="cards" id="overview"></div>
-    <p class="muted" id="range" style="margin: 12px 0 0;"></p>
+    <p class="muted mono" id="range" style="margin: 14px 0 0;"></p>
   </section>
   <section>
     <h2>时序吞吐</h2>
@@ -78,15 +148,15 @@
   </section>
   <section>
     <h2>窗口明细</h2>
-    <div id="windows"></div>
+    <div id="windows" class="table-wrap"></div>
   </section>
   <section>
     <h2>时间线事件</h2>
-    <div id="timeline"></div>
+    <div id="timeline" class="table-wrap"></div>
   </section>
   <section>
     <h2>中断区间</h2>
-    <div id="interrupts"></div>
+    <div id="interrupts" class="table-wrap"></div>
   </section>
 </main>
 <script>window.__REPORT__ = __PAYLOAD__;</script>
@@ -96,6 +166,7 @@
   const r = window.__REPORT__ || {};
   const counters = r.counters || {};
   const pct = r.percentiles || {};
+  const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   if (r.title) {
     document.getElementById("title").textContent = "压测报告 · " + r.title;
   }
@@ -134,20 +205,47 @@
     ? table(["开始", "结束"], ranges.map(x => [x.start, x.end]))
     : "<p class='muted'>无中断区间</p>";
   const points = r.timeseries || [];
+  const showDot = points.length <= 2;
+  const axisColor = isDark ? "#27272a" : "#e4e4e7";
+  const labelColor = isDark ? "#a1a1aa" : "#71717a";
+  const primaryLine = isDark ? "#fafafa" : "#18181b";
+  const okLine = isDark ? "#34d399" : "#059669";
+  const errLine = isDark ? "#fb7185" : "#e11d48";
   const chart = echarts.init(document.getElementById("timeseries"));
   chart.setOption({
     backgroundColor: "transparent",
-    textStyle: { color: "#a1a1aa" },
-    tooltip: { trigger: "axis" },
-    legend: { data: ["样本", "成功", "失败"], textStyle: { color: "#a1a1aa" } },
-    xAxis: { type: "category", data: points.map(p => p.unix_sec || p.started_at || ""), axisLine: { lineStyle: { color: "#2a2a33" } } },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#2a2a33" } } },
+    textStyle: { color: labelColor, fontFamily: "Geist Mono, monospace" },
+    grid: { top: 36, right: 20, bottom: 28, left: 48 },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: isDark ? "#09090b" : "#ffffff",
+      borderColor: axisColor,
+      textStyle: { color: isDark ? "#fafafa" : "#09090b", fontSize: 12 }
+    },
+    legend: { data: ["样本", "成功", "失败"], textStyle: { color: labelColor } },
+    xAxis: {
+      type: "category",
+      data: points.map(p => {
+        const raw = p.unix_sec || p.started_at;
+        if (!raw) return "";
+        const ms = raw > 1e11 ? raw : raw * 1000;
+        return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
+      }),
+      axisLine: { lineStyle: { color: axisColor } },
+      axisLabel: { color: labelColor }
+    },
+    yAxis: {
+      type: "value",
+      splitLine: { lineStyle: { color: axisColor, type: "dashed" } },
+      axisLabel: { color: labelColor }
+    },
     series: [
-      { name: "样本", type: "line", smooth: true, itemStyle: { color: "#6366f1" }, data: points.map(p => p.samples || 0) },
-      { name: "成功", type: "line", smooth: true, itemStyle: { color: "#10b981" }, data: points.map(p => p.success || 0) },
-      { name: "失败", type: "line", smooth: true, itemStyle: { color: "#f43f5e" }, data: points.map(p => p.failure || 0) }
+      { name: "样本", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: primaryLine }, data: points.map(p => p.samples || 0) },
+      { name: "成功", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 1.75 }, itemStyle: { color: okLine }, data: points.map(p => p.success || 0) },
+      { name: "失败", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 1.75 }, itemStyle: { color: errLine }, data: points.map(p => p.failure || 0) }
     ]
   });
+  window.addEventListener("resize", function () { chart.resize(); });
   function fmt(val) { return (val === null || val === undefined) ? "-" : String(val); }
   function table(headers, rows) {
     const th = headers.map(h => "<th>" + h + "</th>").join("");

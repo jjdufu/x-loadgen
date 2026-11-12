@@ -1,94 +1,119 @@
 <template>
-  <aside class="flex h-full border-l border-dividerLight bg-primary select-none overflow-hidden">
-    <!-- Hoppscotch Secondary Rail -->
-    <div class="flex flex-col items-center py-2 w-11 border-r border-dividerLight bg-primary space-y-1 flex-shrink-0">
+  <aside class="flex h-full overflow-hidden bg-background select-none">
+    <!-- Secondary Icon Rail -->
+    <div
+      class="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border bg-surface/60 py-2"
+    >
       <button
         v-for="sec in sections"
         :key="sec.id"
-        v-tippy="sec.label"
         type="button"
-        class="p-2 rounded transition"
+        :title="sec.label"
+        :aria-label="sec.label"
+        class="flex h-8 w-8 items-center justify-center rounded-md transition-colors"
         :class="
           rightSidebarSection === sec.id
-            ? 'text-accent bg-primaryLight'
-            : 'text-secondaryLight hover:text-secondaryDark'
+            ? 'bg-accent text-accent-foreground'
+            : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
         "
         @click="rightSidebarSection = sec.id"
       >
-        <component :is="sec.icon" class="w-4 h-4" />
+        <component :is="sec.icon" class="h-4 w-4" />
       </button>
     </div>
 
     <!-- Active Sidebar Content -->
-    <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <!-- 1. COLLECTIONS SECTION -->
       <template v-if="rightSidebarSection === 'collections'">
-        <div class="flex items-center justify-between px-3 py-2 border-b border-dividerLight">
-          <span class="font-bold text-tiny text-secondaryDark uppercase tracking-wider">
+        <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+          <span class="text-xs font-semibold tracking-tight text-foreground">
             接口集合 (Collections)
           </span>
-          <div class="flex items-center space-x-0.5">
-            <HoppButtonSecondary
-              v-tippy="'新建根集合'"
-              :icon="FolderPlus"
+          <div class="flex items-center gap-0.5">
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="新建根集合"
+              aria-label="新建根集合"
               @click="openCreateCollection(null)"
-            />
-            <HoppButtonSecondary
-              v-tippy="'导入 Hoppscotch / x-loadgen JSON 集合'"
-              :icon="Upload"
+            >
+              <FolderPlus class="h-3.5 w-3.5" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="导入集合 JSON"
+              aria-label="导入集合 JSON"
               @click="triggerImport('collections')"
-            />
-            <HoppButtonSecondary
-              v-tippy="'导出全部集合 JSON'"
-              :icon="Download"
+            >
+              <Upload class="h-3.5 w-3.5" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="导出全部集合 JSON"
+              aria-label="导出集合 JSON"
               @click="exportData('collections')"
-            />
+            >
+              <Download class="h-3.5 w-3.5" />
+            </UiButton>
           </div>
         </div>
 
         <!-- Inline Quick Create Collection Input -->
         <div
           v-if="creatingCollection"
-          class="p-2.5 border-b border-dividerLight bg-primaryLight/50 space-y-2"
+          class="space-y-2 border-b border-border bg-surface/60 p-3"
         >
-          <div class="text-tiny text-secondaryLight font-semibold">
-            {{ parentForNewCollection ? `新建子目录于「${parentForNewCollection.name}」` : "新建根集合" }}
+          <div class="text-xs font-medium text-muted-foreground">
+            {{
+              parentForNewCollection
+                ? `新建子目录于「${parentForNewCollection.name}」`
+                : "新建根集合"
+            }}
           </div>
-          <input
+          <UiInput
             v-model="newCollectionName"
-            type="text"
+            size="sm"
             placeholder="输入集合名称..."
-            class="input !py-1 text-tiny"
             @keydown.enter.prevent="submitCreateCollection"
           />
-          <div class="flex items-center justify-end space-x-1">
-            <HoppButtonSecondary label="取消" @click="creatingCollection = false" />
-            <HoppButtonPrimary label="创建" @click="submitCreateCollection" />
+          <div class="flex items-center justify-end gap-1.5">
+            <UiButton variant="ghost" size="xs" @click="creatingCollection = false">
+              取消
+            </UiButton>
+            <UiButton variant="default" size="xs" @click="submitCreateCollection">
+              创建
+            </UiButton>
           </div>
         </div>
 
-        <div class="px-2.5 py-2 border-b border-dividerLight">
-          <input
+        <div class="border-b border-border p-2.5">
+          <UiInput
             v-model="searchText"
-            type="text"
+            size="sm"
             placeholder="搜索集合或请求..."
-            class="input !py-1 !px-2.5 text-tiny"
           />
         </div>
 
-        <div class="flex-1 overflow-y-auto p-1.5">
+        <div class="flex-1 overflow-y-auto p-2">
           <div
             v-if="filteredCollections.length === 0"
-            class="flex flex-col items-center justify-center py-10 px-4 text-center text-secondaryLight text-tiny space-y-3"
+            class="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center text-muted-foreground"
           >
-            <Folder class="w-8 h-8 opacity-30" />
-            <p>暂无集合，可将调试好的 HTTP 或 Mazbri 请求归档并发起集合混合压测</p>
-            <HoppButtonSecondary
-              :icon="FolderPlus"
-              label="新建首个集合"
-              outline
+            <Folder class="h-8 w-8 opacity-35" />
+            <p class="text-xs leading-relaxed">
+              暂无集合，可将调试好的 HTTP 或 Mazbri 请求归档并发起集合加权压测
+            </p>
+            <UiButton
+              variant="outline"
+              size="sm"
               @click="openCreateCollection(null)"
-            />
+            >
+              <FolderPlus class="h-3.5 w-3.5" />
+              <span>新建首个集合</span>
+            </UiButton>
           </div>
 
           <CollectionTreeNode
@@ -105,120 +130,147 @@
 
       <!-- 2. ENVIRONMENTS & TENANT POOLS SECTION -->
       <template v-else-if="rightSidebarSection === 'environments'">
-        <div class="flex items-center justify-between px-3 py-2 border-b border-dividerLight">
-          <span class="font-bold text-tiny text-secondaryDark uppercase tracking-wider">
-            环境与密钥池 (Environments)
+        <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+          <span class="text-xs font-semibold tracking-tight text-foreground">
+            环境与密钥池
           </span>
-          <div class="flex items-center space-x-0.5">
-            <HoppButtonSecondary
-              v-tippy="'新建环境'"
-              :icon="Plus"
+          <div class="flex items-center gap-0.5">
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="新建环境"
+              aria-label="新建环境"
               @click="openEnvironmentEditor(null)"
-            />
-            <HoppButtonSecondary
-              v-tippy="'导入环境 JSON'"
-              :icon="Upload"
+            >
+              <Plus class="h-3.5 w-3.5" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="导入环境 JSON"
+              aria-label="导入环境 JSON"
               @click="triggerImport('environments')"
-            />
-            <HoppButtonSecondary
-              v-tippy="'导出环境 JSON'"
-              :icon="Download"
+            >
+              <Upload class="h-3.5 w-3.5" />
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="导出环境 JSON"
+              aria-label="导出环境 JSON"
               @click="exportData('environments')"
-            />
+            >
+              <Download class="h-3.5 w-3.5" />
+            </UiButton>
           </div>
         </div>
 
-        <div class="px-3 py-1.5 border-b border-dividerLight flex items-center justify-between text-tiny">
-          <span class="text-secondaryLight">导出时包含明文密钥</span>
-          <HoppSmartCheckbox
-            :on="includeSecretsOnExport"
-            name="export-secrets"
-            @change="includeSecretsOnExport = !includeSecretsOnExport"
-          />
+        <div
+          class="flex items-center justify-between border-b border-border bg-surface/40 px-3 py-2 text-xs"
+        >
+          <span class="text-muted-foreground">导出时包含明文密钥</span>
+          <UiSwitch v-model="includeSecretsOnExport" />
         </div>
 
-        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
+        <div class="flex-1 space-y-2 overflow-y-auto p-2.5">
           <!-- Global Row -->
           <div
             v-if="globalEnvRow"
-            class="p-2.5 rounded border border-dividerLight bg-primaryLight/40 flex items-center justify-between cursor-pointer hover:border-accent transition"
+            class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent/50"
             @click="openEnvironmentEditor(globalEnvRow.id)"
           >
             <div>
-              <div class="font-semibold text-secondaryDark text-tiny">Global (全局变量)</div>
-              <div class="text-[11px] text-secondaryLight font-mono">
+              <div class="text-xs font-semibold text-foreground">
+                Global (全局变量)
+              </div>
+              <div class="mt-0.5 font-mono text-[11px] text-muted-foreground">
                 {{ globalEnvRow.variable_count }} 个全局变量
               </div>
             </div>
-            <Edit3 class="w-3.5 h-3.5 text-secondaryLight" />
+            <Edit3 class="h-3.5 w-3.5 text-muted-foreground" />
           </div>
 
           <!-- Named Environments -->
           <div
             v-for="env in selectableEnvironments"
             :key="env.id"
-            class="p-2.5 rounded border transition flex items-center justify-between cursor-pointer"
+            class="flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors"
             :class="
               activeEnvironmentId === env.id
-                ? 'border-accent bg-accent/10'
-                : 'border-dividerLight hover:bg-primaryLight/50'
+                ? 'border-foreground bg-accent/40'
+                : 'border-border bg-card hover:bg-accent/40'
             "
             @click="activeEnvironmentId = env.id"
           >
             <div class="min-w-0 pr-2">
-              <div class="flex items-center space-x-1.5">
+              <div class="flex items-center gap-2">
                 <span
-                  class="w-2 h-2 rounded-full flex-shrink-0"
-                  :class="activeEnvironmentId === env.id ? 'bg-accent' : 'bg-dividerDark'"
+                  class="h-2 w-2 shrink-0 rounded-full"
+                  :class="
+                    activeEnvironmentId === env.id
+                      ? 'bg-foreground'
+                      : 'bg-muted-foreground/40'
+                  "
                 />
-                <span class="font-semibold text-secondaryDark text-tiny truncate">
+                <span class="truncate text-xs font-semibold text-foreground">
                   {{ env.name }}
                 </span>
               </div>
-              <div class="text-[11px] text-secondaryLight font-mono truncate mt-0.5">
+              <div class="mt-1 truncate font-mono text-[11px] text-muted-foreground">
                 {{ env.variable_count }} 变量 · {{ env.tenant_count }} Mazbri 租户
               </div>
             </div>
 
-            <HoppButtonSecondary
-              v-tippy="'编辑变量与 Mazbri 租户密钥池'"
-              :icon="Edit3"
+            <UiButton
+              variant="ghost"
+              size="icon-xs"
+              title="编辑变量与 Mazbri 租户密钥池"
               @click.stop="openEnvironmentEditor(env.id)"
-            />
+            >
+              <Edit3 class="h-3.5 w-3.5" />
+            </UiButton>
           </div>
         </div>
       </template>
 
       <!-- 3. LOAD PROFILES QUICK LIST -->
       <template v-else>
-        <div class="flex items-center justify-between px-3 py-2 border-b border-dividerLight">
-          <span class="font-bold text-tiny text-secondaryDark uppercase tracking-wider">
-            压测配置模板 (Profiles)
+        <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+          <span class="text-xs font-semibold tracking-tight text-foreground">
+            负载配置预设
           </span>
-          <HoppButtonSecondary
-            v-tippy="'前往模板管理页'"
-            :icon="ExternalLink"
+          <UiButton
+            variant="ghost"
+            size="icon-xs"
+            title="前往负载预设管理页"
             @click="router.push({ name: 'profiles' })"
-          />
+          >
+            <ExternalLink class="h-3.5 w-3.5" />
+          </UiButton>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
-          <div v-if="loadProfiles.length === 0" class="py-8 text-center text-secondaryLight text-tiny space-y-3">
-            <p>暂无已保存的压测模板</p>
-            <HoppButtonSecondary
-              label="前往创建模板"
-              outline
+        <div class="flex-1 space-y-2 overflow-y-auto p-2.5">
+          <div
+            v-if="loadProfiles.length === 0"
+            class="space-y-3 py-10 text-center text-xs text-muted-foreground"
+          >
+            <p>暂无已保存的负载预设</p>
+            <UiButton
+              variant="outline"
+              size="sm"
               @click="router.push({ name: 'profiles' })"
-            />
+            >
+              前往创建预设
+            </UiButton>
           </div>
           <div
             v-for="p in loadProfiles"
             :key="p.id"
-            class="p-2.5 rounded border border-dividerLight hover:border-accent transition cursor-pointer"
+            class="cursor-pointer rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent/50"
             @click="router.push({ name: 'profiles' })"
           >
-            <div class="font-semibold text-secondaryDark text-tiny">{{ p.name }}</div>
-            <div class="text-[11px] text-secondaryLight font-mono mt-0.5">
+            <div class="text-xs font-semibold text-foreground">{{ p.name }}</div>
+            <div class="mt-1 font-mono text-[11px] text-muted-foreground tabular-nums">
               {{ p.model === "open_loop" ? `${p.qps} QPS` : "闭环" }} ·
               {{ p.concurrency }} 并发 · {{ p.processes }} 进程
             </div>
@@ -240,11 +292,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartCheckbox,
-} from "@hoppscotch/ui";
 import {
   Download,
   Edit3,
@@ -273,6 +320,9 @@ import {
   selectableEnvironments,
   type RightSidebarSection,
 } from "../../stores/workspace";
+import UiButton from "../ui/UiButton.vue";
+import UiInput from "../ui/UiInput.vue";
+import UiSwitch from "../ui/UiSwitch.vue";
 import CollectionTreeNode from "./CollectionTreeNode.vue";
 
 const router = useRouter();
@@ -287,7 +337,7 @@ const pendingImportKind = ref<"collections" | "environments">("collections");
 const sections: { id: RightSidebarSection; label: string; icon: unknown }[] = [
   { id: "collections", label: "集合与目录 (Collections)", icon: Folder },
   { id: "environments", label: "环境与密钥池 (Environments)", icon: Layers },
-  { id: "profiles", label: "压测模板 (Load Profiles)", icon: Gauge },
+  { id: "profiles", label: "负载预设 (Load Profiles)", icon: Gauge },
 ];
 
 const globalEnvRow = computed(() =>

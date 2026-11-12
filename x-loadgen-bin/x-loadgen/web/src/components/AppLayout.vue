@@ -1,10 +1,10 @@
 <template>
-  <div class="flex flex-col h-screen w-screen overflow-hidden bg-primary text-secondary">
+  <div class="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
     <AppHeader />
 
-    <div class="flex flex-1 min-h-0 overflow-hidden">
+    <div class="flex min-h-0 flex-1 overflow-hidden">
       <AppSidenav />
-      <main class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden bg-primary">
+      <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <RouterView />
       </main>
     </div>

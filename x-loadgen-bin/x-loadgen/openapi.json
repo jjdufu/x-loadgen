@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "x-loadgen API",
-    "version": "0.2.0",
-    "description": "HTTP API for the Hoppscotch-style x-loadgen API debugging & load-testing platform (supporting both generic `http` and `mazbri` cryptographic protocols)."
+    "version": "0.3.0",
+    "description": "HTTP API for the x-loadgen dual-protocol (`http` + `mazbri`) API debugging & high-concurrency load-testing studio."
   },
   "servers": [
     {

@@ -1,81 +1,106 @@
 <template>
-  <div class="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
-    <!-- Top Multi-Tab Strip + Environment Selector (Hoppscotch Tab Header) -->
-    <div class="flex items-center justify-between border-b border-dividerLight bg-primaryDark select-none">
-      <div class="flex items-center overflow-x-auto no-scrollbar flex-1 min-w-0">
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+    <!-- Top Multi-Tab Strip + Environment Selector -->
+    <div class="flex h-10 shrink-0 items-center justify-between border-b border-border bg-surface/60 select-none">
+      <div class="flex min-w-0 flex-1 items-center overflow-x-auto h-full">
         <div
           v-for="tab in tabs"
           :key="tab.tabId"
-          class="flex items-center space-x-2 px-3 py-2 border-r border-dividerLight cursor-pointer transition min-w-[140px] max-w-[230px] group relative"
+          class="group relative flex h-full min-w-[148px] max-w-[240px] cursor-pointer items-center gap-2 border-r border-border px-3.5 text-xs transition-colors"
           :class="
             activeTabId === tab.tabId
-              ? 'bg-primary text-secondaryDark font-semibold active-top-tab'
-              : 'bg-primaryDark text-secondary hover:bg-primaryLight/60'
+              ? 'bg-background text-foreground font-medium'
+              : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
           "
           @click="activeTabId = tab.tabId"
           @dblclick="duplicateWorkspaceTab(tab.tabId)"
         >
           <span
-            class="font-mono font-bold text-[10px] flex-shrink-0"
+            v-if="activeTabId === tab.tabId"
+            class="absolute inset-x-0 top-0 h-[2px] bg-foreground"
+          />
+          <span
+            class="shrink-0 font-mono text-[11px] font-semibold"
             :class="methodColorClass(tab.draft.method)"
           >
             {{ tab.draft.method }}
           </span>
           <span
             v-if="tab.draft.protocol === 'mazbri'"
-            class="px-1 rounded bg-accent/15 text-accent font-mono text-[9px] flex-shrink-0"
+            class="shrink-0 rounded border border-border bg-muted px-1 py-0.2 font-mono text-[10px] font-medium text-foreground"
           >
             MZ
           </span>
-          <span class="truncate text-tiny flex-1">
+          <span class="flex-1 truncate">
             {{ tab.draft.name || "未命名请求" }}
           </span>
           <span
             v-if="isTabDirty(tab)"
-            class="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0 group-hover:hidden"
+            class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 group-hover:hidden"
           />
           <button
-            v-tippy="'关闭标签页'"
             type="button"
-            class="p-0.5 rounded hover:bg-divider text-secondaryLight hover:text-secondaryDark opacity-60 group-hover:opacity-100 flex-shrink-0"
+            title="关闭标签页"
+            aria-label="关闭标签页"
+            class="shrink-0 rounded p-0.5 text-muted-foreground opacity-60 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
             @click.stop="closeWorkspaceTab(tab.tabId)"
           >
-            <X class="w-3 h-3" />
+            <X class="h-3 w-3" />
           </button>
         </div>
 
-        <div class="flex items-center px-1.5 space-x-0.5 flex-shrink-0">
-          <HoppButtonSecondary
-            v-tippy="'新建 HTTP 请求标签页 (Alt + N)'"
-            :icon="Plus"
+        <div class="flex shrink-0 items-center gap-0.5 px-2">
+          <UiButton
+            variant="ghost"
+            size="icon-xs"
+            title="新建 HTTP 请求标签页 (Alt + N)"
+            aria-label="新建 HTTP 请求标签页"
             @click="addNewRequestTab('http')"
-          />
-          <HoppButtonSecondary
-            v-tippy="'新建 Mazbri 加密网关请求标签页 (Alt + M)'"
-            :icon="ShieldPlus"
+          >
+            <Plus class="h-3.5 w-3.5" />
+          </UiButton>
+          <UiButton
+            variant="ghost"
+            size="icon-xs"
+            title="新建 Mazbri 加密网关请求标签页 (Alt + M)"
+            aria-label="新建 Mazbri 请求标签页"
             @click="addNewRequestTab('mazbri')"
-          />
+          >
+            <ShieldPlus class="h-3.5 w-3.5" />
+          </UiButton>
         </div>
       </div>
 
       <EnvironmentSelector />
     </div>
 
-    <!-- Main Hoppscotch Splitpanes Area -->
-    <Splitpanes class="smart-splitter flex-1 min-h-0 overflow-hidden">
+    <!-- Main Blur-Free Geist Splitpanes Area -->
+    <Splitpanes class="geist-splitter min-h-0 flex-1 overflow-hidden">
       <!-- Center Request + Response Split -->
-      <Pane :size="rightSidebarOpen ? 72 : 100" :min-size="45" class="flex flex-col min-h-0 overflow-hidden bg-primary">
+      <Pane
+        :size="rightSidebarOpen ? 72 : 100"
+        :min-size="45"
+        class="flex min-h-0 flex-col overflow-hidden bg-background"
+      >
         <Splitpanes
           :horizontal="!horizontalSplit"
-          class="smart-splitter flex-1 min-h-0 overflow-hidden"
+          class="geist-splitter min-h-0 flex-1 overflow-hidden"
         >
-          <Pane :size="52" :min-size="25" class="flex flex-col min-h-0 overflow-hidden bg-primary">
+          <Pane
+            :size="54"
+            :min-size="26"
+            class="flex min-h-0 flex-col overflow-hidden bg-background"
+          >
             <ProtocolAndBreadcrumbBar />
             <RequestUrlBar />
             <RequestOptionsTabs />
           </Pane>
 
-          <Pane :size="48" :min-size="22" class="flex flex-col min-h-0 overflow-hidden bg-primary border-t border-dividerLight">
+          <Pane
+            :size="46"
+            :min-size="22"
+            class="flex min-h-0 flex-col overflow-hidden bg-background"
+          >
             <ResponsePane />
           </Pane>
         </Splitpanes>
@@ -86,8 +111,8 @@
         v-if="rightSidebarOpen"
         :size="28"
         :min-size="18"
-        :max-size="45"
-        class="flex flex-col min-h-0 overflow-hidden bg-primary"
+        :max-size="44"
+        class="flex min-h-0 flex-col overflow-hidden bg-background"
       >
         <WorkspaceRightSidebar />
       </Pane>
@@ -96,10 +121,9 @@
 </template>
 
 <script setup lang="ts">
-import { HoppButtonSecondary } from "@hoppscotch/ui";
 import { Pane, Splitpanes } from "splitpanes";
-import "splitpanes/dist/splitpanes.css";
 import { Plus, ShieldPlus, X } from "lucide-vue-next";
+import UiButton from "../components/ui/UiButton.vue";
 import EnvironmentSelector from "../components/workspace/EnvironmentSelector.vue";
 import ProtocolAndBreadcrumbBar from "../components/workspace/ProtocolAndBreadcrumbBar.vue";
 import RequestOptionsTabs from "../components/workspace/RequestOptionsTabs.vue";
@@ -118,15 +142,3 @@ import {
   tabs,
 } from "../stores/workspace";
 </script>
-
-<style scoped>
-.active-top-tab::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: var(--accent-color);
-}
-</style>

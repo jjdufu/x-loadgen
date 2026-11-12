@@ -1,35 +1,73 @@
-import preset from "@hoppscotch/ui/ui-preset";
-
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{vue,ts,tsx}",
-    "./node_modules/@hoppscotch/ui/dist/**/*.{js,mjs}",
-  ],
-  presets: [preset],
+  darkMode: ["class"],
+  content: ["./index.html", "./src/**/*.{vue,ts,tsx}"],
   theme: {
     extend: {
-      inset: {
-        upperPrimaryStickyFold: "var(--upper-primary-sticky-fold)",
-        upperSecondaryStickyFold: "var(--upper-secondary-sticky-fold)",
-        upperTertiaryStickyFold: "var(--upper-tertiary-sticky-fold)",
-        upperFourthStickyFold: "var(--upper-fourth-sticky-fold)",
-        upperRunnerStickyFold: "var(--upper-runner-sticky-fold)",
-        upperMobilePrimaryStickyFold: "var(--upper-mobile-primary-sticky-fold)",
-        upperMobileSecondaryStickyFold:
-          "var(--upper-mobile-secondary-sticky-fold)",
-        upperMobileStickyFold: "var(--upper-mobile-sticky-fold)",
-        upperMobileTertiaryStickyFold:
-          "var(--upper-mobile-tertiary-sticky-fold)",
-        lowerPrimaryStickyFold: "var(--lower-primary-sticky-fold)",
-        lowerSecondaryStickyFold: "var(--lower-secondary-sticky-fold)",
-        lowerTertiaryStickyFold: "var(--lower-tertiary-sticky-fold)",
-        lowerFourthStickyFold: "var(--lower-fourth-sticky-fold)",
-        sidebarPrimaryStickyFold: "var(--sidebar-primary-sticky-fold)",
-        sidebarSecondaryStickyFold: "var(--line-height-body)",
-        propertiesPrimaryStickyFold: "var(--properties-primary-sticky-fold)",
+      fontFamily: {
+        sans: [
+          '"Geist Variable"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Noto Sans CJK SC"',
+          '"Microsoft YaHei UI"',
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "sans-serif",
+        ],
+        mono: [
+          '"Geist Mono Variable"',
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "Monaco",
+          "Consolas",
+          "monospace",
+        ],
+      },
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        surface: "hsl(var(--surface))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+      },
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
       },
     },
   },
+  plugins: [],
 };

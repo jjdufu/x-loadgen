@@ -1,25 +1,71 @@
 <template>
-  <div class="flex flex-wrap sm:flex-nowrap items-stretch gap-2 px-4 py-2.5 border-b border-dividerLight bg-primary">
-    <!-- Combined Method + URL Input Group (Hoppscotch style) -->
+  <div
+    class="flex flex-wrap lg:flex-nowrap items-center gap-2.5 border-b border-border bg-background px-4 py-2.5"
+  >
+    <!-- Shadcn Monochrome Segmented Protocol Switcher -->
     <div
-      class="flex flex-1 min-w-0 items-center rounded border border-divider bg-primaryLight focus-within:border-accent transition overflow-hidden"
+      class="inline-flex h-9 shrink-0 items-center rounded-lg border border-border bg-muted p-0.5"
+      role="group"
+      aria-label="选择请求协议"
     >
-      <select
-        :value="draft.method"
-        aria-label="HTTP 方法"
-        class="px-3 py-2 bg-transparent font-mono font-bold text-tiny cursor-pointer border-r border-dividerLight"
-        :class="methodColorClass(draft.method)"
-        @change="draft.method = ($event.target as HTMLSelectElement).value"
+      <button
+        type="button"
+        class="inline-flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+        :class="
+          draft.protocol === 'http'
+            ? 'bg-background text-foreground shadow-sm'
+            : 'text-muted-foreground hover:text-foreground'
+        "
+        @click="switchProtocol('http')"
       >
-        <option v-for="m in HTTP_METHODS" :key="m" :value="m" class="bg-primary text-secondaryDark">
-          {{ m }}
-        </option>
-      </select>
+        <Globe class="h-3.5 w-3.5" />
+        <span>HTTP 通用</span>
+      </button>
+      <button
+        type="button"
+        class="inline-flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+        :class="
+          draft.protocol === 'mazbri'
+            ? 'bg-background text-foreground shadow-sm'
+            : 'text-muted-foreground hover:text-foreground'
+        "
+        @click="switchProtocol('mazbri')"
+      >
+        <ShieldCheck class="h-3.5 w-3.5" />
+        <span>Mazbri 网关</span>
+      </button>
+    </div>
+
+    <!-- Unified Method + Geist Mono URL Input -->
+    <div
+      class="flex h-9 min-w-[240px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-1 focus-within:ring-ring"
+    >
+      <div class="relative flex h-full items-center border-r border-border bg-muted/35">
+        <select
+          :value="draft.method"
+          aria-label="HTTP 方法"
+          class="h-full cursor-pointer appearance-none bg-transparent pl-3 pr-7 font-mono text-xs font-semibold focus:outline-none"
+          :class="methodColorClass(draft.method)"
+          @change="draft.method = ($event.target as HTMLSelectElement).value"
+        >
+          <option
+            v-for="m in HTTP_METHODS"
+            :key="m"
+            :value="m"
+            class="bg-background text-foreground"
+          >
+            {{ m }}
+          </option>
+        </select>
+        <ChevronDown
+          class="pointer-events-none absolute right-2 h-3 w-3 text-muted-foreground"
+        />
+      </div>
 
       <span
         v-if="draft.protocol === 'mazbri'"
-        v-tippy="'Mazbri 模式：此处填写网关内部业务路由 path，外层统一经 /api/v1/gateway 密封转发'"
-        class="px-2 py-0.5 ml-2 rounded bg-accent/15 text-accent font-mono text-[11px] flex-shrink-0"
+        title="Mazbri 模式：填写网关内部业务路由 path，外层自动经 /api/v1/gateway 密封转发"
+        class="ml-2.5 shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
       >
         inner.path
       </span>
@@ -27,78 +73,124 @@
       <input
         :value="draft.endpoint"
         type="text"
+        aria-label="请求地址或路径"
         :placeholder="
           draft.protocol === 'mazbri'
-            ? '输入业务接口路径，如 /v1/orders/<<orderId>>'
-            : '输入完整 URL (https://...) 或相对环境网关路径 (/api/v1/...)，支持 <<var>> 与 {{seq}}'
+            ? '输入网关内部业务路径，如 /v1/orders/<<orderId>>'
+            : '输入完整 URL (https://...) 或环境相对路径 (/api/v1/...)，支持 <<var>> 与 {{seq}}'
         "
-        class="flex-1 min-w-0 px-3 py-2 bg-transparent font-mono text-secondaryDark placeholder-secondaryLight"
+        class="h-full min-w-0 flex-1 bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
         @input="draft.endpoint = ($event.target as HTMLInputElement).value"
         @keydown.enter.exact.prevent="sendActiveTabProbe"
       />
-
-      <HoppButtonSecondary
-        v-if="draft.protocol === 'http'"
-        v-tippy="'从 cURL 命令导入'"
-        :icon="Terminal"
-        label="cURL"
-        @click="curlModalOpen = true"
-      />
     </div>
 
-    <!-- Send / Load Test / Save Action Buttons -->
-    <div class="flex items-center space-x-1.5 flex-shrink-0">
-      <HoppButtonPrimary
-        :icon="Send"
+    <!-- Clean Action Button Hierarchy: 1 Primary + Outline Secondary + More Dropdown -->
+    <div class="flex shrink-0 items-center gap-2">
+      <UiButton
+        variant="default"
         :loading="activeTab.sending"
-        label="发送 (Send)"
         @click="sendActiveTabProbe"
-      />
+      >
+        <Send v-if="!activeTab.sending" class="h-3.5 w-3.5" />
+        <span>发送</span>
+      </UiButton>
 
-      <HoppButtonSecondary
-        v-tippy="'以此请求发起并发压测 (Load Test)'"
-        :icon="Zap"
-        label="压测"
-        filled
-        outline
-        class="!text-accent !border-accent/60 hover:!bg-accent/15"
+      <UiButton
+        variant="outline"
+        title="以此请求发起并发压测"
         @click="openSingleLoadRunner(draft)"
-      />
+      >
+        <Zap class="h-3.5 w-3.5" />
+        <span>压测</span>
+      </UiButton>
 
-      <HoppButtonSecondary
-        v-tippy="'保存请求到集合 (Ctrl + S)'"
-        :icon="Save"
-        label="保存"
-        outline
+      <UiButton
+        variant="outline"
+        title="保存请求到集合 (Ctrl + S)"
         @click="saveActiveTab"
-      />
+      >
+        <Save class="h-3.5 w-3.5" />
+        <span>保存</span>
+      </UiButton>
 
-      <HoppButtonSecondary
-        v-tippy="'另存为新请求'"
-        :icon="CopyPlus"
-        outline
-        @click="openSaveAs"
-      />
+      <UiDropdown align="end">
+        <template #trigger>
+          <UiButton
+            variant="ghost"
+            size="icon"
+            title="更多请求操作"
+            aria-label="更多请求操作"
+          >
+            <MoreHorizontal class="h-4 w-4" />
+          </UiButton>
+        </template>
+
+        <UiDropdownItem @select="curlModalOpen = true">
+          <Terminal class="h-4 w-4 text-muted-foreground" />
+          <span>从 cURL 导入...</span>
+        </UiDropdownItem>
+        <UiDropdownItem @select="openSaveAs">
+          <CopyPlus class="h-4 w-4 text-muted-foreground" />
+          <span>另存为新请求...</span>
+        </UiDropdownItem>
+        <UiDropdownItem @select="duplicateWorkspaceTab(activeTab.tabId)">
+          <Copy class="h-4 w-4 text-muted-foreground" />
+          <span>复制当前标签页</span>
+        </UiDropdownItem>
+      </UiDropdown>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { HoppButtonPrimary, HoppButtonSecondary } from "@hoppscotch/ui";
-import { CopyPlus, Save, Send, Terminal, Zap } from "lucide-vue-next";
+import {
+  ChevronDown,
+  Copy,
+  CopyPlus,
+  Globe,
+  MoreHorizontal,
+  Save,
+  Send,
+  ShieldCheck,
+  Terminal,
+  Zap,
+} from "lucide-vue-next";
 import { HTTP_METHODS, methodColorClass } from "../../helpers/format";
 import {
   activeTab,
   curlModalOpen,
+  duplicateWorkspaceTab,
   openSingleLoadRunner,
   saveActiveTab,
   saveModalForceNew,
   saveModalOpen,
   sendActiveTabProbe,
 } from "../../stores/workspace";
+import UiButton from "../ui/UiButton.vue";
+import UiDropdown from "../ui/UiDropdown.vue";
+import UiDropdownItem from "../ui/UiDropdownItem.vue";
 
 const draft = computed(() => activeTab.value.draft);
+
+function switchProtocol(next: "http" | "mazbri"): void {
+  if (draft.value.protocol === next) return;
+  draft.value.protocol = next;
+  if (next === "mazbri") {
+    activeTab.value.requestSubTab = "auth";
+    if (draft.value.endpoint.startsWith("http")) {
+      draft.value.endpoint = "/v1/demo";
+    }
+    if (draft.value.method === "GET" && !draft.value.body.content_type) {
+      draft.value.method = "POST";
+      draft.value.body.content_type = "application/json";
+      if (!draft.value.body.body) {
+        draft.value.body.body = '{\n  "ping": "mazbri"\n}';
+      }
+    }
+  }
+}
 
 function openSaveAs(): void {
   saveModalForceNew.value = true;

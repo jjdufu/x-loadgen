@@ -1,177 +1,172 @@
 <template>
-  <HoppSmartModal
-    v-if="runnerModalOpen"
-    dialog
+  <UiDialog
+    :open="runnerModalOpen"
     :title="modalTitle"
-    styles="sm:max-w-4xl"
+    description="启动时自动冻结当前请求、集合及环境快照，并跳转至实时吞吐监控大盘。"
+    max-width="4xl"
     @close="runnerModalOpen = false"
   >
-    <template #body>
-      <div class="space-y-4">
-        <!-- Top Environment & Load Profile Selector -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded border border-dividerLight bg-primaryLight/40">
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-              运行环境与密钥池 (Environment)
-            </label>
-            <select v-model="selectedEnvId" class="select">
-              <option value="">不使用命名环境 (仅 Global 变量)</option>
-              <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
-                {{ env.name }}
-                {{ env.gateway_base_url ? `(${env.gateway_base_url})` : "" }}
-              </option>
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-              载入已保存的压测模板预设 (Load Profile 可选)
-            </label>
-            <select
-              :value="selectedProfileId"
-              class="select"
-              @change="applyProfilePreset(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">自定义参数 (不使用预设模板)</option>
-              <option v-for="p in loadProfiles" :key="p.id" :value="p.id">
-                {{ p.name }} ({{ p.model === "open_loop" ? `${p.qps} QPS` : "闭环" }} · {{ p.concurrency }} 并发)
-              </option>
-            </select>
-          </div>
+    <div class="space-y-5">
+      <!-- Top Environment & Load Profile Selector -->
+      <div
+        class="grid grid-cols-1 gap-4 rounded-lg border border-border bg-surface/50 p-4 md:grid-cols-2"
+      >
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            运行环境与密钥池 (Environment)
+          </label>
+          <UiSelect v-model="selectedEnvId">
+            <option value="">不使用命名环境 (仅 Global 变量)</option>
+            <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
+              {{ env.name }}
+              {{ env.gateway_base_url ? `(${env.gateway_base_url})` : "" }}
+            </option>
+          </UiSelect>
         </div>
 
-        <!-- Single Request Summary OR Collection Weighted Request Selector -->
-        <div
-          v-if="runnerContext.mode === 'single' && runnerContext.draft"
-          class="flex items-center justify-between px-3 py-2.5 rounded border border-dividerLight bg-primary"
-        >
-          <div class="flex items-center space-x-2.5 min-w-0">
-            <span
-              class="px-2 py-0.5 rounded text-tiny font-bold uppercase border border-divider"
-              :class="
-                runnerContext.draft.protocol === 'mazbri'
-                  ? 'text-accent border-accent/50 bg-accent/10'
-                  : 'text-sky-400'
-              "
-            >
-              {{ runnerContext.draft.protocol }}
-            </span>
-            <span
-              class="font-mono font-bold text-tiny"
-              :class="methodColorClass(runnerContext.draft.method)"
-            >
-              {{ runnerContext.draft.method }}
-            </span>
-            <span class="font-mono text-secondaryDark truncate">
-              {{ runnerContext.draft.endpoint }}
-            </span>
-          </div>
-          <span class="text-tiny text-secondaryLight flex-shrink-0 ml-2">
-            {{ runnerContext.draft.id ? "已保存请求" : "当前标签页草稿直压" }}
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            载入已保存的负载预设 (Load Profile 可选)
+          </label>
+          <UiSelect
+            :model-value="selectedProfileId"
+            @update:model-value="applyProfilePreset"
+          >
+            <option value="">自定义参数 (不使用预设)</option>
+            <option v-for="p in loadProfiles" :key="p.id" :value="p.id">
+              {{ p.name }} ({{ p.model === "open_loop" ? `${p.qps} QPS` : "闭环" }} · {{ p.concurrency }} 并发)
+            </option>
+          </UiSelect>
+        </div>
+      </div>
+
+      <!-- Single Request Summary OR Collection Weighted Request Selector -->
+      <div
+        v-if="runnerContext.mode === 'single' && runnerContext.draft"
+        class="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
+      >
+        <div class="flex min-w-0 items-center gap-2.5">
+          <UiBadge variant="outline" class="uppercase font-mono">
+            {{ runnerContext.draft.protocol }}
+          </UiBadge>
+          <span
+            class="font-mono text-xs font-semibold shrink-0"
+            :class="methodColorClass(runnerContext.draft.method)"
+          >
+            {{ runnerContext.draft.method }}
+          </span>
+          <span class="truncate font-mono text-sm text-foreground">
+            {{ runnerContext.draft.endpoint }}
           </span>
         </div>
+        <span class="shrink-0 text-xs text-muted-foreground">
+          {{ runnerContext.draft.id ? "已保存请求" : "当前标签页草稿直压" }}
+        </span>
+      </div>
+
+      <div
+        v-else-if="runnerContext.mode === 'collection'"
+        class="overflow-hidden rounded-lg border border-border bg-card"
+      >
+        <div
+          class="flex items-center justify-between border-b border-border bg-muted/40 px-4 py-2.5"
+        >
+          <span class="text-xs font-semibold text-foreground">
+            勾选参与集合混合压测的接口与流量权重 ({{ enabledCount }}/{{ collectionRows.length }})
+          </span>
+          <div class="flex items-center gap-1.5">
+            <UiButton variant="ghost" size="xs" @click="toggleAll(true)">
+              全选
+            </UiButton>
+            <UiButton variant="ghost" size="xs" @click="toggleAll(false)">
+              全不选
+            </UiButton>
+          </div>
+        </div>
 
         <div
-          v-else-if="runnerContext.mode === 'collection'"
-          class="rounded border border-dividerLight overflow-hidden"
+          v-if="collectionRows.length === 0"
+          class="p-8 text-center text-sm text-muted-foreground"
         >
-          <div class="flex items-center justify-between px-3 py-2 bg-primaryLight border-b border-dividerLight">
-            <span class="font-semibold text-secondaryDark text-tiny">
-              勾选参与集合混合压测的接口与流量权重 ({{ enabledCount }}/{{ collectionRows.length }})
-            </span>
-            <div class="flex items-center space-x-2">
-              <HoppButtonSecondary label="全选" @click="toggleAll(true)" />
-              <HoppButtonSecondary label="全不选" @click="toggleAll(false)" />
+          该集合内暂无已保存请求，请先在集合中创建或保存请求。
+        </div>
+
+        <div v-else class="max-h-56 divide-y divide-border overflow-y-auto">
+          <div
+            v-for="item in collectionRows"
+            :key="item.request.id"
+            class="flex items-center justify-between px-4 py-2.5 transition-colors hover:bg-muted/35"
+          >
+            <div class="flex min-w-0 flex-1 items-center gap-3">
+              <input
+                type="checkbox"
+                :checked="item.enabled"
+                :aria-label="`参与压测 ${item.request.name}`"
+                class="h-4 w-4 cursor-pointer rounded border-input accent-foreground"
+                @change="item.enabled = !item.enabled"
+              />
+              <UiBadge variant="muted" class="uppercase font-mono text-[10px]">
+                {{ item.request.protocol }}
+              </UiBadge>
+              <span
+                class="w-14 shrink-0 font-mono text-xs font-semibold"
+                :class="methodColorClass(item.request.method)"
+              >
+                {{ item.request.method }}
+              </span>
+              <div class="min-w-0 truncate">
+                <span class="mr-2 text-sm font-medium text-foreground">
+                  {{ item.request.name }}
+                </span>
+                <span class="font-mono text-xs text-muted-foreground">
+                  {{ item.request.endpoint }}
+                </span>
+              </div>
             </div>
-          </div>
-
-          <div v-if="collectionRows.length === 0" class="p-6 text-center text-secondaryLight text-tiny">
-            该集合内暂无已保存请求，请先在集合中创建或保存请求。
-          </div>
-
-          <div v-else class="max-h-52 overflow-y-auto divide-y divide-dividerLight">
-            <div
-              v-for="(item, idx) in collectionRows"
-              :key="item.request.id"
-              class="flex items-center justify-between px-3 py-2 hover:bg-primaryLight/50"
-            >
-              <div class="flex items-center space-x-3 min-w-0 flex-1">
-                <HoppSmartCheckbox
-                  :on="item.enabled"
-                  :name="`runner-req-${idx}`"
-                  @change="item.enabled = !item.enabled"
-                />
-                <span
-                  class="px-1.5 py-0.5 rounded text-[10px] uppercase font-mono border border-divider"
-                >
-                  {{ item.request.protocol }}
-                </span>
-                <span
-                  class="font-mono font-bold text-tiny w-14 flex-shrink-0"
-                  :class="methodColorClass(item.request.method)"
-                >
-                  {{ item.request.method }}
-                </span>
-                <div class="min-w-0 truncate">
-                  <span class="text-secondaryDark font-semibold mr-2">
-                    {{ item.request.name }}
-                  </span>
-                  <span class="text-secondaryLight font-mono text-tiny">
-                    {{ item.request.endpoint }}
-                  </span>
-                </div>
-              </div>
-              <div class="flex items-center space-x-1.5 flex-shrink-0 ml-3">
-                <span class="text-tiny text-secondaryLight">权重</span>
-                <input
-                  v-model.number="item.weight"
-                  type="number"
-                  min="1"
-                  :disabled="!item.enabled"
-                  class="input font-mono w-20 !py-1 !px-2 text-right"
-                />
-              </div>
+            <div class="ml-3 flex shrink-0 items-center gap-2">
+              <span class="text-xs text-muted-foreground whitespace-nowrap">权重</span>
+              <input
+                v-model.number="item.weight"
+                type="number"
+                min="1"
+                :disabled="!item.enabled"
+                class="h-8 w-20 rounded-md border border-input bg-background px-2.5 text-right font-mono text-xs text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+              />
             </div>
           </div>
         </div>
-
-        <!-- Load Shaping Config -->
-        <LoadConfigForm
-          v-model="loadConfig"
-          :assert-spec="assertSpec"
-          @update:assert-spec="(v) => (assertSpec = v)"
-        />
       </div>
-    </template>
+
+      <!-- Load Shaping Config -->
+      <LoadConfigForm
+        v-model="loadConfig"
+        :assert-spec="assertSpec"
+        @update:assert-spec="(v) => (assertSpec = v)"
+      />
+    </div>
 
     <template #footer>
-      <div class="flex items-center justify-between w-full">
-        <span class="text-tiny text-secondaryLight">
-          启动后将冻结当前请求/集合/环境快照并打开实时监控大盘
+      <div class="flex w-full items-center justify-between gap-3">
+        <span class="hidden sm:inline text-xs text-muted-foreground">
+          支持单进程或多进程集群并发，运行中可实时调整目标速率与并发上限
         </span>
-        <div class="flex items-center space-x-2">
-          <HoppButtonSecondary label="取消" outline @click="runnerModalOpen = false" />
-          <HoppButtonPrimary
-            :icon="Play"
-            :loading="launching"
-            label="立即启动压测"
-            @click="launchRun"
-          />
+        <div class="flex items-center gap-2 ml-auto">
+          <UiButton variant="outline" @click="runnerModalOpen = false">
+            取消
+          </UiButton>
+          <UiButton variant="default" :loading="launching" @click="launchRun">
+            <Play v-if="!launching" class="h-3.5 w-3.5" />
+            <span>立即启动压测</span>
+          </UiButton>
         </div>
       </div>
     </template>
-  </HoppSmartModal>
+  </UiDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartCheckbox,
-  HoppSmartModal,
-} from "@hoppscotch/ui";
 import { Play } from "lucide-vue-next";
 import { api } from "../../api/workspace";
 import type {
@@ -199,6 +194,10 @@ import {
   selectableEnvironments,
 } from "../../stores/workspace";
 import LoadConfigForm from "../common/LoadConfigForm.vue";
+import UiBadge from "../ui/UiBadge.vue";
+import UiButton from "../ui/UiButton.vue";
+import UiDialog from "../ui/UiDialog.vue";
+import UiSelect from "../ui/UiSelect.vue";
 
 interface SelectableRequestRow {
   folderPath: string;
@@ -331,7 +330,6 @@ async function launchRun(): Promise<void> {
     body.collection_id = runnerContext.value.collectionId ?? null;
     body.selected_requests = selected;
   } else if (runnerContext.value.draft) {
-    // Always pass the normalized current draft so even unsaved edits are stress-tested accurately
     body.adhoc_request = normalizeDraftForApi(runnerContext.value.draft);
   }
 

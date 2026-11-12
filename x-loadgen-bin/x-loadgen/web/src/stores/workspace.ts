@@ -51,7 +51,7 @@ export interface LoadRunnerLaunchContext {
 const TABS_STORAGE_KEY = "x-loadgen.workspace.tabs.v2";
 const ACTIVE_TAB_STORAGE_KEY = "x-loadgen.workspace.activeTab.v2";
 const ENV_STORAGE_KEY = "x-loadgen.workspace.envId.v2";
-const LAYOUT_STORAGE_KEY = "x-loadgen.workspace.layout.v2";
+const LAYOUT_STORAGE_KEY = "x-loadgen.workspace.layout.v3";
 
 function makeTabId(): string {
   return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -109,7 +109,7 @@ function loadLayoutPrefs(): LayoutPrefs {
     const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
     if (!raw) {
       return {
-        leftExpanded: false,
+        leftExpanded: true,
         rightOpen: true,
         rightSection: "collections",
         horizontalSplit: false,
@@ -117,14 +117,14 @@ function loadLayoutPrefs(): LayoutPrefs {
     }
     const p = JSON.parse(raw) as Partial<LayoutPrefs>;
     return {
-      leftExpanded: Boolean(p.leftExpanded),
+      leftExpanded: p.leftExpanded !== false,
       rightOpen: p.rightOpen !== false,
       rightSection: p.rightSection ?? "collections",
       horizontalSplit: Boolean(p.horizontalSplit),
     };
   } catch {
     return {
-      leftExpanded: false,
+      leftExpanded: true,
       rightOpen: true,
       rightSection: "collections",
       horizontalSplit: false,
@@ -365,6 +365,18 @@ export function openSavedRequestInTab(req: SavedRequest): void {
   }
   const draft: RequestDraft = cloneJson(req);
   const tab = createWorkspaceTab(draft, true);
+  tabs.value.push(tab);
+  activeTabId.value = tab.tabId;
+}
+
+export function openDraftInNewTab(draft: RequestDraft): void {
+  const tab = createWorkspaceTab(cloneJson(draft), false);
+  if (
+    draft.body?.content_type &&
+    (draft.method === "POST" || draft.method === "PUT" || draft.method === "PATCH")
+  ) {
+    tab.requestSubTab = "body";
+  }
   tabs.value.push(tab);
   activeTabId.value = tab.tabId;
 }

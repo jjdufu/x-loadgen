@@ -1,106 +1,115 @@
 <template>
-  <div class="relative flex items-center space-x-1 px-2 flex-shrink-0">
-    <Layers class="w-3.5 h-3.5 text-accent flex-shrink-0" />
-    <select
-      :value="activeEnvironmentId ?? ''"
+  <div ref="rootEl" class="relative flex items-center gap-1.5 px-3 py-1 shrink-0 border-l border-border">
+    <Layers class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+    <UiSelect
+      :model-value="activeEnvironmentId ?? ''"
+      size="sm"
       aria-label="选择运行环境"
-      class="bg-transparent text-secondaryDark font-semibold text-tiny py-1 pr-6 pl-1 cursor-pointer border border-transparent hover:border-divider rounded"
-      @change="onSelectEnv(($event.target as HTMLSelectElement).value)"
+      wrapper-class="w-44"
+      class="border-transparent bg-transparent shadow-none hover:bg-accent/60 font-medium"
+      @update:model-value="onSelectEnv"
     >
-      <option value="">无环境 (No Environment)</option>
+      <option value="">无环境 (No Env)</option>
       <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
         {{ env.name }}
       </option>
-    </select>
+    </UiSelect>
 
-    <HoppButtonSecondary
-      v-tippy="'环境速览与编辑 (Environment Quick Peek)'"
-      :icon="Eye"
+    <UiButton
+      variant="ghost"
+      size="icon-xs"
+      title="环境与变量速览"
+      aria-label="环境速览"
       @click="peekOpen = !peekOpen"
-    />
+    >
+      <Eye class="h-3.5 w-3.5" />
+    </UiButton>
 
-    <HoppButtonSecondary
-      v-tippy="'新建环境 / Mazbri 密钥池'"
-      :icon="Plus"
+    <UiButton
+      variant="ghost"
+      size="icon-xs"
+      title="新建环境 / Mazbri 密钥池"
+      aria-label="新建环境"
       @click="openEnvironmentEditor(null)"
-    />
+    >
+      <Plus class="h-3.5 w-3.5" />
+    </UiButton>
 
     <!-- Quick Peek Popover -->
     <div
       v-if="peekOpen"
-      class="absolute right-2 top-9 z-40 w-80 rounded border border-dividerDark bg-popover shadow-xl p-3 space-y-3 text-tiny"
+      class="absolute right-3 top-10 z-50 w-80 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl space-y-3"
     >
-      <div class="flex items-center justify-between border-b border-dividerLight pb-2">
-        <span class="font-bold text-secondaryDark">
-          环境速览：{{ activeEnvironmentDetail?.name ?? "仅 Global 全局变量" }}
+      <div class="flex items-center justify-between border-b border-border pb-2.5">
+        <span class="text-sm font-semibold truncate pr-2">
+          {{ activeEnvironmentDetail?.name ?? "仅 Global 全局变量" }}
         </span>
         <button
           type="button"
-          class="text-secondaryLight hover:text-secondaryDark"
+          class="rounded p-0.5 text-muted-foreground hover:text-foreground"
           @click="peekOpen = false"
         >
-          ✕
+          <X class="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <div v-if="activeEnvironmentDetail" class="space-y-1 text-secondary">
-        <div class="flex items-center justify-between">
-          <span>默认网关：</span>
-          <span class="font-mono text-secondaryDark truncate max-w-[180px]">
+      <div v-if="activeEnvironmentDetail" class="space-y-1.5 text-xs">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-muted-foreground">默认网关</span>
+          <span class="font-mono text-foreground truncate max-w-[185px]">
             {{ activeEnvironmentDetail.gateway_base_url || "未设置" }}
           </span>
         </div>
-        <div class="flex items-center justify-between">
-          <span>Mazbri 租户池：</span>
-          <span class="font-mono text-accent font-semibold">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-muted-foreground">Mazbri 租户池</span>
+          <span class="font-mono font-medium text-foreground">
             {{ activeEnvironmentDetail.tenants.length }} 个租户
           </span>
         </div>
       </div>
 
-      <div class="space-y-1 max-h-40 overflow-y-auto">
-        <div class="font-semibold text-secondaryLight uppercase">生效变量 (&lt;&lt;var&gt;&gt;)</div>
-        <div v-if="effectiveVariables.length === 0" class="text-secondaryLight py-2">
+      <div class="space-y-1.5 max-h-44 overflow-y-auto pt-1">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          生效模板变量 (&lt;&lt;var&gt;&gt;)
+        </div>
+        <div v-if="effectiveVariables.length === 0" class="py-2 text-xs text-muted-foreground">
           当前暂无生效变量
         </div>
         <div
           v-for="v in effectiveVariables"
           :key="v.key"
-          class="flex items-center justify-between py-0.5 font-mono"
+          class="flex items-center justify-between gap-2 py-0.5 font-mono text-xs"
         >
-          <span class="text-accent">&lt;&lt;{{ v.key }}&gt;&gt;</span>
-          <span class="text-secondaryDark truncate max-w-[140px]">
+          <span class="text-foreground">&lt;&lt;{{ v.key }}&gt;&gt;</span>
+          <span class="text-muted-foreground truncate max-w-[145px]">
             {{ v.secret ? "••••••••" : v.value }}
           </span>
         </div>
       </div>
 
-      <div class="flex items-center justify-between pt-2 border-t border-dividerLight">
-        <HoppButtonSecondary
-          label="编辑 Global"
-          outline
-          @click="editGlobal"
-        />
-        <HoppButtonSecondary
+      <div class="flex items-center justify-between gap-2 border-t border-border pt-3">
+        <UiButton variant="outline" size="sm" @click="editGlobal">
+          编辑 Global
+        </UiButton>
+        <UiButton
           v-if="activeEnvironmentId"
-          label="编辑当前环境"
-          outline
+          variant="default"
+          size="sm"
           @click="editActive"
-        />
-        <HoppButtonPrimary
-          v-else
-          label="新建环境"
-          @click="createNew"
-        />
+        >
+          编辑当前环境
+        </UiButton>
+        <UiButton v-else variant="default" size="sm" @click="createNew">
+          新建环境
+        </UiButton>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import { HoppButtonPrimary, HoppButtonSecondary } from "@hoppscotch/ui";
-import { Eye, Layers, Plus } from "lucide-vue-next";
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import { Eye, Layers, Plus, X } from "lucide-vue-next";
 import {
   activeEnvironmentDetail,
   activeEnvironmentId,
@@ -109,8 +118,26 @@ import {
   openEnvironmentEditor,
   selectableEnvironments,
 } from "../../stores/workspace";
+import UiButton from "../ui/UiButton.vue";
+import UiSelect from "../ui/UiSelect.vue";
 
 const peekOpen = ref(false);
+const rootEl = ref<HTMLDivElement | null>(null);
+
+function handleOutsideClick(ev: MouseEvent): void {
+  if (!peekOpen.value || !rootEl.value) return;
+  if (!rootEl.value.contains(ev.target as Node)) {
+    peekOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("mousedown", handleOutsideClick);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", handleOutsideClick);
+});
 
 function onSelectEnv(val: string): void {
   activeEnvironmentId.value = val || null;

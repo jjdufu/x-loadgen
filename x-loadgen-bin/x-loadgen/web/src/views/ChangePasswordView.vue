@@ -1,81 +1,110 @@
 <template>
-  <div class="min-h-screen w-screen flex items-center justify-center bg-primary p-4">
-    <div class="w-full max-w-lg rounded-lg border border-dividerLight bg-primaryLight/40 p-6 shadow-xl space-y-5">
-      <div class="flex items-center space-x-3">
-        <KeyRound class="w-7 h-7 text-accent flex-shrink-0" />
-        <div>
-          <h1 class="heading">首次安全加固：修改管理员口令</h1>
-          <p class="text-tiny text-secondaryLight">
-            完成口令轮换后系统将自动销毁引导文件 <code class="font-mono">admin.passwd</code>
-          </p>
+  <div class="relative flex min-h-screen w-screen items-center justify-center bg-background p-6 text-foreground">
+    <!-- Top-Right Light/Black Toggle -->
+    <div class="absolute right-6 top-6">
+      <UiButton variant="outline" size="sm" @click="toggleTheme">
+        <Sun v-if="effectiveTheme === 'light'" class="h-3.5 w-3.5" />
+        <Moon v-else class="h-3.5 w-3.5" />
+        <span class="font-mono text-xs">
+          {{ effectiveTheme === "black" ? "Black" : "Light" }}
+        </span>
+      </UiButton>
+    </div>
+
+    <UiCard class="w-full max-w-lg p-7 space-y-6">
+      <div class="space-y-2">
+        <div class="flex items-center gap-3">
+          <div
+            class="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-muted text-foreground shrink-0"
+          >
+            <KeyRound class="h-4 w-4" />
+          </div>
+          <div>
+            <h1 class="text-xl font-semibold tracking-tight text-foreground">
+              首次安全加固：修改管理员口令
+            </h1>
+            <p class="text-xs text-muted-foreground">
+              完成口令轮换后系统将自动清理引导文件 <code class="font-mono text-foreground">admin.passwd</code>
+            </p>
+          </div>
         </div>
+
+        <p class="pt-1 text-xs text-muted-foreground leading-relaxed">
+          新口令不少于 <strong class="text-foreground">24 个字符</strong>，仅限可打印 ASCII（不含空格、引号、分号、逗号和反斜杠），且不能与当前口令相同。
+        </p>
       </div>
 
-      <p class="text-tiny text-secondary leading-relaxed">
-        新口令不少于 <strong>24 个字符</strong>，仅限可打印 ASCII（不含空格、引号、分号、逗号和反斜杠），且不能与当前口令相同。
-      </p>
-
       <form class="space-y-4" @submit.prevent="submit">
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             当前口令 (Current Token)
           </label>
-          <input
+          <UiInput
             v-model="oldToken"
             type="password"
+            mono
             autocomplete="current-password"
             placeholder="输入刚登录使用的初始口令"
-            class="input font-mono"
           />
         </div>
 
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label class="text-tiny text-secondaryLight font-semibold">
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
               新口令 (至少 24 位可打印 ASCII)
             </label>
-            <HoppButtonSecondary
-              :icon="Dices"
-              type="button"
-              label="随机生成高强度口令"
+            <UiButton
+              variant="ghost"
+              size="xs"
               @click="generateStrongPassword"
-            />
+            >
+              <Dices class="h-3.5 w-3.5" />
+              <span>随机生成高强度口令</span>
+            </UiButton>
           </div>
-          <div class="flex items-center space-x-1.5">
-            <input
+          <div class="flex items-center gap-1.5">
+            <UiInput
               v-model="newToken"
               :type="showNew ? 'text' : 'password'"
+              mono
               autocomplete="new-password"
               placeholder="输入至少 24 字符的新口令"
-              class="input font-mono flex-1"
+              class="flex-1"
             />
-            <HoppButtonSecondary
-              :icon="showNew ? EyeOff : Eye"
-              type="button"
-              outline
+            <UiButton
+              variant="outline"
+              size="icon"
+              aria-label="切换新口令显示"
               @click="showNew = !showNew"
-            />
+            >
+              <EyeOff v-if="showNew" class="h-4 w-4" />
+              <Eye v-else class="h-4 w-4" />
+            </UiButton>
           </div>
         </div>
 
-        <HoppButtonPrimary
+        <UiButton
+          variant="default"
+          type="submit"
           :loading="loading"
-          type="button"
-          label="确认修改并进入工作台"
-          class="w-full justify-center"
-          @click="submit"
-        />
+          class="w-full"
+        >
+          确认修改并进入工作台
+        </UiButton>
       </form>
-    </div>
+    </UiCard>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { HoppButtonPrimary, HoppButtonSecondary } from "@hoppscotch/ui";
-import { Dices, Eye, EyeOff, KeyRound } from "lucide-vue-next";
+import { Dices, Eye, EyeOff, KeyRound, Moon, Sun } from "lucide-vue-next";
 import { api } from "../api/workspace";
+import UiButton from "../components/ui/UiButton.vue";
+import UiCard from "../components/ui/UiCard.vue";
+import UiInput from "../components/ui/UiInput.vue";
+import { effectiveTheme, toggleTheme } from "../modules/theme";
 import { toast } from "../modules/toast";
 
 const router = useRouter();

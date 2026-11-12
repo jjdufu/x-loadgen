@@ -1,42 +1,44 @@
 <template>
-  <HoppSmartModal
-    v-if="shortcutsModalOpen"
-    dialog
-    title="工作台快捷键与操作指南"
+  <UiDialog
+    :open="shortcutsModalOpen"
+    title="键盘快捷键指南"
+    description="在接口调试与压测工作台中使用以下组合键提升操作效率。"
+    max-width="md"
     @close="shortcutsModalOpen = false"
   >
-    <template #body>
-      <div class="divide-y divide-dividerLight border border-dividerLight rounded">
-        <div
-          v-for="item in shortcuts"
-          :key="item.keys"
-          class="flex items-center justify-between px-4 py-2.5"
+    <div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+      <div
+        v-for="item in shortcuts"
+        :key="item.keys"
+        class="flex items-center justify-between gap-4 px-4 py-3 text-sm"
+      >
+        <span class="text-foreground">{{ item.desc }}</span>
+        <kbd
+          class="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs font-medium text-foreground"
         >
-          <span class="text-secondaryDark">{{ item.desc }}</span>
-          <span class="font-mono text-tiny px-2 py-0.5 rounded border border-dividerDark bg-primaryLight text-secondaryDark">
-            {{ item.keys }}
-          </span>
-        </div>
+          {{ item.keys }}
+        </kbd>
       </div>
-    </template>
+    </div>
 
     <template #footer>
-      <div class="flex justify-end w-full">
-        <HoppButtonSecondary label="关闭" outline @click="shortcutsModalOpen = false" />
-      </div>
+      <UiButton variant="outline" @click="shortcutsModalOpen = false">
+        关闭
+      </UiButton>
     </template>
-  </HoppSmartModal>
+  </UiDialog>
 </template>
 
 <script setup lang="ts">
-import { HoppButtonSecondary, HoppSmartModal } from "@hoppscotch/ui";
 import { shortcutsModalOpen } from "../../stores/workspace";
+import UiButton from "../ui/UiButton.vue";
+import UiDialog from "../ui/UiDialog.vue";
 
 const shortcuts = [
-  { keys: "Ctrl / Cmd + Enter", desc: "立即发送单次调试请求 (Send Probe)" },
-  { keys: "Ctrl / Cmd + S", desc: "保存当前标签页请求到集合 (Save Request)" },
+  { keys: "Ctrl / Cmd + Enter", desc: "发送单次接口调试请求" },
+  { keys: "Ctrl / Cmd + S", desc: "保存当前标签页请求到集合" },
   { keys: "Alt + N", desc: "新建 HTTP 请求标签页" },
-  { keys: "Alt + M", desc: "新建 Mazbri 网关协议请求标签页" },
+  { keys: "Alt + M", desc: "新建 Mazbri 网关协议标签页" },
   { keys: "Ctrl / Cmd + /", desc: "打开 / 关闭快捷键面板" },
 ];
 </script>

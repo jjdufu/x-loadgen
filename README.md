@@ -1,6 +1,6 @@
 # x-loadgen
 
-Hoppscotch 风格的双协议（通用 `http` + `mazbri` 网关）API 调试与压测工作台。通过 Web 页面或 HTTP API 配置集合（Collections）、请求（Requests）、环境与租户密钥池（Environments）及压测预设（Load Profiles），支持单次交互调试（`Send`）与多接口加权压测任务（`Load Test`）。命令行只提供服务启动与基础管理功能，不能直接发起压测。
+双协议（通用 `http` + `mazbri` 网关）API 交互调试与高并发压测工作台，采用 **Shadcn/ui × Vercel Geist** 新瑞士极简黑白灰设计风格。通过内置 Web 页面或 HTTP API 配置集合（Collections）、请求（Requests）、环境与租户密钥池（Environments）及负载预设（Load Profiles），支持单次交互调试（`发送`）与多接口加权压测任务（`压测`），并内置离线可视化 OpenAPI 接口规范文档（`/docs`）。命令行只提供服务启动与基础管理功能，不能直接发起压测。
 
 仓库：<https://github.com/jjdufu/x-loadgen>。自包含的独立项目，不依赖仓库外的任何路径。
 
@@ -12,7 +12,7 @@ Hoppscotch 风格的双协议（通用 `http` + `mazbri` 网关）API 调试与�
   - `x-loadgen-libs/x-loadgen-crypto`：算法闭集、注册表与软件密码学原语
   - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封与请求绑定签名编解码
   - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、绑定头、解码响应）
-- 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3 + `@hoppscotch/ui` + Hoppscotch 主题系统），发布时完整嵌入单二进制
+- 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3 + Shadcn/ui + Reka UI + Vercel Geist 可变字体，`Light` / `Black` 跟随系统明暗主题），发布时完整嵌入单二进制
 - 依赖全部来自 crates.io（sparse），不添加项目级 `.cargo` 代理。
 
 ## 命令行
@@ -261,13 +261,16 @@ xlg "$XLG/api/v1/meta" | jq .
 
 ### OpenAPI 文档
 
-完整 OpenAPI 3.0 文档（公开，无需登录）：
+完整 OpenAPI 3.0 规范（公开接口无需认证，路径与运行中的路由一一对应）：
+
+- **内置可视化接口规范视图**：在 Web 左侧导航栏点击「接口文档」（路由 `/docs`），即可离线浏览分组目录、搜索过滤、展开 `$ref` Schema、复制 `curl` 示例或一键载入工作台调试。
+- **机器可读 JSON 清单**：
 
 ```text
 GET $XLG/api/v1/openapi.json
 ```
 
-可导入 Postman、Insomnia，或用浏览器打开。路径与运行中的路由一一对应。
+可导入外部 API 工具，或在 `/docs` 页面右上角直接下载。
 
 ### 环境与租户密钥池（Environments & Tenants）
 
@@ -721,19 +724,19 @@ esac
 
 运行中的循环任务不要对 `POST /runs?wait=true` 设过短的 timeout 却期望 201：到点会 409 `wait_timeout`，任务本身继续跑，用返回体里的 `run.id` 再去 stop。
 
-### 在 Hoppscotch 风格工作台里调试与压测
+### 在 Web 工作台里调试与压测
 
 登录（或 `--no-auth`）之后可以在 Web 工作台完成全部交互调试与压测操作：
 
-1. **配置环境与租户池**：在右上角或右侧栏「环境（Environments）」新建环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
-2. **多标签接口调试（`Send`）**：在主工作台新建标签页或导入 cURL，切换协议（`HTTP` 通用协议 / `Mazbri` 专有网关协议），配置参数、Headers、CodeMirror 请求体、鉴权与响应断言，点击 **`Send`** 即可查看格式化响应、断言结果，以及 Mazbri 专属的「信封与签名追踪（`Wire Inspector`）」。
-3. **组织集合与预设**：点击「Save」将请求存入右侧「集合（Collections）」目录树（支持 JSON 导入导出）；在左侧导航「压测预设（Profiles）」管理可复用的开环/闭环流量模型与 SLA 阈值。
-4. **发起单接口或集合加权压测（`Load Test`）**：在任意请求栏点击「Load Test」或在集合节点上点击「集合压测」，勾选参与压测的接口、调整各自权重（`weight`）、选择预设或临时覆盖 QPS/并发/多进程参数并一键启动。
+1. **配置环境与租户池**：在工作台顶栏或右侧栏「环境（Environments）」新建环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
+2. **多标签接口调试（`发送`）**：在主工作台新建标签页或导入 cURL，切换协议（`HTTP 通用` / `Mazbri 网关`），配置参数、Headers、CodeMirror 请求体、鉴权与响应断言，点击 **`发送`** 即可查看格式化响应、断言结果，以及 Mazbri 专属的「信封与签名追踪」。
+3. **组织集合与预设**：点击「保存」将请求存入右侧「集合（Collections）」目录树（支持 JSON 导入导出）；在左侧导航「负载预设」管理可复用的开环/闭环流量模型与 SLA 阈值。
+4. **发起单接口或集合加权压测（`压测`）**：在任意请求栏点击「压测」或在集合节点上点击「集合压测」，勾选参与压测的接口、调整各自权重（`weight`）、选择预设或临时覆盖 QPS/并发/多进程参数并一键启动。
 5. **实时监控与报告**：跳转至 `/runs/:id` 查看 ECharts 实时吞吐曲线、延迟分位卡片、在线热调 QPS/并发、停止/续跑、游标分页样本明细表，并一键下载脱敏 JSON 或独立离线 HTML 报告。
 
 `gateway_base_url` 必须是**容器能够访问**的地址：IP、公网 URL，或 DNS 可解析的域名加端口。不要填写 `http://127.0.0.1:8888` 来指向宿主机上的网关（那是容器自己的回环）。指向宿主机上的监听时，使用宿主机在该桥接网络上的地址，或该服务对容器可见的地址。
 
-页面路由：`/`（多标签调试工作台）、`/runs`（压测运行中心）、`/runs/:id`（实时监控与报告详情）、`/profiles`（压测预设管理）、`/settings`（Hoppscotch 主题/强调色与安全设置）、`/login`、`/password`。
+页面路由：`/`（多标签调试工作台）、`/runs`（压测任务列表）、`/runs/:id`（实时监控与报告详情）、`/profiles`（负载预设管理）、`/docs`（内置可视化 OpenAPI 接口规范）、`/settings`（`Light` / `Black` 跟随系统外观与安全设置）、`/login`、`/password`。
 
 ## 接入 mazbri 网关（加密与签名）
 

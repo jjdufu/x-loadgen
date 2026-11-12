@@ -1,81 +1,76 @@
 <template>
-  <HoppSmartModal
-    v-if="saveModalOpen"
-    dialog
-    :title="saveModalForceNew ? '另存请求到集合 (Save As)' : '保存请求到集合 (Save Request)'"
+  <UiDialog
+    :open="saveModalOpen"
+    :title="saveModalForceNew ? '另存请求到集合' : '保存请求到集合'"
+    description="归档后的请求可随时打开复用，或与同集合内其他接口组合执行加权压测。"
+    max-width="lg"
     @close="saveModalOpen = false"
   >
-    <template #body>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-            请求名称 (Request Name) *
-          </label>
-          <input
-            v-model="requestName"
-            type="text"
-            placeholder="例如 查询订单详情"
-            class="input"
-          />
-        </div>
-
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label class="text-tiny text-secondaryLight font-semibold">
-              所属集合 / 文件夹 (Collection) *
-            </label>
-            <HoppButtonSecondary
-              :icon="FolderPlus"
-              :label="creatingFolder ? '返回选择已有集合' : '快速新建集合'"
-              @click="creatingFolder = !creatingFolder"
-            />
-          </div>
-
-          <div v-if="creatingFolder || folderOptions.length === 0" class="flex items-center space-x-2">
-            <input
-              v-model="newFolderName"
-              type="text"
-              placeholder="输入新集合名称，例如 核心业务网关压测集"
-              class="input flex-1"
-            />
-          </div>
-          <select v-else v-model="selectedCollectionId" class="select font-mono">
-            <option v-for="opt in folderOptions" :key="opt.id" :value="opt.id">
-              {{ opt.label }}
-            </option>
-          </select>
-        </div>
-
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-            集合压测默认权重 (Weight)
-          </label>
-          <input
-            v-model.number="weight"
-            type="number"
-            min="1"
-            class="input font-mono w-32"
-          />
-        </div>
+    <div class="space-y-4">
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          请求名称 (Request Name) *
+        </label>
+        <UiInput
+          v-model="requestName"
+          placeholder="例如 查询订单详情"
+        />
       </div>
-    </template>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            所属集合 / 文件夹 (Collection) *
+          </label>
+          <UiButton
+            v-if="folderOptions.length > 0"
+            variant="ghost"
+            size="xs"
+            @click="creatingFolder = !creatingFolder"
+          >
+            <FolderPlus class="h-3.5 w-3.5" />
+            <span>{{ creatingFolder ? "返回选择已有集合" : "快速新建集合" }}</span>
+          </UiButton>
+        </div>
+
+        <UiInput
+          v-if="creatingFolder || folderOptions.length === 0"
+          v-model="newFolderName"
+          placeholder="输入新集合名称，例如 核心业务网关压测集"
+        />
+        <UiSelect v-else v-model="selectedCollectionId" mono>
+          <option v-for="opt in folderOptions" :key="opt.id" :value="opt.id">
+            {{ opt.label }}
+          </option>
+        </UiSelect>
+      </div>
+
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          集合压测默认权重 (Weight)
+        </label>
+        <UiInput
+          :model-value="weight"
+          type="number"
+          min="1"
+          mono
+          class="w-36"
+          @update:model-value="(v) => (weight = Math.max(1, Number(v) || 1))"
+        />
+      </div>
+    </div>
 
     <template #footer>
-      <div class="flex items-center justify-end space-x-2 w-full">
-        <HoppButtonSecondary label="取消" outline @click="saveModalOpen = false" />
-        <HoppButtonPrimary :loading="saving" label="确认保存" @click="confirmSave" />
-      </div>
+      <UiButton variant="outline" @click="saveModalOpen = false">取消</UiButton>
+      <UiButton variant="default" :loading="saving" @click="confirmSave">
+        确认保存
+      </UiButton>
     </template>
-  </HoppSmartModal>
+  </UiDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartModal,
-} from "@hoppscotch/ui";
 import { FolderPlus } from "lucide-vue-next";
 import { api } from "../../api/workspace";
 import { cloneJson, normalizeDraftForApi } from "../../helpers/format";
@@ -88,6 +83,10 @@ import {
   saveModalForceNew,
   saveModalOpen,
 } from "../../stores/workspace";
+import UiButton from "../ui/UiButton.vue";
+import UiDialog from "../ui/UiDialog.vue";
+import UiInput from "../ui/UiInput.vue";
+import UiSelect from "../ui/UiSelect.vue";
 
 const requestName = ref("");
 const selectedCollectionId = ref("");
@@ -148,7 +147,7 @@ async function confirmSave(): Promise<void> {
       normalizeDraftForApi(activeTab.value.draft),
     );
     await refreshCollections();
-    toast.success(`请求已保存至集合`);
+    toast.success("请求已保存至集合");
     saveModalOpen.value = false;
   } finally {
     saving.value = false;

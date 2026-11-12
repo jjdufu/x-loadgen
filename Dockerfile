@@ -4,7 +4,7 @@
 FROM node:20-bookworm AS frontend
 WORKDIR /src/web
 RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
-COPY x-loadgen-bin/x-loadgen/web/package.json x-loadgen-bin/x-loadgen/web/pnpm-lock.yaml ./
+COPY x-loadgen-bin/x-loadgen/web/package.json x-loadgen-bin/x-loadgen/web/pnpm-lock.yaml x-loadgen-bin/x-loadgen/web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY x-loadgen-bin/x-loadgen/web/ ./
 RUN pnpm build

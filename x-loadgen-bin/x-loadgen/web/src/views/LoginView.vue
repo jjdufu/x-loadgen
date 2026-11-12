@@ -1,64 +1,88 @@
 <template>
-  <div class="min-h-screen w-screen flex items-center justify-center bg-primary p-4">
-    <div class="w-full max-w-md rounded-lg border border-dividerLight bg-primaryLight/40 p-6 shadow-xl space-y-5">
-      <div class="flex items-center space-x-3">
-        <span
-          class="inline-flex items-center justify-center w-9 h-9 rounded bg-accent text-accentContrast font-bold text-sm shadow"
-        >
-          XL
+  <div class="relative flex min-h-screen w-screen items-center justify-center bg-background p-6 text-foreground">
+    <!-- Top-Right Light/Black Toggle -->
+    <div class="absolute right-6 top-6">
+      <UiButton variant="outline" size="sm" @click="toggleTheme">
+        <Sun v-if="effectiveTheme === 'light'" class="h-3.5 w-3.5" />
+        <Moon v-else class="h-3.5 w-3.5" />
+        <span class="font-mono text-xs">
+          {{ effectiveTheme === "black" ? "Black" : "Light" }}
         </span>
-        <div>
-          <h1 class="heading">登录 x-loadgen</h1>
-          <p class="text-tiny text-secondaryLight">
-            Hoppscotch 风格接口调试与高并发压测平台
-          </p>
-        </div>
-      </div>
+      </UiButton>
+    </div>
 
-      <p class="text-tiny text-secondary leading-relaxed">
-        请输入管理员访问口令（初始引导口令位于数据目录 <code class="font-mono text-accent">admin.passwd</code>，首次登录后需立即修改口令）。
-      </p>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1.5 font-semibold">
-            管理员口令 (Admin Token)
-          </label>
-          <div class="flex items-center space-x-1.5">
-            <input
-              v-model="token"
-              :type="show ? 'text' : 'password'"
-              autocomplete="current-password"
-              placeholder="输入管理员口令..."
-              class="input font-mono flex-1"
-            />
-            <HoppButtonSecondary
-              :icon="show ? EyeOff : Eye"
-              type="button"
-              outline
-              @click="show = !show"
-            />
+    <UiCard class="w-full max-w-md p-7 space-y-6">
+      <div class="space-y-2">
+        <div class="flex items-center gap-3">
+          <span
+            class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-foreground font-mono text-xs font-bold tracking-tighter text-background"
+          >
+            XL
+          </span>
+          <div>
+            <h1 class="text-xl font-semibold tracking-tight text-foreground">
+              登录 x-loadgen
+            </h1>
+            <p class="text-xs text-muted-foreground">
+              API 调试与高并发压测工作台
+            </p>
           </div>
         </div>
 
-        <HoppButtonPrimary
+        <p class="pt-1 text-xs text-muted-foreground leading-relaxed">
+          请输入管理员访问口令（初始引导口令位于数据目录
+          <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">admin.passwd</code>，首次登录后将引导修改口令）。
+        </p>
+      </div>
+
+      <form class="space-y-4" @submit.prevent="submit">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            管理员口令 (Admin Token)
+          </label>
+          <div class="flex items-center gap-1.5">
+            <UiInput
+              v-model="token"
+              :type="show ? 'text' : 'password'"
+              mono
+              autocomplete="current-password"
+              placeholder="输入管理员口令..."
+              class="flex-1"
+            />
+            <UiButton
+              variant="outline"
+              size="icon"
+              aria-label="切换口令显示"
+              @click="show = !show"
+            >
+              <EyeOff v-if="show" class="h-4 w-4" />
+              <Eye v-else class="h-4 w-4" />
+            </UiButton>
+          </div>
+        </div>
+
+        <UiButton
+          variant="default"
+          type="submit"
           :loading="loading"
-          type="button"
-          label="登录进入工作台"
-          class="w-full justify-center"
-          @click="submit"
-        />
+          class="w-full"
+        >
+          登录进入工作台
+        </UiButton>
       </form>
-    </div>
+    </UiCard>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { HoppButtonPrimary, HoppButtonSecondary } from "@hoppscotch/ui";
-import { Eye, EyeOff } from "lucide-vue-next";
+import { Eye, EyeOff, Moon, Sun } from "lucide-vue-next";
 import { api } from "../api/workspace";
+import UiButton from "../components/ui/UiButton.vue";
+import UiCard from "../components/ui/UiCard.vue";
+import UiInput from "../components/ui/UiInput.vue";
+import { effectiveTheme, toggleTheme } from "../modules/theme";
 import { toast } from "../modules/toast";
 
 const router = useRouter();

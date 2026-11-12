@@ -1,58 +1,61 @@
 <template>
   <div class="space-y-4">
     <!-- Core Model & Concurrency -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-      <div>
-        <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
           发压模型 (Load Model)
         </label>
-        <select
-          :value="config.model"
-          class="select"
-          @change="setModel(($event.target as HTMLSelectElement).value)"
+        <UiSelect
+          :model-value="config.model"
+          @update:model-value="setModel"
         >
           <option value="open_loop">开放环恒定速率 (open_loop / 固定 QPS)</option>
           <option value="closed_loop">闭合环并发饱和 (closed_loop / 仅限并发)</option>
-        </select>
+        </UiSelect>
       </div>
-      <div v-if="config.model === 'open_loop'">
-        <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+      <div v-if="config.model === 'open_loop'" class="space-y-1.5">
+        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
           目标速率 (QPS) *
         </label>
-        <input
-          :value="config.qps ?? 20"
+        <UiInput
+          :model-value="config.qps ?? 20"
           type="number"
           min="1"
-          class="input font-mono"
-          @input="patch({ qps: Math.max(1, Number(($event.target as HTMLInputElement).value) || 1) })"
+          mono
+          @update:model-value="(v) => patch({ qps: Math.max(1, Number(v) || 1) })"
         />
       </div>
-      <div>
-        <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
           最大并发数 (Concurrency) *
         </label>
-        <input
-          :value="config.concurrency"
+        <UiInput
+          :model-value="config.concurrency"
           type="number"
           min="1"
-          class="input font-mono"
-          @input="patch({ concurrency: Math.max(1, Number(($event.target as HTMLInputElement).value) || 1) })"
+          mono
+          @update:model-value="(v) => patch({ concurrency: Math.max(1, Number(v) || 1) })"
         />
       </div>
     </div>
 
     <!-- Budget XOR: Duration vs Total Requests -->
-    <div class="p-3 rounded border border-dividerLight bg-primaryLight/40 space-y-3">
-      <div class="flex items-center justify-between">
-        <span class="font-semibold text-secondaryDark">单轮压测预算 (二选一互斥)</span>
-        <div class="flex items-center space-x-1 bg-primary rounded border border-divider p-0.5">
+    <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-sm font-semibold text-foreground">
+          单轮压测预算 (二选一互斥)
+        </span>
+        <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
           <button
             type="button"
-            class="px-2.5 py-1 rounded text-tiny font-semibold transition"
+            class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               budgetKind === 'duration'
-                ? 'bg-accent text-accentContrast'
-                : 'text-secondary hover:text-secondaryDark'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             "
             @click="switchBudget('duration')"
           >
@@ -60,11 +63,11 @@
           </button>
           <button
             type="button"
-            class="px-2.5 py-1 rounded text-tiny font-semibold transition"
+            class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               budgetKind === 'requests'
-                ? 'bg-accent text-accentContrast'
-                : 'text-secondary hover:text-secondaryDark'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             "
             @click="switchBudget('requests')"
           >
@@ -73,175 +76,191 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div v-if="budgetKind === 'duration'">
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div v-if="budgetKind === 'duration'" class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             持续秒数 (duration_secs) *
           </label>
-          <input
-            :value="config.duration_secs ?? 10"
+          <UiInput
+            :model-value="config.duration_secs ?? 10"
             type="number"
             min="1"
-            class="input font-mono"
-            @input="
-              patch({
-                duration_secs: Math.max(1, Number(($event.target as HTMLInputElement).value) || 1),
-                requests: null,
-              })
+            mono
+            @update:model-value="
+              (v) =>
+                patch({
+                  duration_secs: Math.max(1, Number(v) || 1),
+                  requests: null,
+                })
             "
           />
         </div>
-        <div v-else>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+        <div v-else class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             请求总数 (requests) *
           </label>
-          <input
-            :value="config.requests ?? 100"
+          <UiInput
+            :model-value="config.requests ?? 100"
             type="number"
             min="1"
-            class="input font-mono"
-            @input="
-              patch({
-                requests: Math.max(1, Number(($event.target as HTMLInputElement).value) || 1),
-                duration_secs: null,
-              })
+            mono
+            @update:model-value="
+              (v) =>
+                patch({
+                  requests: Math.max(1, Number(v) || 1),
+                  duration_secs: null,
+                })
             "
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             预热时长 (warmup_secs)
           </label>
-          <input
-            :value="config.warmup_secs"
+          <UiInput
+            :model-value="config.warmup_secs"
             type="number"
             min="0"
-            class="input font-mono"
-            @input="patch({ warmup_secs: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })"
+            mono
+            @update:model-value="(v) => patch({ warmup_secs: Math.max(0, Number(v) || 0) })"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             线性爬坡 (ramp_secs)
           </label>
-          <input
-            :value="config.ramp_secs"
+          <UiInput
+            :model-value="config.ramp_secs"
             type="number"
             min="0"
-            class="input font-mono"
-            @input="patch({ ramp_secs: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })"
+            mono
+            @update:model-value="(v) => patch({ ramp_secs: Math.max(0, Number(v) || 0) })"
           />
         </div>
       </div>
     </div>
 
     <!-- Advanced Multi-Process, Loop & Timeouts -->
-    <details class="rounded border border-dividerLight bg-primaryLight/20">
-      <summary class="px-3 py-2 cursor-pointer flex items-center justify-between font-semibold text-secondaryDark">
+    <details class="group rounded-lg border border-border bg-card">
+      <summary
+        class="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-foreground select-none"
+      >
         <span>多进程集群、循环窗口与超时配置</span>
-        <span class="text-tiny text-secondaryLight font-mono">
+        <span class="font-mono text-xs text-muted-foreground tabular-nums">
           processes={{ config.processes }} · timeout={{ config.timeout_secs }}s
         </span>
       </summary>
-      <div class="p-3 border-t border-dividerLight space-y-3">
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+      <div class="space-y-4 border-t border-border p-4">
+        <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               工作进程数 (1–64)
             </label>
-            <input
-              :value="config.processes"
+            <UiInput
+              :model-value="config.processes"
               type="number"
               min="1"
               max="64"
-              class="input font-mono"
-              @input="patch({ processes: Math.min(64, Math.max(1, Number(($event.target as HTMLInputElement).value) || 1)) })"
+              mono
+              @update:model-value="
+                (v) => patch({ processes: Math.min(64, Math.max(1, Number(v) || 1)) })
+              "
             />
           </div>
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               QPS 分配模式
             </label>
-            <select
-              :value="config.qps_mode"
-              class="select"
-              @change="patch({ qps_mode: ($event.target as HTMLSelectElement).value })"
+            <UiSelect
+              :model-value="config.qps_mode"
+              @update:model-value="(v) => patch({ qps_mode: v })"
             >
               <option value="total">全局均摊 (total)</option>
               <option value="per_process">每进程独立 (per_process)</option>
-            </select>
+            </UiSelect>
           </div>
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               请求超时 (秒)
             </label>
-            <input
-              :value="config.timeout_secs"
+            <UiInput
+              :model-value="config.timeout_secs"
               type="number"
               min="1"
-              class="input font-mono"
-              @input="patch({ timeout_secs: Math.max(1, Number(($event.target as HTMLInputElement).value) || 30) })"
+              mono
+              @update:model-value="(v) => patch({ timeout_secs: Math.max(1, Number(v) || 30) })"
             />
           </div>
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               连接超时 (秒)
             </label>
-            <input
-              :value="config.connect_timeout_secs"
+            <UiInput
+              :model-value="config.connect_timeout_secs"
               type="number"
               min="1"
-              class="input font-mono"
-              @input="patch({ connect_timeout_secs: Math.max(1, Number(($event.target as HTMLInputElement).value) || 5) })"
+              mono
+              @update:model-value="
+                (v) => patch({ connect_timeout_secs: Math.max(1, Number(v) || 5) })
+              "
             />
           </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-6 pt-1">
-          <HoppSmartToggle
-            :on="config.loop_enabled"
-            @change="patch({ loop_enabled: !config.loop_enabled })"
-          >
-            启用多轮循环压测 (Loop Mode)
-          </HoppSmartToggle>
-          <HoppSmartToggle
-            :on="config.include_request_id"
-            @change="patch({ include_request_id: !config.include_request_id })"
-          >
-            自动注入 X-Request-ID 追踪头
-          </HoppSmartToggle>
+          <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+            <UiSwitch
+              :model-value="config.loop_enabled"
+              @update:model-value="(v) => patch({ loop_enabled: v })"
+            />
+            <span>启用多轮循环压测 (Loop Mode)</span>
+          </label>
+          <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+            <UiSwitch
+              :model-value="config.include_request_id"
+              @update:model-value="(v) => patch({ include_request_id: v })"
+            />
+            <span>自动注入 X-Request-ID 追踪头</span>
+          </label>
         </div>
 
-        <div v-if="config.loop_enabled" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+        <div v-if="config.loop_enabled" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               循环轮数 (rounds，留空为无限直到手动停止)
             </label>
-            <input
-              :value="config.rounds ?? ''"
+            <UiInput
+              :model-value="config.rounds ?? ''"
               type="number"
               min="1"
+              mono
               placeholder="不限轮数"
-              class="input font-mono"
-              @input="
-                patch({
-                  rounds: ($event.target as HTMLInputElement).value
-                    ? Math.max(1, Number(($event.target as HTMLInputElement).value))
-                    : null,
-                })
+              @update:model-value="
+                (v) =>
+                  patch({
+                    rounds: v ? Math.max(1, Number(v)) : null,
+                  })
               "
             />
           </div>
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
+
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               轮间静默间隔秒数 (loop_interval_secs)
             </label>
-            <input
-              :value="config.loop_interval_secs"
+            <UiInput
+              :model-value="config.loop_interval_secs"
               type="number"
               min="0"
-              class="input font-mono"
-              @input="patch({ loop_interval_secs: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })"
+              mono
+              @update:model-value="
+                (v) => patch({ loop_interval_secs: Math.max(0, Number(v) || 0) })
+              "
             />
           </div>
         </div>
@@ -249,84 +268,100 @@
     </details>
 
     <!-- SLA Assertions -->
-    <details class="rounded border border-dividerLight bg-primaryLight/20">
-      <summary class="px-3 py-2 cursor-pointer flex items-center justify-between font-semibold text-secondaryDark">
+    <details class="group rounded-lg border border-border bg-card">
+      <summary
+        class="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-foreground select-none"
+      >
         <span>SLA 压测判定阈值 (Verdict Assertions 可选)</span>
-        <span class="text-tiny text-secondaryLight">p95 / p99 / 错误率 / QPS 达成率</span>
+        <span class="text-xs text-muted-foreground">
+          p95 / p99 / 错误率 / QPS 达成率
+        </span>
       </summary>
-      <div class="p-3 border-t border-dividerLight grid grid-cols-2 md:grid-cols-3 gap-3">
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">p50 上限 (ms)</label>
-          <input
-            :value="assertSpec?.p50_ms ?? ''"
+      <div class="grid grid-cols-2 gap-4 border-t border-border p-4 md:grid-cols-3">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            p50 上限 (ms)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.p50_ms ?? ''"
             type="number"
             min="0"
             step="0.1"
+            mono
             placeholder="不限"
-            class="input font-mono"
-            @input="patchAssert('p50_ms', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('p50_ms', v)"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">p95 上限 (ms)</label>
-          <input
-            :value="assertSpec?.p95_ms ?? ''"
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            p95 上限 (ms)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.p95_ms ?? ''"
             type="number"
             min="0"
             step="0.1"
+            mono
             placeholder="例如 100"
-            class="input font-mono"
-            @input="patchAssert('p95_ms', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('p95_ms', v)"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">p99 上限 (ms)</label>
-          <input
-            :value="assertSpec?.p99_ms ?? ''"
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            p99 上限 (ms)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.p99_ms ?? ''"
             type="number"
             min="0"
             step="0.1"
+            mono
             placeholder="例如 250"
-            class="input font-mono"
-            @input="patchAssert('p99_ms', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('p99_ms', v)"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">最大错误率 (0–1)</label>
-          <input
-            :value="assertSpec?.max_error_rate ?? ''"
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            最大错误率 (0–1)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.max_error_rate ?? ''"
             type="number"
             min="0"
             max="1"
             step="0.001"
+            mono
             placeholder="例如 0.01"
-            class="input font-mono"
-            @input="patchAssert('max_error_rate', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('max_error_rate', v)"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">最低 QPS 达成率 (0–1)</label>
-          <input
-            :value="assertSpec?.min_qps_ratio ?? ''"
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            最低 QPS 达成率 (0–1)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.min_qps_ratio ?? ''"
             type="number"
             min="0"
             max="1"
             step="0.05"
+            mono
             placeholder="例如 0.9"
-            class="input font-mono"
-            @input="patchAssert('min_qps_ratio', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('min_qps_ratio', v)"
           />
         </div>
-        <div>
-          <label class="block text-tiny text-secondaryLight mb-1">Max 延迟上限 (ms)</label>
-          <input
-            :value="assertSpec?.max_ms ?? ''"
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            Max 延迟上限 (ms)
+          </label>
+          <UiInput
+            :model-value="assertSpec?.max_ms ?? ''"
             type="number"
             min="0"
             step="1"
+            mono
             placeholder="不限"
-            class="input font-mono"
-            @input="patchAssert('max_ms', ($event.target as HTMLInputElement).value)"
+            @update:model-value="(v) => patchAssert('max_ms', v)"
           />
         </div>
       </div>
@@ -336,8 +371,10 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { HoppSmartToggle } from "@hoppscotch/ui";
 import type { AssertSpec, LoadConfig } from "../../api/types";
+import UiInput from "../ui/UiInput.vue";
+import UiSelect from "../ui/UiSelect.vue";
+import UiSwitch from "../ui/UiSwitch.vue";
 
 const props = defineProps<{
   modelValue: LoadConfig;

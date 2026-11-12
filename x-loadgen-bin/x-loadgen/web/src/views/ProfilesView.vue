@@ -1,128 +1,166 @@
 <template>
-  <div class="flex flex-col flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-dividerLight pb-4">
-      <div>
-        <h1 class="heading">可复用压测模板 (Load Profiles)</h1>
-        <p class="text-tiny text-secondaryLight mt-1">
-          压测模板与具体接口解耦：定义好恒定 QPS、闭环并发、爬坡预热与 SLA 阈值后，可在工作台对任意 HTTP 请求、Mazbri 网关请求或整个集合一键复用。
-        </p>
+  <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
+    <div class="mx-auto max-w-7xl space-y-6 p-6 lg:p-8">
+      <!-- Header -->
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="space-y-1">
+          <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+            可复用负载预设
+          </h1>
+          <p class="text-sm text-muted-foreground">
+            将常用的 QPS、并发、爬坡预热及 SLA 判定规则保存为独立预设，对任意 HTTP 请求、Mazbri 网关接口或集合一键复用。
+          </p>
+        </div>
+
+        <UiButton variant="default" @click="openEditor(null)">
+          <Plus class="h-4 w-4" />
+          <span>新建负载预设</span>
+        </UiButton>
       </div>
-      <HoppButtonPrimary
-        :icon="Plus"
-        label="新建压测模板"
-        @click="openEditor(null)"
-      />
-    </div>
 
-    <div v-if="loadProfiles.length === 0" class="py-16 text-center border border-dashed border-divider rounded space-y-3">
-      <Gauge class="w-10 h-10 mx-auto text-accent opacity-40" />
-      <p class="text-secondaryLight text-tiny">暂无保存的压测模板，点击右上角创建常用压测规格</p>
-      <HoppButtonSecondary :icon="Plus" label="创建首个压测模板" outline @click="openEditor(null)" />
-    </div>
-
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      <div
-        v-for="item in loadProfiles"
-        :key="item.id"
-        class="p-4 rounded border border-dividerLight bg-primaryLight/30 hover:border-accent transition flex flex-col justify-between space-y-4"
+      <!-- Empty State -->
+      <UiCard
+        v-if="loadProfiles.length === 0"
+        class="flex flex-col items-center justify-center gap-3 border-dashed py-20 text-center"
       >
-        <div class="space-y-2">
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <h3 class="font-bold text-secondaryDark">{{ item.name }}</h3>
-              <p v-if="item.note" class="text-tiny text-secondaryLight mt-0.5">
-                {{ item.note }}
-              </p>
+        <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground">
+          <Gauge class="h-5 w-5" />
+        </div>
+        <div class="space-y-1">
+          <p class="text-sm font-medium text-foreground">暂无已保存的负载预设</p>
+          <p class="text-xs text-muted-foreground">
+            点击右上角「新建负载预设」创建基准冒烟、容量评估或峰值冲击规格。
+          </p>
+        </div>
+        <UiButton variant="outline" size="sm" @click="openEditor(null)">
+          <Plus class="h-3.5 w-3.5" />
+          <span>创建首个负载预设</span>
+        </UiButton>
+      </UiCard>
+
+      <!-- Profile Cards Grid -->
+      <div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <UiCard
+          v-for="item in loadProfiles"
+          :key="item.id"
+          class="flex flex-col justify-between p-5 space-y-5 transition-colors hover:border-foreground/30"
+        >
+          <div class="space-y-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <h3 class="truncate text-base font-semibold text-foreground">
+                  {{ item.name }}
+                </h3>
+                <p v-if="item.note" class="mt-0.5 text-xs text-muted-foreground">
+                  {{ item.note }}
+                </p>
+              </div>
+              <UiBadge variant="secondary" class="font-mono shrink-0">
+                {{ item.model === "open_loop" ? `${item.qps} QPS` : "闭环饱和" }}
+              </UiBadge>
             </div>
-            <span class="px-2 py-0.5 rounded bg-accent/15 text-accent font-mono text-tiny">
-              {{ item.model === "open_loop" ? `${item.qps} QPS` : "闭环饱和" }}
+
+            <div class="grid grid-cols-2 gap-2.5 rounded-lg border border-border bg-surface/50 p-3 font-mono text-xs tabular-nums">
+              <div class="text-muted-foreground">
+                最大并发: <strong class="text-foreground">{{ item.concurrency }}</strong>
+              </div>
+              <div class="text-muted-foreground">
+                进程数: <strong class="text-foreground">{{ item.processes }}</strong>
+              </div>
+              <div class="text-muted-foreground">
+                预算:
+                <strong class="text-foreground">
+                  {{ item.duration_secs ? `${item.duration_secs}s` : `${item.requests} 次` }}
+                </strong>
+              </div>
+              <div class="text-muted-foreground">
+                模式:
+                <strong class="text-foreground">
+                  {{ item.loop_enabled ? "循环窗口" : "单轮压测" }}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between border-t border-border pt-3.5">
+            <span class="font-mono text-[11px] text-muted-foreground tabular-nums">
+              更新于 {{ formatTimeMs(item.updated_at) }}
             </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 pt-2 text-tiny font-mono text-secondary">
-            <div>并发数: <strong class="text-secondaryDark">{{ item.concurrency }}</strong></div>
-            <div>进程数: <strong class="text-secondaryDark">{{ item.processes }}</strong></div>
-            <div>
-              预算:
-              <strong class="text-secondaryDark">
-                {{ item.duration_secs ? `${item.duration_secs}s` : `${item.requests} 次` }}
-              </strong>
-            </div>
-            <div>
-              模式:
-              <strong class="text-secondaryDark">
-                {{ item.loop_enabled ? "循环窗口" : "单轮压测" }}
-              </strong>
+            <div class="flex items-center gap-1.5">
+              <UiButton variant="outline" size="sm" @click="openEditor(item)">
+                <Edit3 class="h-3.5 w-3.5" />
+                <span>编辑</span>
+              </UiButton>
+              <UiButton
+                variant="ghost"
+                size="icon-sm"
+                title="删除预设"
+                class="hover:text-rose-600 dark:hover:text-rose-400"
+                @click="removeProfile(item)"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </UiButton>
             </div>
           </div>
-        </div>
-
-        <div class="flex items-center justify-between pt-3 border-t border-dividerLight">
-          <span class="text-[11px] text-secondaryLight font-mono">
-            更新于 {{ formatTimeMs(item.updated_at) }}
-          </span>
-          <div class="flex items-center space-x-1">
-            <HoppButtonSecondary :icon="Edit3" label="编辑" outline @click="openEditor(item)" />
-            <HoppButtonSecondary :icon="Trash2" color="red" outline @click="removeProfile(item)" />
-          </div>
-        </div>
+        </UiCard>
       </div>
     </div>
 
-    <!-- Editor Modal -->
-    <HoppSmartModal
-      v-if="editorOpen"
-      dialog
-      :title="editingId ? '编辑压测模板' : '新建压测模板'"
-      styles="sm:max-w-3xl"
+    <!-- Editor Dialog -->
+    <UiDialog
+      :open="editorOpen"
+      :title="editingId ? '编辑负载预设' : '新建负载预设'"
+      description="配置发压模型、预算、集群进程数及可选的 SLA 自动判定阈值。"
+      max-width="3xl"
       @close="editorOpen = false"
     >
-      <template #body>
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                模板名称 (唯一标识) *
-              </label>
-              <input v-model="name" type="text" placeholder="例如 基准冒烟 50QPS / 峰值冲击 500QPS" class="input" />
-            </div>
-            <div>
-              <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                备注说明 (可选)
-              </label>
-              <input v-model="note" type="text" placeholder="适用场景说明" class="input" />
-            </div>
+      <div class="space-y-5">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              预设名称 (唯一标识) *
+            </label>
+            <UiInput
+              v-model="name"
+              placeholder="例如 基准冒烟 50QPS / 峰值冲击 500QPS"
+            />
           </div>
-
-          <LoadConfigForm
-            v-model="config"
-            :assert-spec="assertSpec"
-            @update:assert-spec="(v) => (assertSpec = v)"
-          />
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              备注说明 (可选)
+            </label>
+            <UiInput v-model="note" placeholder="适用场景说明" />
+          </div>
         </div>
-      </template>
+
+        <LoadConfigForm
+          v-model="config"
+          :assert-spec="assertSpec"
+          @update:assert-spec="(v) => (assertSpec = v)"
+        />
+      </div>
 
       <template #footer>
-        <div class="flex justify-end space-x-2 w-full">
-          <HoppButtonSecondary label="取消" outline @click="editorOpen = false" />
-          <HoppButtonPrimary :loading="saving" label="保存模板" @click="saveProfile" />
-        </div>
+        <UiButton variant="outline" @click="editorOpen = false">取消</UiButton>
+        <UiButton variant="default" :loading="saving" @click="saveProfile">
+          保存预设
+        </UiButton>
       </template>
-    </HoppSmartModal>
+    </UiDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartModal,
-} from "@hoppscotch/ui";
 import { Edit3, Gauge, Plus, Trash2 } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import type { AssertSpec, LoadConfig, LoadProfile } from "../api/types";
 import LoadConfigForm from "../components/common/LoadConfigForm.vue";
+import UiBadge from "../components/ui/UiBadge.vue";
+import UiButton from "../components/ui/UiButton.vue";
+import UiCard from "../components/ui/UiCard.vue";
+import UiDialog from "../components/ui/UiDialog.vue";
+import UiInput from "../components/ui/UiInput.vue";
 import {
   cloneJson,
   createDefaultLoadConfig,
@@ -183,7 +221,7 @@ function openEditor(profile: LoadProfile | null): void {
 
 async function saveProfile(): Promise<void> {
   if (!name.value.trim()) {
-    toast.error("请输入模板名称");
+    toast.error("请输入预设名称");
     return;
   }
   saving.value = true;
@@ -196,10 +234,10 @@ async function saveProfile(): Promise<void> {
     };
     if (editingId.value) {
       await api.updateLoadProfile(editingId.value, payload);
-      toast.success("压测模板已更新");
+      toast.success("负载预设已更新");
     } else {
       await api.createLoadProfile(payload);
-      toast.success("压测模板已创建");
+      toast.success("负载预设已创建");
     }
     await refreshLoadProfiles();
     editorOpen.value = false;
@@ -209,9 +247,9 @@ async function saveProfile(): Promise<void> {
 }
 
 async function removeProfile(profile: LoadProfile): Promise<void> {
-  if (!confirm(`确定删除压测模板「${profile.name}」吗？`)) return;
+  if (!confirm(`确定删除负载预设「${profile.name}」吗？`)) return;
   await api.deleteLoadProfile(profile.id);
   await refreshLoadProfiles();
-  toast.success("压测模板已删除");
+  toast.success("负载预设已删除");
 }
 </script>

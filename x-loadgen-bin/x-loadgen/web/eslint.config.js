@@ -55,6 +55,7 @@ export default tseslint.config(
         HTMLInputElement: "readonly",
         HTMLTextAreaElement: "readonly",
         HTMLSelectElement: "readonly",
+        Node: "readonly",
         confirm: "readonly",
       },
     },

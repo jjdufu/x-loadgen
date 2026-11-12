@@ -119,21 +119,38 @@ export function isAsymmetricBindingAlg(alg: string | null | undefined): boolean 
 export function methodColorClass(method: string): string {
   switch (method.toUpperCase()) {
     case "GET":
-      return "text-emerald-500";
+      return "text-emerald-600 dark:text-emerald-400";
     case "POST":
-      return "text-amber-500";
+      return "text-amber-600 dark:text-amber-400";
     case "PUT":
-      return "text-sky-500";
+      return "text-sky-600 dark:text-sky-400";
     case "PATCH":
-      return "text-violet-500";
+      return "text-violet-600 dark:text-violet-400";
     case "DELETE":
-      return "text-rose-500";
+      return "text-rose-600 dark:text-rose-400";
     case "HEAD":
-      return "text-teal-500";
+      return "text-teal-600 dark:text-teal-400";
     case "OPTIONS":
-      return "text-pink-500";
+      return "text-zinc-600 dark:text-zinc-400";
     default:
-      return "text-secondaryDark";
+      return "text-foreground";
+  }
+}
+
+export function methodBadgeClass(method: string): string {
+  switch (method.toUpperCase()) {
+    case "GET":
+      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+    case "POST":
+      return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-400";
+    case "PUT":
+      return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-400";
+    case "PATCH":
+      return "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-400";
+    case "DELETE":
+      return "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-400";
+    default:
+      return "border-border bg-muted text-foreground";
   }
 }
 
@@ -141,13 +158,22 @@ export function statusCategoryClass(
   status: number | null | undefined,
   transportOk: boolean,
 ): string {
-  if (!transportOk && !status) return "critical-error-response";
-  if (!status) return "missing-data-response";
-  if (status >= 100 && status < 200) return "info-response";
-  if (status >= 200 && status < 300) return "success-response";
-  if (status >= 300 && status < 400) return "redirect-response";
-  if (status >= 400 && status < 500) return "critical-error-response";
-  return "server-error-response";
+  if (!transportOk && !status) {
+    return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400";
+  }
+  if (!status) {
+    return "border-border bg-muted text-muted-foreground";
+  }
+  if (status >= 200 && status < 300) {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+  }
+  if (status >= 300 && status < 400) {
+    return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400";
+  }
+  if (status >= 400 && status < 500) {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400";
+  }
+  return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400";
 }
 
 export function formatLatencyUs(us: number | null | undefined): string {
@@ -254,7 +280,7 @@ export function createDefaultRequestDraft(
     endpoint:
       protocol === "mazbri"
         ? "/v1/demo"
-        : "https://echo.hoppscotch.io",
+        : "http://127.0.0.1:8757/health",
     params: [],
     headers: [],
     body:

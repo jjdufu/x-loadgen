@@ -1,334 +1,420 @@
 <template>
-  <div class="flex flex-col flex-1 min-h-0 overflow-y-auto p-6 space-y-5">
-    <!-- Top Header & Controls -->
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-dividerLight pb-4">
-      <div class="space-y-1">
-        <div class="flex items-center space-x-2.5">
-          <HoppButtonSecondary
-            :icon="ArrowLeft"
-            outline
-            @click="router.push({ name: 'runs' })"
-          />
-          <h1 class="heading">
-            {{ run?.title || "压测任务实时监控" }}
-          </h1>
-          <span
-            v-if="run"
-            class="px-2.5 py-0.5 rounded-full font-mono text-tiny border"
-            :class="
-              isRunning
-                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
-                : 'border-divider bg-primaryLight text-secondaryDark'
-            "
-          >
-            {{ run.status }}
-          </span>
-          <span
-            v-if="run?.verdict && run.verdict.result !== 'none'"
-            class="px-2.5 py-0.5 rounded-full font-mono text-tiny border"
-            :class="verdictClass(run.verdict.result)"
-          >
-            SLA: {{ run.verdict.result.toUpperCase() }}
-          </span>
+  <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
+    <div class="mx-auto max-w-7xl space-y-6 p-6 lg:p-8">
+      <!-- Top Header & Controls -->
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-1.5">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <UiButton
+              variant="outline"
+              size="icon-sm"
+              aria-label="返回压测任务列表"
+              @click="router.push({ name: 'runs' })"
+            >
+              <ArrowLeft class="h-4 w-4" />
+            </UiButton>
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+              {{ run?.title || "压测任务实时监控" }}
+            </h1>
+            <UiBadge
+              v-if="run"
+              :variant="isRunning ? 'success' : 'secondary'"
+              class="font-mono"
+            >
+              {{ run.status }}
+            </UiBadge>
+            <UiBadge
+              v-if="run?.verdict && run.verdict.result !== 'none'"
+              :variant="verdictVariant(run.verdict.result)"
+              class="font-mono"
+            >
+              SLA: {{ run.verdict.result.toUpperCase() }}
+            </UiBadge>
+          </div>
+          <p class="pl-10 font-mono text-xs text-muted-foreground tabular-nums">
+            ID: {{ id }} · 模式: {{ run?.mode ?? "-" }} · 工作进程: {{ run?.processes ?? 1 }}
+          </p>
         </div>
-        <p class="text-tiny text-secondaryLight font-mono pl-10">
-          ID: {{ id }} · 模式: {{ run?.mode ?? "-" }} · 工作进程: {{ run?.processes ?? 1 }}
-        </p>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <UiButton
+            v-if="isRunning"
+            variant="destructive"
+            size="sm"
+            @click="handleStop"
+          >
+            <Square class="h-3.5 w-3.5" />
+            <span>停止压测</span>
+          </UiButton>
+          <UiButton
+            v-if="canResume"
+            variant="default"
+            size="sm"
+            @click="handleResume"
+          >
+            <Play class="h-3.5 w-3.5" />
+            <span>断点续跑</span>
+          </UiButton>
+          <UiButton
+            variant="outline"
+            size="sm"
+            @click="downloadReport('json')"
+          >
+            <Download class="h-3.5 w-3.5" />
+            <span>JSON 报告</span>
+          </UiButton>
+          <UiButton
+            variant="outline"
+            size="sm"
+            @click="downloadReport('html')"
+          >
+            <FileCode2 class="h-3.5 w-3.5" />
+            <span>离线 HTML 报告</span>
+          </UiButton>
+        </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <HoppButtonSecondary
-          v-if="isRunning"
-          :icon="Square"
-          label="停止压测"
-          color="red"
-          outline
-          @click="handleStop"
-        />
-        <HoppButtonPrimary
-          v-if="canResume"
-          :icon="Play"
-          label="断点续跑"
-          @click="handleResume"
-        />
-        <HoppButtonSecondary
-          :icon="Download"
-          label="下载 JSON 报告"
-          outline
-          @click="downloadReport('json')"
-        />
-        <HoppButtonSecondary
-          :icon="FileCode2"
-          label="下载独立 HTML 报告"
-          outline
-          @click="downloadReport('html')"
-        />
-      </div>
-    </div>
-
-    <div
-      v-if="run?.error"
-      class="px-4 py-2.5 rounded border border-rose-500/40 bg-rose-500/15 text-rose-400 text-tiny font-mono"
-    >
-      任务错误：{{ run.error }}
-    </div>
-
-    <!-- Real-Time Metric Cards -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+      <!-- Error Banner -->
       <div
-        v-for="card in metricCards"
-        :key="card.label"
-        class="p-3 rounded border border-dividerLight bg-primaryLight/40"
+        v-if="run?.error"
+        class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 font-mono text-xs text-rose-700 dark:text-rose-400"
       >
-        <div class="text-[11px] text-secondaryLight">{{ card.label }}</div>
-        <div class="text-lg font-bold font-mono mt-0.5" :class="card.colorClass ?? 'text-secondaryDark'">
-          {{ card.value }}
+        任务错误：{{ run.error }}
+      </div>
+
+      <!-- Shadcn Dashboard KPI Metric Cards -->
+      <div class="grid grid-cols-2 gap-3.5 sm:grid-cols-4 lg:grid-cols-8">
+        <UiCard
+          v-for="card in metricCards"
+          :key="card.label"
+          class="p-4 space-y-1.5"
+        >
+          <div class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            {{ card.label }}
+          </div>
+          <div
+            class="font-mono text-xl font-semibold tracking-tight tabular-nums"
+            :class="card.colorClass ?? 'text-foreground'"
+          >
+            {{ card.value }}
+          </div>
+        </UiCard>
+      </div>
+
+      <!-- Live Traffic Tuner Card -->
+      <UiCard class="p-4">
+        <form
+          class="flex flex-wrap items-end gap-4"
+          @submit.prevent="applyTrafficPatch"
+        >
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              在线动态目标 QPS
+            </label>
+            <UiInput
+              :model-value="tuneQps"
+              type="number"
+              min="1"
+              mono
+              :disabled="!isRunning"
+              class="w-36"
+              @update:model-value="(v) => (tuneQps = Math.max(1, Number(v) || 1))"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              在线动态并发上限
+            </label>
+            <UiInput
+              :model-value="tuneConcurrency"
+              type="number"
+              min="1"
+              mono
+              :disabled="!isRunning"
+              class="w-36"
+              @update:model-value="(v) => (tuneConcurrency = Math.max(1, Number(v) || 1))"
+            />
+          </div>
+          <UiButton
+            variant="default"
+            :disabled="!isRunning"
+            @click="applyTrafficPatch"
+          >
+            热更新流量参数
+          </UiButton>
+          <span class="pb-2 text-xs text-muted-foreground">
+            运行期间可随时无损调高或调低 QPS 与并发，即时同步至全部工作进程。
+          </span>
+        </form>
+      </UiCard>
+
+      <!-- ECharts Live Throughput Series -->
+      <UiCard class="p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-foreground">
+              每秒吞吐量与成功 / 失败趋势
+            </h2>
+            <p class="text-xs text-muted-foreground">
+              按秒聚合全集群样本速率 (Real-time Timeseries)
+            </p>
+          </div>
         </div>
-      </div>
-    </div>
+        <div ref="chartEl" class="h-72 w-full" />
+      </UiCard>
 
-    <!-- Live Traffic Tuner Bar -->
-    <form
-      class="flex flex-wrap items-end gap-3 p-3 rounded border border-dividerLight bg-primaryLight/30"
-      @submit.prevent="applyTrafficPatch"
-    >
-      <div>
-        <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-          在线动态目标 QPS
-        </label>
-        <input
-          v-model.number="tuneQps"
-          type="number"
-          min="1"
-          :disabled="!isRunning"
-          class="input font-mono w-32 !py-1.5"
-        />
-      </div>
-      <div>
-        <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-          在线动态并发上限
-        </label>
-        <input
-          v-model.number="tuneConcurrency"
-          type="number"
-          min="1"
-          :disabled="!isRunning"
-          class="input font-mono w-32 !py-1.5"
-        />
-      </div>
-      <HoppButtonPrimary
-        :disabled="!isRunning"
-        type="button"
-        label="热更新流量参数"
-        @click="applyTrafficPatch"
-      />
-      <span class="text-tiny text-secondaryLight pb-1.5">
-        运行期间可随时无损调高或降低 QPS 与并发，即时下发至全部工作进程
-      </span>
-    </form>
+      <!-- Bottom Detailed Explorer Card -->
+      <UiCard class="overflow-hidden">
+        <div
+          class="flex h-11 items-center gap-1 overflow-x-auto border-b border-border bg-surface/50 px-4 select-none"
+          role="tablist"
+        >
+          <button
+            v-for="tab in detailTabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            :aria-selected="activeDetailTab === tab.id"
+            class="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+            :class="
+              activeDetailTab === tab.id
+                ? 'text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            @click="activeDetailTab = tab.id"
+          >
+            <span>{{ tab.label }}</span>
+            <span
+              v-if="tab.count"
+              class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+            >
+              {{ tab.count }}
+            </span>
+            <span
+              v-if="activeDetailTab === tab.id"
+              class="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground"
+            />
+          </button>
+        </div>
 
-    <!-- ECharts Live Throughput & Success/Failure Series -->
-    <div class="p-3 rounded border border-dividerLight bg-primaryLight/20">
-      <div class="text-tiny font-semibold text-secondaryDark mb-2">
-        每秒吞吐量与成功/失败趋势 (Real-time Timeseries)
-      </div>
-      <div ref="chartEl" class="w-full h-64" />
-    </div>
-
-    <!-- Bottom Detailed Tabs: Samples Explorer / SLA Verdict / Windows / Timeline / Snapshot -->
-    <div class="border border-dividerLight rounded overflow-hidden bg-primary">
-      <HoppSmartTabs v-model="activeDetailTab" render-inactive-tabs>
         <!-- 1. Samples Explorer -->
-        <HoppSmartTab
-          id="samples"
-          label="请求样本明细 (Samples)"
-          :info="samples.length ? String(samples.length) : null"
-        >
-          <div class="p-4 space-y-3">
-            <div class="flex flex-wrap items-end gap-3 pb-3 border-b border-dividerLight">
-              <div>
-                <label class="block text-tiny text-secondaryLight mb-1">结果状态</label>
-                <select v-model="sampleFilterSuccess" class="select !py-1 text-tiny w-36">
-                  <option value="all">全部样本</option>
-                  <option value="false">仅失败请求</option>
-                  <option value="true">仅成功请求</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-tiny text-secondaryLight mb-1">错误分类 (error_class)</label>
-                <input
-                  v-model="sampleFilterErrClass"
-                  type="text"
-                  placeholder="如 http_5xx / timeout"
-                  class="input font-mono !py-1 text-tiny w-44"
-                />
-              </div>
-              <div>
-                <label class="block text-tiny text-secondaryLight mb-1">最低延迟 (ms)</label>
-                <input
-                  v-model="sampleFilterMinMs"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  class="input font-mono !py-1 text-tiny w-28"
-                />
-              </div>
-              <HoppButtonSecondary label="检索样本" outline @click="loadSamples(true)" />
+        <div v-if="activeDetailTab === 'samples'" class="p-5 space-y-4">
+          <div class="flex flex-wrap items-end gap-3 border-b border-border pb-4">
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+                结果状态
+              </label>
+              <UiSelect v-model="sampleFilterSuccess" size="sm" wrapper-class="w-36">
+                <option value="all">全部样本</option>
+                <option value="false">仅失败请求</option>
+                <option value="true">仅成功请求</option>
+              </UiSelect>
             </div>
-
-            <div v-if="samples.length === 0" class="py-8 text-center text-secondaryLight text-tiny">
-              暂无匹配的请求明细样本
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+                错误分类 (error_class)
+              </label>
+              <UiInput
+                v-model="sampleFilterErrClass"
+                size="sm"
+                mono
+                placeholder="如 http_5xx / timeout"
+                class="w-52"
+              />
             </div>
-
-            <div v-else class="overflow-x-auto">
-              <table class="w-full text-left border-collapse text-tiny font-mono">
-                <thead>
-                  <tr class="border-b border-dividerLight text-secondaryLight">
-                    <th class="py-2 pr-3">Worker#Seq</th>
-                    <th class="py-2 pr-3">接口 / Product</th>
-                    <th class="py-2 pr-3">状态</th>
-                    <th class="py-2 pr-3">延迟</th>
-                    <th class="py-2 pr-3">字节</th>
-                    <th class="py-2">错误 / 诊断信息</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-dividerLight">
-                  <tr v-for="s in samples" :key="`${s.worker}-${s.seq}`" class="hover:bg-primaryLight/40">
-                    <td class="py-1.5 pr-3 text-secondaryLight">w{{ s.worker }}#{{ s.seq }}</td>
-                    <td class="py-1.5 pr-3 text-secondaryDark">
-                      {{ s.product_name || s.product_id }}
-                    </td>
-                    <td class="py-1.5 pr-3">
-                      <span :class="s.success ? 'text-emerald-400' : 'text-rose-400'">
-                        {{ s.http_status ?? (s.success ? "OK" : "ERR") }}
-                      </span>
-                    </td>
-                    <td class="py-1.5 pr-3 text-secondaryDark">{{ formatLatencyUs(s.latency_us) }}</td>
-                    <td class="py-1.5 pr-3 text-secondaryLight">{{ formatBytes(s.response_bytes) }}</td>
-                    <td class="py-1.5 text-rose-400 truncate max-w-md">
-                      {{ s.error_class ? `[${s.error_class}] ` : "" }}{{ s.error ?? "" }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+                最低延迟 (ms)
+              </label>
+              <UiInput
+                v-model="sampleFilterMinMs"
+                type="number"
+                min="0"
+                size="sm"
+                mono
+                placeholder="0"
+                class="w-28"
+              />
             </div>
-
-            <div v-if="sampleNextCursor" class="flex justify-center pt-2">
-              <HoppButtonSecondary label="加载更多样本" outline @click="loadSamples(false)" />
-            </div>
+            <UiButton variant="outline" size="sm" @click="loadSamples(true)">
+              检索样本
+            </UiButton>
           </div>
-        </HoppSmartTab>
 
-        <!-- 2. SLA Verdict -->
-        <HoppSmartTab id="verdict" label="SLA 判定 (Verdict)">
-          <div class="p-4 space-y-3 text-tiny">
-            <div v-if="!run?.verdict || run.verdict.result === 'none'" class="text-secondaryLight py-4">
-              当前压测未配置 SLA 阈值判定规则 (AssertSpec)。
-            </div>
-            <template v-else>
-              <div class="font-bold text-secondaryDark">
-                综合结论：
-                <span :class="verdictClass(run.verdict.result)" class="px-2 py-0.5 rounded border font-mono">
-                  {{ run.verdict.result.toUpperCase() }}
-                </span>
-              </div>
-              <div v-if="run.verdict.failed?.length" class="space-y-1">
-                <div
-                  v-for="fc in run.verdict.failed"
-                  :key="fc.check"
-                  class="px-3 py-2 rounded border border-rose-500/30 bg-rose-500/10 font-mono text-rose-400"
-                >
-                  未达标项 {{ fc.check }}：目标阈值 {{ fc.wanted }}，实测值 {{ fc.actual ?? "-" }}
-                </div>
-              </div>
-              <pre
-                v-if="run.verdict.actual"
-                class="p-3 rounded border border-dividerLight bg-primaryLight font-mono text-secondaryDark"
-              >{{ JSON.stringify(run.verdict.actual, null, 2) }}</pre>
-            </template>
+          <div
+            v-if="samples.length === 0"
+            class="py-10 text-center text-sm text-muted-foreground"
+          >
+            暂无匹配的请求明细样本
           </div>
-        </HoppSmartTab>
 
-        <!-- 3. Loop Windows -->
-        <HoppSmartTab
-          id="windows"
-          label="循环窗口 (Windows)"
-          :info="windows.length ? String(windows.length) : null"
-        >
-          <div class="p-4 overflow-x-auto">
-            <table class="w-full text-left border-collapse text-tiny font-mono">
+          <div v-else class="overflow-x-auto">
+            <table class="w-full border-collapse text-left font-mono text-xs">
               <thead>
-                <tr class="border-b border-dividerLight text-secondaryLight">
-                  <th class="py-2 pr-3">轮次 #</th>
-                  <th class="py-2 pr-3">样本数</th>
-                  <th class="py-2 pr-3">成功</th>
-                  <th class="py-2 pr-3">失败</th>
-                  <th class="py-2 pr-3">p50</th>
-                  <th class="py-2 pr-3">p95</th>
-                  <th class="py-2">p99</th>
+                <tr class="border-b border-border text-muted-foreground">
+                  <th class="py-2.5 pr-4 font-medium">Worker#Seq</th>
+                  <th class="py-2.5 pr-4 font-medium">接口 / Product</th>
+                  <th class="py-2.5 pr-4 font-medium">状态</th>
+                  <th class="py-2.5 pr-4 font-medium">延迟</th>
+                  <th class="py-2.5 pr-4 font-medium">字节</th>
+                  <th class="py-2.5 font-medium">错误 / 诊断信息</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-dividerLight">
-                <tr v-for="w in windows" :key="w.window_index">
-                  <td class="py-1.5 pr-3">#{{ w.window_index }}</td>
-                  <td class="py-1.5 pr-3">{{ w.samples }}</td>
-                  <td class="py-1.5 pr-3 text-emerald-400">{{ w.success }}</td>
-                  <td class="py-1.5 pr-3 text-rose-400">{{ w.failure }}</td>
-                  <td class="py-1.5 pr-3">{{ formatLatencyUs(w.p50_us) }}</td>
-                  <td class="py-1.5 pr-3">{{ formatLatencyUs(w.p95_us) }}</td>
-                  <td class="py-1.5">{{ formatLatencyUs(w.p99_us) }}</td>
+              <tbody class="divide-y divide-border">
+                <tr
+                  v-for="s in samples"
+                  :key="`${s.worker}-${s.seq}`"
+                  class="hover:bg-muted/35"
+                >
+                  <td class="py-2 pr-4 text-muted-foreground tabular-nums">
+                    w{{ s.worker }}#{{ s.seq }}
+                  </td>
+                  <td class="py-2 pr-4 text-foreground">
+                    {{ s.product_name || s.product_id }}
+                  </td>
+                  <td class="py-2 pr-4">
+                    <span
+                      class="font-semibold"
+                      :class="
+                        s.success
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      "
+                    >
+                      {{ s.http_status ?? (s.success ? "OK" : "ERR") }}
+                    </span>
+                  </td>
+                  <td class="py-2 pr-4 text-foreground tabular-nums">
+                    {{ formatLatencyUs(s.latency_us) }}
+                  </td>
+                  <td class="py-2 pr-4 text-muted-foreground tabular-nums">
+                    {{ formatBytes(s.response_bytes) }}
+                  </td>
+                  <td class="max-w-md truncate py-2 text-rose-600 dark:text-rose-400">
+                    {{ s.error_class ? `[${s.error_class}] ` : "" }}{{ s.error ?? "" }}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
-        </HoppSmartTab>
+
+          <div v-if="sampleNextCursor" class="flex justify-center pt-2">
+            <UiButton variant="outline" size="sm" @click="loadSamples(false)">
+              加载更多样本
+            </UiButton>
+          </div>
+        </div>
+
+        <!-- 2. SLA Verdict -->
+        <div v-else-if="activeDetailTab === 'verdict'" class="p-5 space-y-4 text-sm">
+          <div
+            v-if="!run?.verdict || run.verdict.result === 'none'"
+            class="py-6 text-muted-foreground"
+          >
+            当前压测未配置 SLA 阈值判定规则 (AssertSpec)。
+          </div>
+          <template v-else>
+            <div class="flex items-center gap-2 font-medium text-foreground">
+              <span>综合结论：</span>
+              <UiBadge :variant="verdictVariant(run.verdict.result)" class="font-mono">
+                {{ run.verdict.result.toUpperCase() }}
+              </UiBadge>
+            </div>
+            <div v-if="run.verdict.failed?.length" class="space-y-2">
+              <div
+                v-for="fc in run.verdict.failed"
+                :key="fc.check"
+                class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 font-mono text-xs text-rose-700 dark:text-rose-400"
+              >
+                未达标项 {{ fc.check }}：目标阈值 {{ fc.wanted }}，实测值 {{ fc.actual ?? "-" }}
+              </div>
+            </div>
+            <pre
+              v-if="run.verdict.actual"
+              class="rounded-lg border border-border bg-muted/40 p-4 font-mono text-xs text-foreground"
+            >{{ JSON.stringify(run.verdict.actual, null, 2) }}</pre>
+          </template>
+        </div>
+
+        <!-- 3. Loop Windows -->
+        <div v-else-if="activeDetailTab === 'windows'" class="overflow-x-auto p-5">
+          <div
+            v-if="windows.length === 0"
+            class="py-6 text-center text-sm text-muted-foreground"
+          >
+            当前任务无多轮循环窗口记录
+          </div>
+          <table v-else class="w-full border-collapse text-left font-mono text-xs tabular-nums">
+            <thead>
+              <tr class="border-b border-border text-muted-foreground">
+                <th class="py-2.5 pr-4 font-medium">轮次 #</th>
+                <th class="py-2.5 pr-4 font-medium">样本数</th>
+                <th class="py-2.5 pr-4 font-medium">成功</th>
+                <th class="py-2.5 pr-4 font-medium">失败</th>
+                <th class="py-2.5 pr-4 font-medium">p50</th>
+                <th class="py-2.5 pr-4 font-medium">p95</th>
+                <th class="py-2.5 font-medium">p99</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr v-for="w in windows" :key="w.window_index">
+                <td class="py-2 pr-4 text-foreground">#{{ w.window_index }}</td>
+                <td class="py-2 pr-4 text-foreground">{{ w.samples }}</td>
+                <td class="py-2 pr-4 text-emerald-600 dark:text-emerald-400">
+                  {{ w.success }}
+                </td>
+                <td class="py-2 pr-4 text-rose-600 dark:text-rose-400">
+                  {{ w.failure }}
+                </td>
+                <td class="py-2 pr-4 text-foreground">{{ formatLatencyUs(w.p50_us) }}</td>
+                <td class="py-2 pr-4 text-foreground">{{ formatLatencyUs(w.p95_us) }}</td>
+                <td class="py-2 text-foreground">{{ formatLatencyUs(w.p99_us) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- 4. Lifecycle Timeline -->
-        <HoppSmartTab
-          id="timeline"
-          label="事件时间线 (Timeline)"
-          :info="timeline.length ? String(timeline.length) : null"
+        <div
+          v-else-if="activeDetailTab === 'timeline'"
+          class="divide-y divide-border p-5 font-mono text-xs"
         >
-          <div class="p-4 divide-y divide-dividerLight text-tiny font-mono">
-            <div v-for="ev in timeline" :key="ev.id" class="py-2 flex items-center justify-between">
-              <div>
-                <span class="text-accent font-bold mr-3">{{ ev.event }}</span>
-                <span v-if="ev.payload" class="text-secondary">
-                  {{ JSON.stringify(ev.payload) }}
-                </span>
-              </div>
-              <span class="text-secondaryLight">{{ formatTimeMs(ev.ts) }}</span>
+          <div
+            v-for="ev in timeline"
+            :key="ev.id"
+            class="flex flex-wrap items-center justify-between gap-2 py-2.5"
+          >
+            <div>
+              <span class="mr-3 font-semibold text-foreground">{{ ev.event }}</span>
+              <span v-if="ev.payload" class="text-muted-foreground">
+                {{ JSON.stringify(ev.payload) }}
+              </span>
             </div>
+            <span class="text-muted-foreground tabular-nums">
+              {{ formatTimeMs(ev.ts) }}
+            </span>
           </div>
-        </HoppSmartTab>
+        </div>
 
         <!-- 5. Redacted Snapshot -->
-        <HoppSmartTab id="snapshot" label="执行快照 (Snapshot)">
-          <div class="p-4">
-            <CodeMirrorEditor
-              :model-value="JSON.stringify(run?.snapshot ?? {}, null, 2)"
-              language="json"
-              readonly
-              min-height="220px"
-              max-height="460px"
-            />
-          </div>
-        </HoppSmartTab>
-      </HoppSmartTabs>
+        <div v-else class="p-5">
+          <CodeMirrorEditor
+            :model-value="JSON.stringify(run?.snapshot ?? {}, null, 2)"
+            language="json"
+            readonly
+            min-height="220px"
+            max-height="480px"
+          />
+        </div>
+      </UiCard>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import * as echarts from "echarts";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartTab,
-  HoppSmartTabs,
-} from "@hoppscotch/ui";
 import {
   ArrowLeft,
   Download,
@@ -346,11 +432,17 @@ import type {
   WindowRow,
 } from "../api/types";
 import CodeMirrorEditor from "../components/common/CodeMirrorEditor.vue";
+import UiBadge from "../components/ui/UiBadge.vue";
+import UiButton from "../components/ui/UiButton.vue";
+import UiCard from "../components/ui/UiCard.vue";
+import UiInput from "../components/ui/UiInput.vue";
+import UiSelect from "../components/ui/UiSelect.vue";
 import {
   formatBytes,
   formatLatencyUs,
   formatTimeMs,
 } from "../helpers/format";
+import { effectiveTheme } from "../modules/theme";
 import { toast } from "../modules/toast";
 
 const route = useRoute();
@@ -362,6 +454,7 @@ const stats = ref<RunStats | null>(null);
 const windows = ref<WindowRow[]>([]);
 const timeline = ref<TimelineEvent[]>([]);
 const samples = ref<SampleRow[]>([]);
+const lastSeries = ref<TimePoint[]>([]);
 const sampleNextCursor = ref<{
   after_worker?: number;
   after_seq?: number;
@@ -375,7 +468,7 @@ const sampleFilterMinMs = ref("");
 
 const tuneQps = ref(20);
 const tuneConcurrency = ref(10);
-const activeDetailTab = ref("samples");
+const activeDetailTab = ref<"samples" | "verdict" | "windows" | "timeline" | "snapshot">("samples");
 
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
@@ -390,6 +483,14 @@ const canResume = computed(
   () => run.value?.status === "stopped" || run.value?.status === "interrupted",
 );
 
+const detailTabs = computed(() => [
+  { id: "samples" as const, label: "请求样本明细", count: samples.value.length },
+  { id: "verdict" as const, label: "SLA 判定", count: 0 },
+  { id: "windows" as const, label: "循环窗口", count: windows.value.length },
+  { id: "timeline" as const, label: "事件时间线", count: timeline.value.length },
+  { id: "snapshot" as const, label: "执行快照", count: 0 },
+]);
+
 const metricCards = computed(() => {
   const s = stats.value;
   return [
@@ -397,33 +498,28 @@ const metricCards = computed(() => {
     {
       label: "成功请求",
       value: s?.success ?? 0,
-      colorClass: "text-emerald-400",
+      colorClass: "text-emerald-600 dark:text-emerald-400",
     },
     {
       label: "失败请求",
       value: s?.failure ?? 0,
-      colorClass: (s?.failure ?? 0) > 0 ? "text-rose-400" : "text-secondaryDark",
+      colorClass:
+        (s?.failure ?? 0) > 0
+          ? "text-rose-600 dark:text-rose-400"
+          : "text-foreground",
     },
     { label: "p50 延迟", value: formatLatencyUs(s?.p50_us) },
     { label: "p95 延迟", value: formatLatencyUs(s?.p95_us) },
-    {
-      label: "p99 延迟",
-      value: formatLatencyUs(s?.p99_us),
-      colorClass: "text-accent",
-    },
+    { label: "p99 延迟", value: formatLatencyUs(s?.p99_us) },
     { label: "在途并发", value: s?.in_flight ?? 0 },
     { label: "累计字节", value: formatBytes(s?.bytes) },
   ];
 });
 
-function verdictClass(result: string): string {
-  if (result === "pass") {
-    return "border-emerald-500/40 bg-emerald-500/15 text-emerald-400";
-  }
-  if (result === "fail") {
-    return "border-rose-500/40 bg-rose-500/15 text-rose-400";
-  }
-  return "border-amber-500/40 bg-amber-500/15 text-amber-400";
+function verdictVariant(result: string): "success" | "destructive" | "warning" {
+  if (result === "pass") return "success";
+  if (result === "fail") return "destructive";
+  return "warning";
 }
 
 async function refreshAll(): Promise<void> {
@@ -440,14 +536,19 @@ async function refreshAll(): Promise<void> {
   timeline.value = timeData;
 
   let effectiveSeries = seriesData;
-  if (effectiveSeries.length === 0 && statsData.samples > 0) {
-    try {
-      const report = await api.getRunReport(id.value);
-      effectiveSeries = report.timeseries ?? [];
-    } catch {
-      // Keep empty series if report is still being finalized
+  if (effectiveSeries.length === 0) {
+    if (lastSeries.value.length > 1) {
+      effectiveSeries = lastSeries.value;
+    } else if (statsData.samples > 0) {
+      try {
+        const report = await api.getRunReport(id.value);
+        effectiveSeries = report.timeseries ?? [];
+      } catch {
+        // Keep empty series if report is still finalizing
+      }
     }
   }
+  lastSeries.value = effectiveSeries;
 
   if (!initializedInputs) {
     if (statsData.current_qps) tuneQps.value = statsData.current_qps;
@@ -483,55 +584,87 @@ function renderChart(points: TimePoint[]): void {
   if (!chart) {
     chart = echarts.init(chartEl.value);
   }
+  const isDark = effectiveTheme.value === "black";
+  const axisColor = isDark ? "#a1a1aa" : "#71717a";
+  const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(9,9,11,0.07)";
+  const primaryLine = isDark ? "#fafafa" : "#18181b";
+  const showDot = points.length <= 2;
+
   const labels = points.map((p) => {
-    const sec = p.unix_sec ?? p.started_at;
-    return sec
-      ? new Date(sec * 1000).toLocaleTimeString("zh-CN", { hour12: false })
-      : "";
+    const raw = p.unix_sec ?? p.started_at;
+    if (!raw) return "";
+    const ms = raw > 1e11 ? raw : raw * 1000;
+    return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
   });
+
   chart.setOption({
     backgroundColor: "transparent",
-    tooltip: { trigger: "axis" },
-    grid: { left: 42, right: 20, top: 30, bottom: 24 },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: isDark ? "#111114" : "#ffffff",
+      borderColor: isDark ? "#27272a" : "#e4e4e7",
+      textStyle: {
+        color: isDark ? "#fafafa" : "#09090b",
+        fontSize: 12,
+      },
+    },
+    grid: { left: 44, right: 20, top: 34, bottom: 26 },
     legend: {
       data: ["总样本/s", "成功/s", "失败/s"],
-      textStyle: { color: "#9ca3af", fontSize: 11 },
+      textStyle: { color: axisColor, fontSize: 12 },
     },
     xAxis: {
       type: "category",
       data: labels,
-      axisLabel: { color: "#9ca3af", fontSize: 10 },
+      axisLine: { lineStyle: { color: gridColor } },
+      axisLabel: { color: axisColor, fontSize: 11 },
     },
     yAxis: {
       type: "value",
-      splitLine: { lineStyle: { color: "rgba(148,163,184,0.12)" } },
-      axisLabel: { color: "#9ca3af", fontSize: 10 },
+      splitLine: { lineStyle: { color: gridColor } },
+      axisLabel: { color: axisColor, fontSize: 11 },
     },
     series: [
       {
         name: "总样本/s",
         type: "line",
         smooth: true,
+        showSymbol: showDot,
+        symbolSize: 6,
+        lineStyle: { width: 2 },
+        areaStyle: {
+          color: isDark ? "rgba(250,250,250,0.05)" : "rgba(24,24,27,0.04)",
+        },
         data: points.map((p) => p.samples || 0),
-        itemStyle: { color: "#38bdf8" },
+        itemStyle: { color: primaryLine },
       },
       {
         name: "成功/s",
         type: "line",
         smooth: true,
+        showSymbol: showDot,
+        symbolSize: 6,
+        lineStyle: { width: 2 },
         data: points.map((p) => p.success || 0),
-        itemStyle: { color: "#10b981" },
+        itemStyle: { color: isDark ? "#34d399" : "#059669" },
       },
       {
         name: "失败/s",
         type: "line",
         smooth: true,
+        showSymbol: showDot,
+        symbolSize: 6,
+        lineStyle: { width: 2 },
         data: points.map((p) => p.failure || 0),
-        itemStyle: { color: "#f43f5e" },
+        itemStyle: { color: isDark ? "#fb7185" : "#e11d48" },
       },
     ],
   });
 }
+
+watch(effectiveTheme, () => {
+  renderChart(lastSeries.value);
+});
 
 function startLiveStream(): void {
   try {

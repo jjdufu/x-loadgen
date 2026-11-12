@@ -1,115 +1,143 @@
 <template>
-  <div class="flex flex-col flex-1 min-h-0 overflow-y-auto p-6 space-y-5">
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-dividerLight pb-4">
-      <div>
-        <h1 class="heading">压测任务中心 (Load Test Runs)</h1>
-        <p class="text-tiny text-secondaryLight mt-1">
-          实时查看单接口或集合加权压测任务、动态在线调速、续跑中断任务并导出 JSON / HTML 离线报告。
-        </p>
-      </div>
-      <div class="flex items-center space-x-2">
-        <HoppButtonSecondary :icon="RefreshCw" label="刷新" outline @click="loadRuns" />
-        <HoppButtonPrimary
-          :icon="Globe"
-          label="前往接口工作台发起压测"
-          @click="router.push({ name: 'workspace' })"
-        />
-      </div>
-    </div>
+  <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
+    <div class="mx-auto max-w-7xl space-y-6 p-6 lg:p-8">
+      <!-- Page Header -->
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="space-y-1">
+          <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+            压测任务中心
+          </h1>
+          <p class="text-sm text-muted-foreground">
+            管理单接口与集合加权压测任务，支持在线热调速率、断点续跑及导出离线 JSON / HTML 报告。
+          </p>
+        </div>
 
-    <!-- Status Filter Pills -->
-    <div class="flex flex-wrap items-center gap-1.5">
-      <button
-        v-for="f in filters"
-        :key="f.value"
-        type="button"
-        class="px-3 py-1 rounded text-tiny font-semibold border transition"
-        :class="
-          statusFilter === f.value
-            ? 'border-accent bg-accent/15 text-secondaryDark'
-            : 'border-dividerLight text-secondary hover:text-secondaryDark'
-        "
-        @click="selectFilter(f.value)"
+        <div class="flex items-center gap-2">
+          <UiButton variant="outline" @click="loadRuns">
+            <RefreshCw class="h-4 w-4" />
+            <span>刷新</span>
+          </UiButton>
+          <UiButton variant="default" @click="router.push({ name: 'workspace' })">
+            <Globe class="h-4 w-4" />
+            <span>前往工作台发起压测</span>
+          </UiButton>
+        </div>
+      </div>
+
+      <!-- Segmented Status Filter -->
+      <div class="inline-flex flex-wrap items-center rounded-lg border border-border bg-muted p-1 gap-0.5">
+        <button
+          v-for="f in filters"
+          :key="f.value"
+          type="button"
+          class="h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+          :class="
+            statusFilter === f.value
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          "
+          @click="selectFilter(f.value)"
+        >
+          {{ f.label }}
+        </button>
+      </div>
+
+      <!-- Empty State -->
+      <UiCard
+        v-if="runs.length === 0"
+        class="flex flex-col items-center justify-center gap-3 border-dashed py-20 text-center"
       >
-        {{ f.label }}
-      </button>
-    </div>
+        <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground">
+          <Activity class="h-5 w-5" />
+        </div>
+        <div class="space-y-1">
+          <p class="text-sm font-medium text-foreground">暂无匹配的压测任务记录</p>
+          <p class="text-xs text-muted-foreground">
+            在接口工作台中任意请求或集合上点击「压测」即可启动高并发任务。
+          </p>
+        </div>
+      </UiCard>
 
-    <div v-if="runs.length === 0" class="py-16 text-center border border-dashed border-divider rounded space-y-3">
-      <Activity class="w-10 h-10 mx-auto text-accent opacity-40" />
-      <p class="text-secondaryLight text-tiny">暂无符合筛选条件的压测任务记录</p>
-    </div>
-
-    <div v-else class="border border-dividerLight rounded overflow-x-auto">
-      <table class="w-full text-left border-collapse text-tiny">
-        <thead>
-          <tr class="border-b border-dividerLight bg-primaryLight text-secondaryLight uppercase">
-            <th class="px-4 py-2.5">任务 ID / 来源</th>
-            <th class="px-4 py-2.5">状态</th>
-            <th class="px-4 py-2.5">模式 / 进程</th>
-            <th class="px-4 py-2.5">当前速率 / 并发</th>
-            <th class="px-4 py-2.5">启动时间</th>
-            <th class="px-4 py-2.5 text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-dividerLight">
-          <tr
-            v-for="run in runs"
-            :key="run.id"
-            class="hover:bg-primaryLight/40 transition cursor-pointer"
-            @click="router.push({ name: 'run-detail', params: { id: run.id } })"
-          >
-            <td class="px-4 py-3">
-              <div class="font-semibold text-secondaryDark">
-                {{ run.title || run.target_id || "压测任务" }}
-              </div>
-              <div class="font-mono text-[11px] text-secondaryLight">
-                {{ run.id.slice(0, 12) }} · {{ run.template_id }}
-              </div>
-            </td>
-            <td class="px-4 py-3">
-              <span
-                class="px-2 py-0.5 rounded-full font-mono text-[11px] border"
-                :class="statusBadgeClass(run.status)"
+      <!-- Shadcn Runs Table -->
+      <UiCard v-else class="overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr class="border-b border-border bg-muted/40 text-xs font-medium text-muted-foreground">
+                <th class="px-5 py-3">任务名称 / ID</th>
+                <th class="px-4 py-3">状态</th>
+                <th class="px-4 py-3">执行模式</th>
+                <th class="px-4 py-3">目标速率 / 并发</th>
+                <th class="px-4 py-3">启动时间</th>
+                <th class="px-5 py-3 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr
+                v-for="run in runs"
+                :key="run.id"
+                class="cursor-pointer transition-colors hover:bg-muted/35"
+                @click="router.push({ name: 'run-detail', params: { id: run.id } })"
               >
-                {{ run.status }}
-              </span>
-            </td>
-            <td class="px-4 py-3 font-mono text-secondaryDark">
-              {{ run.mode }} · {{ run.processes }}p
-            </td>
-            <td class="px-4 py-3 font-mono text-secondaryDark">
-              {{ run.current_qps ? `${run.current_qps} QPS` : "闭环" }} /
-              {{ run.current_concurrency ?? "-" }} 并发
-            </td>
-            <td class="px-4 py-3 font-mono text-secondaryLight">
-              {{ formatTimeMs(run.started_at ?? run.created_at) }}
-            </td>
-            <td class="px-4 py-3 text-right" @click.stop>
-              <div class="inline-flex items-center space-x-1">
-                <HoppButtonSecondary
-                  label="监控详情"
-                  outline
-                  @click="router.push({ name: 'run-detail', params: { id: run.id } })"
-                />
-                <HoppButtonSecondary
-                  v-if="run.status === 'running'"
-                  :icon="Square"
-                  color="red"
-                  outline
-                  @click="stopRun(run.id)"
-                />
-                <HoppButtonSecondary
-                  v-else
-                  :icon="Trash2"
-                  color="red"
-                  @click="removeRun(run.id)"
-                />
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                <td class="px-5 py-3.5">
+                  <div class="font-medium text-foreground">
+                    {{ run.title || run.target_id || "压测任务" }}
+                  </div>
+                  <div class="mt-0.5 font-mono text-xs text-muted-foreground">
+                    {{ run.id.slice(0, 12) }} · {{ run.template_id }}
+                  </div>
+                </td>
+                <td class="px-4 py-3.5">
+                  <UiBadge :variant="statusVariant(run.status)" class="font-mono">
+                    {{ run.status }}
+                  </UiBadge>
+                </td>
+                <td class="px-4 py-3.5 font-mono text-xs text-foreground tabular-nums">
+                  {{ run.mode }} · {{ run.processes }} 进程
+                </td>
+                <td class="px-4 py-3.5 font-mono text-xs text-foreground tabular-nums">
+                  {{ run.current_qps ? `${run.current_qps} QPS` : "闭环饱和" }} /
+                  {{ run.current_concurrency ?? "-" }} 并发
+                </td>
+                <td class="px-4 py-3.5 font-mono text-xs text-muted-foreground tabular-nums">
+                  {{ formatTimeMs(run.started_at ?? run.created_at) }}
+                </td>
+                <td class="px-5 py-3.5 text-right" @click.stop>
+                  <div class="inline-flex items-center gap-1.5">
+                    <UiButton
+                      variant="outline"
+                      size="sm"
+                      @click="router.push({ name: 'run-detail', params: { id: run.id } })"
+                    >
+                      监控详情
+                    </UiButton>
+                    <UiButton
+                      v-if="run.status === 'running'"
+                      variant="outline"
+                      size="icon-sm"
+                      title="停止运行"
+                      class="text-rose-600 dark:text-rose-400"
+                      @click="stopRun(run.id)"
+                    >
+                      <Square class="h-3.5 w-3.5" />
+                    </UiButton>
+                    <UiButton
+                      v-else
+                      variant="ghost"
+                      size="icon-sm"
+                      title="删除任务"
+                      class="hover:text-rose-600 dark:hover:text-rose-400"
+                      @click="removeRun(run.id)"
+                    >
+                      <Trash2 class="h-3.5 w-3.5" />
+                    </UiButton>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UiCard>
     </div>
   </div>
 </template>
@@ -117,10 +145,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { HoppButtonPrimary, HoppButtonSecondary } from "@hoppscotch/ui";
 import { Activity, Globe, RefreshCw, Square, Trash2 } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import type { RunView } from "../api/types";
+import UiBadge from "../components/ui/UiBadge.vue";
+import UiButton from "../components/ui/UiButton.vue";
+import UiCard from "../components/ui/UiCard.vue";
 import { formatTimeMs } from "../helpers/format";
 import { toast } from "../modules/toast";
 
@@ -137,18 +167,20 @@ const filters = [
   { value: "failed", label: "异常失败 (failed)" },
 ];
 
-function statusBadgeClass(status: string): string {
+function statusVariant(
+  status: string,
+): "success" | "secondary" | "warning" | "destructive" {
   switch (status) {
     case "running":
     case "stopping":
-      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-400";
+      return "success";
     case "finished":
-      return "border-sky-500/40 bg-sky-500/10 text-sky-400";
+      return "secondary";
     case "stopped":
     case "interrupted":
-      return "border-amber-500/40 bg-amber-500/10 text-amber-400";
+      return "warning";
     default:
-      return "border-rose-500/40 bg-rose-500/10 text-rose-400";
+      return "destructive";
   }
 }
 

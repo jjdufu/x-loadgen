@@ -1,295 +1,341 @@
 <template>
-  <HoppSmartModal
-    v-if="envModalOpen"
-    dialog
+  <UiDialog
+    :open="envModalOpen"
     :title="modalTitle"
-    styles="sm:max-w-4xl"
+    description="管理运行环境变量 (<<var>>)、默认网关地址、Mazbri 租户密钥池及默认 TLS/认证配置。"
+    max-width="4xl"
     @close="close"
   >
-    <template #body>
-      <div v-if="loading" class="flex items-center justify-center py-12">
-        <HoppSmartSpinner />
+    <div v-if="loading" class="flex items-center justify-center py-14">
+      <Loader2 class="h-6 w-6 animate-spin text-foreground" />
+    </div>
+
+    <div v-else class="space-y-5">
+      <div v-if="!isGlobal" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            环境名称 (Environment Name) *
+          </label>
+          <UiInput
+            v-model="form.name"
+            placeholder="例如 Staging / Mock Mazbri 网关"
+          />
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            默认网关地址 (gateway_base_url，供相对路径与 Mazbri 使用)
+          </label>
+          <UiInput
+            v-model="gatewayUrl"
+            mono
+            placeholder="例如 http://127.0.0.1:18080 或 https://api.example.com"
+          />
+        </div>
       </div>
-      <div v-else class="space-y-4">
-        <div v-if="!isGlobal" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-              环境名称 (Environment Name) *
-            </label>
-            <input
-              v-model="form.name"
-              type="text"
-              placeholder="例如 Staging / Mock Mazbri 网关"
-              class="input"
-            />
+
+      <!-- Shadcn Segmented Sub-Tabs -->
+      <div class="inline-flex flex-wrap items-center rounded-lg border border-border bg-muted p-1 gap-0.5">
+        <button
+          v-for="tab in modalTabs"
+          :key="tab.id"
+          type="button"
+          class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+          :class="
+            activeSubTab === tab.id
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          "
+          @click="activeSubTab = tab.id"
+        >
+          <span>{{ tab.label }}</span>
+          <span
+            v-if="tab.count"
+            class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+          >
+            {{ tab.count }}
+          </span>
+        </button>
+      </div>
+
+      <!-- 1. Variables -->
+      <div v-if="activeSubTab === 'vars'" class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-muted-foreground leading-relaxed">
+            在 URL、参数、请求头、Body 或密钥中使用
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&lt;&lt;变量名&gt;&gt;</code>
+            引用；压测引擎同时内置
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;seq&#125;&#125;</code> /
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;uuid&#125;&#125;</code> /
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">&#123;&#123;timestamp_ms&#125;&#125;</code>。
+          </p>
+          <UiButton variant="outline" size="sm" @click="addVar">
+            <Plus class="h-3.5 w-3.5" />
+            <span>添加变量</span>
+          </UiButton>
+        </div>
+
+        <div
+          v-if="form.variables.length === 0"
+          class="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground"
+        >
+          暂无环境变量，点击右上角「添加变量」创建
+        </div>
+
+        <div v-else class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+          <div
+            v-for="(v, idx) in form.variables"
+            :key="idx"
+            class="flex items-center divide-x divide-border bg-background"
+          >
+            <div class="flex h-9 w-10 shrink-0 items-center justify-center">
+              <input
+                type="checkbox"
+                :checked="v.active"
+                :aria-label="`启用变量 ${idx + 1}`"
+                class="h-4 w-4 cursor-pointer rounded border-input accent-foreground"
+                @change="v.active = !v.active"
+              />
+            </div>
+            <div class="min-w-0 flex-1">
+              <input
+                v-model="v.key"
+                type="text"
+                placeholder="变量名 (例如 baseUrl)"
+                class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
+            <div class="min-w-0 flex-1">
+              <input
+                v-model="v.value"
+                :type="v.secret ? 'password' : 'text'"
+                placeholder="变量值"
+                class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
+            <div class="flex h-9 shrink-0 items-center gap-0.5 px-2">
+              <button
+                type="button"
+                :title="v.secret ? '当前为敏感变量（导出默认脱敏）' : '标记为敏感变量'"
+                class="rounded p-1.5 transition-colors hover:bg-accent"
+                :class="v.secret ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'"
+                @click="v.secret = !v.secret"
+              >
+                <Lock v-if="v.secret" class="h-3.5 w-3.5" />
+                <Unlock v-else class="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="删除变量"
+                class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                @click="form.variables.splice(idx, 1)"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-          <div>
-            <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-              默认网关地址 (gateway_base_url，供相对路径与 Mazbri 使用)
-            </label>
-            <input
-              v-model="gatewayUrl"
-              type="text"
-              placeholder="例如 http://127.0.0.1:18080 或 https://api.example.com"
-              class="input font-mono"
+        </div>
+      </div>
+
+      <!-- 2. Mazbri Tenant Pool -->
+      <div v-else-if="activeSubTab === 'tenants' && !isGlobal" class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-xs text-muted-foreground leading-relaxed max-w-2xl">
+            当请求协议选择 <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">mazbri</code>
+            且租户来源为「环境加权池」时，压测引擎将按权重自动轮询下方租户执行换 Token、请求签名与信封加解密。
+          </p>
+          <UiButton variant="outline" size="sm" @click="addTenant">
+            <Plus class="h-3.5 w-3.5" />
+            <span>新增 Mazbri 租户</span>
+          </UiButton>
+        </div>
+
+        <div
+          v-if="tenants.length === 0"
+          class="rounded-lg border border-dashed border-border py-10 text-center space-y-3"
+        >
+          <p class="text-sm text-muted-foreground">
+            当前环境尚未配置 Mazbri 租户（纯 HTTP 压测无需配置）
+          </p>
+          <UiButton variant="outline" size="sm" @click="addTenant">
+            <Plus class="h-3.5 w-3.5" />
+            <span>添加首个 Mazbri 租户</span>
+          </UiButton>
+        </div>
+
+        <div v-else class="space-y-4">
+          <div class="flex flex-wrap items-center gap-2 border-b border-border pb-3">
+            <button
+              v-for="(t, idx) in tenants"
+              :key="idx"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-xs transition-colors"
+              :class="
+                selectedTenantIdx === idx
+                  ? 'border-foreground bg-primary text-primary-foreground font-medium'
+                  : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+              "
+              @click="selectedTenantIdx = idx"
+            >
+              <span>{{ t.name || `tenant-${idx + 1}` }}</span>
+              <span class="opacity-70">w:{{ t.weight }}</span>
+            </button>
+          </div>
+
+          <div v-if="tenants[selectedTenantIdx]" class="space-y-3">
+            <div class="flex justify-end">
+              <UiButton
+                variant="outline"
+                size="xs"
+                class="text-rose-600 dark:text-rose-400 hover:text-rose-600"
+                @click="removeTenant(selectedTenantIdx)"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+                <span>移除当前租户</span>
+              </UiButton>
+            </div>
+            <TenantCryptoForm
+              :model-value="tenants[selectedTenantIdx]!"
+              :environment-id="editingEnvId"
+              @update:model-value="(val) => (tenants[selectedTenantIdx] = val)"
             />
           </div>
         </div>
-
-        <HoppSmartTabs v-model="activeSubTab" render-inactive-tabs>
-          <HoppSmartTab
-            id="vars"
-            label="环境变量 (<<var>>)"
-            :info="form.variables.length ? String(form.variables.length) : null"
-          >
-            <div class="p-3 space-y-3">
-              <div class="flex items-center justify-between">
-                <p class="text-tiny text-secondaryLight">
-                  在 URL、参数、请求头、Body 或密钥中使用
-                  <code class="font-mono text-accent">&lt;&lt;变量名&gt;&gt;</code> 引用；压测支持动态内置变量
-                  <code class="font-mono text-accent">&#123;&#123;seq&#125;&#125;</code> /
-                  <code class="font-mono text-accent">&#123;&#123;uuid&#125;&#125;</code> /
-                  <code class="font-mono text-accent">&#123;&#123;timestamp_ms&#125;&#125;</code>。
-                </p>
-                <HoppButtonSecondary :icon="Plus" label="添加变量" outline @click="addVar" />
-              </div>
-
-              <div v-if="form.variables.length === 0" class="py-6 text-center text-secondaryLight text-tiny">
-                暂无环境变量，点击右上角「添加变量」创建
-              </div>
-
-              <div v-else class="divide-y divide-dividerLight border border-dividerLight rounded">
-                <div
-                  v-for="(v, idx) in form.variables"
-                  :key="idx"
-                  class="flex items-center divide-x divide-dividerLight"
-                >
-                  <div class="w-9 flex items-center justify-center py-1.5">
-                    <HoppSmartCheckbox
-                      :on="v.active"
-                      :name="`env-var-${idx}`"
-                      @change="v.active = !v.active"
-                    />
-                  </div>
-                  <div class="flex-1">
-                    <input
-                      v-model="v.key"
-                      type="text"
-                      placeholder="变量名 (例如 baseUrl)"
-                      class="w-full px-3 py-1.5 bg-transparent font-mono text-secondaryDark"
-                    />
-                  </div>
-                  <div class="flex-1">
-                    <input
-                      v-model="v.value"
-                      :type="v.secret ? 'password' : 'text'"
-                      placeholder="变量值"
-                      class="w-full px-3 py-1.5 bg-transparent font-mono text-secondaryDark"
-                    />
-                  </div>
-                  <div class="px-2 flex items-center space-x-1">
-                    <HoppButtonSecondary
-                      v-tippy="v.secret ? '当前为敏感脱敏变量（导出默认隐藏）' : '标记为敏感变量'"
-                      :icon="v.secret ? Lock : Unlock"
-                      :class="{ '!text-amber-500': v.secret }"
-                      @click="v.secret = !v.secret"
-                    />
-                    <HoppButtonSecondary
-                      v-tippy="'删除变量'"
-                      :icon="Trash"
-                      color="red"
-                      @click="form.variables.splice(idx, 1)"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </HoppSmartTab>
-
-          <HoppSmartTab
-            v-if="!isGlobal"
-            id="tenants"
-            label="Mazbri 租户密钥池"
-            :info="tenants.length ? String(tenants.length) : null"
-          >
-            <div class="p-3 space-y-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <p class="text-tiny text-secondaryLight">
-                  当请求协议选择 <code class="font-mono text-accent">mazbri</code> 且租户来源为「环境加权池」时，压测引擎按权重自动轮询下方租户完成换 Token、请求签名与信封加解密。
-                </p>
-                <HoppButtonSecondary
-                  :icon="Plus"
-                  label="新增 Mazbri 租户"
-                  outline
-                  @click="addTenant"
-                />
-              </div>
-
-              <div v-if="tenants.length === 0" class="py-8 text-center border border-dashed border-divider rounded">
-                <p class="text-secondaryLight text-tiny mb-3">
-                  当前环境尚未配置 Mazbri 租户（纯 HTTP 压测无需配置）
-                </p>
-                <HoppButtonSecondary :icon="Plus" label="添加首个 Mazbri 租户" outline @click="addTenant" />
-              </div>
-
-              <div v-else class="space-y-3">
-                <div class="flex flex-wrap items-center gap-1.5 border-b border-dividerLight pb-2">
-                  <button
-                    v-for="(t, idx) in tenants"
-                    :key="idx"
-                    type="button"
-                    class="px-3 py-1 rounded text-tiny font-mono border transition flex items-center space-x-1.5"
-                    :class="
-                      selectedTenantIdx === idx
-                        ? 'border-accent bg-accent/15 text-secondaryDark font-semibold'
-                        : 'border-dividerLight text-secondary hover:text-secondaryDark'
-                    "
-                    @click="selectedTenantIdx = idx"
-                  >
-                    <span>{{ t.name || `tenant-${idx + 1}` }}</span>
-                    <span class="opacity-60">w:{{ t.weight }}</span>
-                  </button>
-                </div>
-
-                <div v-if="tenants[selectedTenantIdx]" class="space-y-3">
-                  <div class="flex justify-end">
-                    <HoppButtonSecondary
-                      :icon="Trash2"
-                      label="移除当前租户"
-                      color="red"
-                      outline
-                      @click="removeTenant(selectedTenantIdx)"
-                    />
-                  </div>
-                  <TenantCryptoForm
-                    :model-value="tenants[selectedTenantIdx]!"
-                    :environment-id="editingEnvId"
-                    @update:model-value="(val) => (tenants[selectedTenantIdx] = val)"
-                  />
-                </div>
-              </div>
-            </div>
-          </HoppSmartTab>
-
-          <HoppSmartTab v-if="!isGlobal" id="auth" label="默认 HTTP 认证">
-            <div class="p-3 space-y-3">
-              <div>
-                <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                  默认 HTTP 鉴权方式（当请求鉴权设为 Inherit 时自动继承）
-                </label>
-                <select v-model="httpAuth.auth_type" class="select max-w-xs">
-                  <option value="none">无认证 (None)</option>
-                  <option value="bearer">Bearer Token</option>
-                  <option value="basic">Basic Auth</option>
-                  <option value="api-key">API Key</option>
-                </select>
-              </div>
-              <div v-if="httpAuth.auth_type === 'bearer'">
-                <label class="block text-tiny text-secondaryLight mb-1">Bearer Token</label>
-                <input v-model="httpAuthToken" type="text" class="input font-mono" placeholder="输入 Token 或 <<token>>" />
-              </div>
-              <div v-else-if="httpAuth.auth_type === 'basic'" class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1">用户名</label>
-                  <input v-model="httpAuthUser" type="text" class="input font-mono" />
-                </div>
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1">密码</label>
-                  <input v-model="httpAuthPass" type="password" class="input font-mono" />
-                </div>
-              </div>
-              <div v-else-if="httpAuth.auth_type === 'api-key'" class="grid grid-cols-3 gap-3">
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1">参数名 (Key)</label>
-                  <input v-model="httpAuthKey" type="text" class="input font-mono" placeholder="X-API-Key" />
-                </div>
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1">参数值 (Value)</label>
-                  <input v-model="httpAuthVal" type="password" class="input font-mono" />
-                </div>
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1">注入位置</label>
-                  <select v-model="httpAuthAddTo" class="select">
-                    <option value="HEADERS">请求头 (Headers)</option>
-                    <option value="QUERY_PARAMS">查询参数 (Query)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </HoppSmartTab>
-
-          <HoppSmartTab v-if="!isGlobal" id="tls" label="TLS / mTLS">
-            <div class="p-3 space-y-3">
-              <HoppSmartToggle
-                :on="tls.insecure_skip_verify"
-                @change="tls.insecure_skip_verify = !tls.insecure_skip_verify"
-              >
-                跳过服务端 TLS 证书校验 (insecure_skip_verify)
-              </HoppSmartToggle>
-              <div>
-                <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                  自定义根证书 CA PEM 或服务端文件路径 (ca_cert)
-                </label>
-                <textarea v-model="caCert" rows="3" class="textarea font-mono text-tiny" placeholder="-----BEGIN CERTIFICATE----- 或 /path/to/ca.pem" />
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                    双向认证客户端证书 (client_cert)
-                  </label>
-                  <textarea v-model="clientCert" rows="3" class="textarea font-mono text-tiny" placeholder="-----BEGIN CERTIFICATE-----" />
-                </div>
-                <div>
-                  <label class="block text-tiny text-secondaryLight mb-1 font-semibold">
-                    双向认证客户端私钥 (client_key)
-                  </label>
-                  <textarea v-model="clientKey" rows="3" class="textarea font-mono text-tiny" placeholder="-----BEGIN PRIVATE KEY-----" />
-                </div>
-              </div>
-            </div>
-          </HoppSmartTab>
-        </HoppSmartTabs>
       </div>
-    </template>
+
+      <!-- 3. Default HTTP Auth -->
+      <div v-else-if="activeSubTab === 'auth' && !isGlobal" class="space-y-4">
+        <div class="max-w-sm space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            默认 HTTP 鉴权方式（请求设为 Inherit 时自动继承）
+          </label>
+          <UiSelect v-model="httpAuth.auth_type">
+            <option value="none">无认证 (None)</option>
+            <option value="bearer">Bearer Token</option>
+            <option value="basic">Basic Auth</option>
+            <option value="api-key">API Key</option>
+          </UiSelect>
+        </div>
+
+        <div v-if="httpAuth.auth_type === 'bearer'" class="max-w-xl space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            Bearer Token
+          </label>
+          <UiInput v-model="httpAuthToken" mono placeholder="输入 Token 或 <<token>>" />
+        </div>
+
+        <div v-else-if="httpAuth.auth_type === 'basic'" class="grid max-w-xl grid-cols-2 gap-4">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              用户名
+            </label>
+            <UiInput v-model="httpAuthUser" mono />
+          </div>
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              密码
+            </label>
+            <UiInput v-model="httpAuthPass" type="password" mono />
+          </div>
+        </div>
+
+        <div v-else-if="httpAuth.auth_type === 'api-key'" class="grid max-w-2xl grid-cols-3 gap-4">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              参数名 (Key)
+            </label>
+            <UiInput v-model="httpAuthKey" mono placeholder="X-API-Key" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              参数值 (Value)
+            </label>
+            <UiInput v-model="httpAuthVal" type="password" mono />
+          </div>
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              注入位置
+            </label>
+            <UiSelect v-model="httpAuthAddTo">
+              <option value="HEADERS">请求头 (Headers)</option>
+              <option value="QUERY_PARAMS">查询参数 (Query)</option>
+            </UiSelect>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. TLS / mTLS -->
+      <div v-else-if="activeSubTab === 'tls' && !isGlobal" class="space-y-4">
+        <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+          <UiSwitch v-model="tls.insecure_skip_verify" />
+          <span>跳过服务端 TLS 证书校验 (insecure_skip_verify)</span>
+        </label>
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            自定义根证书 CA PEM 或服务端文件路径 (ca_cert)
+          </label>
+          <UiTextarea
+            v-model="caCert"
+            :rows="3"
+            mono
+            placeholder="-----BEGIN CERTIFICATE----- 或 /path/to/ca.pem"
+          />
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              双向认证客户端证书 (client_cert)
+            </label>
+            <UiTextarea
+              v-model="clientCert"
+              :rows="3"
+              mono
+              placeholder="-----BEGIN CERTIFICATE-----"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+              双向认证客户端私钥 (client_key)
+            </label>
+            <UiTextarea
+              v-model="clientKey"
+              :rows="3"
+              mono
+              placeholder="-----BEGIN PRIVATE KEY-----"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
 
     <template #footer>
-      <div class="flex items-center justify-between w-full">
+      <div class="flex w-full items-center justify-between gap-2">
         <div>
-          <HoppButtonSecondary
+          <UiButton
             v-if="editingEnvId && !isGlobal"
-            :icon="Trash2"
-            label="删除此环境"
-            color="red"
-            outline
+            variant="outline"
+            class="text-rose-600 dark:text-rose-400 hover:text-rose-600"
             @click="handleDelete"
-          />
+          >
+            <Trash2 class="h-4 w-4" />
+            <span>删除此环境</span>
+          </UiButton>
         </div>
-        <div class="flex items-center space-x-2">
-          <HoppButtonSecondary label="取消" outline @click="close" />
-          <HoppButtonPrimary
-            :loading="saving"
-            label="保存环境配置"
-            @click="handleSave"
-          />
+        <div class="flex items-center gap-2">
+          <UiButton variant="outline" @click="close">取消</UiButton>
+          <UiButton variant="default" :loading="saving" @click="handleSave">
+            保存环境配置
+          </UiButton>
         </div>
       </div>
     </template>
-  </HoppSmartModal>
+  </UiDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import {
-  HoppButtonPrimary,
-  HoppButtonSecondary,
-  HoppSmartCheckbox,
-  HoppSmartModal,
-  HoppSmartSpinner,
-  HoppSmartTab,
-  HoppSmartTabs,
-  HoppSmartToggle,
-} from "@hoppscotch/ui";
-import { Lock, Plus, Trash, Trash2, Unlock } from "lucide-vue-next";
+import { Loader2, Lock, Plus, Trash2, Unlock } from "lucide-vue-next";
 import { api } from "../../api/workspace";
 import type {
   EnvVarRow,
@@ -311,11 +357,17 @@ import {
   refreshEnvironments,
 } from "../../stores/workspace";
 import TenantCryptoForm from "../common/TenantCryptoForm.vue";
+import UiButton from "../ui/UiButton.vue";
+import UiDialog from "../ui/UiDialog.vue";
+import UiInput from "../ui/UiInput.vue";
+import UiSelect from "../ui/UiSelect.vue";
+import UiSwitch from "../ui/UiSwitch.vue";
+import UiTextarea from "../ui/UiTextarea.vue";
 
 const loading = ref(false);
 const saving = ref(false);
 const isGlobal = ref(false);
-const activeSubTab = ref("vars");
+const activeSubTab = ref<"vars" | "tenants" | "auth" | "tls">("vars");
 const selectedTenantIdx = ref(0);
 
 const form = ref<{ name: string; variables: EnvVarRow[] }>({
@@ -326,6 +378,32 @@ const gatewayUrl = ref("");
 const httpAuth = ref<HttpAuthSpec>(createDefaultHttpAuth("none"));
 const tls = ref<TlsSpec>(createDefaultTls());
 const tenants = ref<TenantSpec[]>([]);
+
+const modalTabs = computed(() => {
+  const base: {
+    id: "vars" | "tenants" | "auth" | "tls";
+    label: string;
+    count: number;
+  }[] = [
+    {
+      id: "vars",
+      label: "环境变量 (<<var>>)",
+      count: form.value.variables.length,
+    },
+  ];
+  if (!isGlobal.value) {
+    base.push(
+      {
+        id: "tenants",
+        label: "Mazbri 租户密钥池",
+        count: tenants.value.length,
+      },
+      { id: "auth", label: "默认 HTTP 认证", count: 0 },
+      { id: "tls", label: "TLS / mTLS", count: 0 },
+    );
+  }
+  return base;
+});
 
 const httpAuthToken = computed({
   get: () => httpAuth.value.token ?? "",
@@ -367,7 +445,9 @@ const clientKey = computed({
 
 const modalTitle = computed(() => {
   if (isGlobal.value) return "编辑全局变量 (Global Variables)";
-  return editingEnvId.value ? `编辑环境：${form.value.name}` : "新建环境与密钥池";
+  return editingEnvId.value
+    ? `编辑环境：${form.value.name || "未命名"}`
+    : "新建环境与密钥池";
 });
 
 watch(

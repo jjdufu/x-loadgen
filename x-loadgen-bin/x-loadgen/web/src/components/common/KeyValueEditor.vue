@@ -1,101 +1,122 @@
 <template>
-  <div class="flex flex-col flex-1">
+  <div class="flex flex-1 flex-col">
     <div
-      class="sticky top-0 z-10 flex items-center justify-between pl-4 pr-2 py-1 border-b border-dividerLight bg-primary"
+      class="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/50 px-4 py-2"
     >
-      <span class="font-semibold text-secondaryLight text-tiny uppercase tracking-wider">
+      <span class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {{ title }}
       </span>
-      <div class="flex items-center space-x-1">
-        <HoppButtonSecondary
-          v-tippy="bulkMode ? '切换回表格编辑' : '批量编辑 (key: value)'"
-          :icon="FileEdit"
-          :label="bulkMode ? '表格模式' : '批量编辑'"
+      <div class="flex items-center gap-1.5">
+        <UiButton
+          variant="ghost"
+          size="xs"
+          :title="bulkMode ? '切换回表格编辑' : '批量编辑 (key: value)'"
           @click="toggleBulkMode"
-        />
-        <HoppButtonSecondary
-          v-if="!bulkMode"
-          v-tippy="'清空全部条目'"
-          :icon="Trash2"
+        >
+          <FileEdit class="h-3.5 w-3.5" />
+          <span>{{ bulkMode ? "表格模式" : "批量编辑" }}</span>
+        </UiButton>
+        <UiButton
+          v-if="!bulkMode && rows.length > 0"
+          variant="ghost"
+          size="xs"
+          title="清空全部条目"
           @click="clearAll"
-        />
-        <HoppButtonSecondary
+        >
+          <Trash2 class="h-3.5 w-3.5" />
+          <span>清空</span>
+        </UiButton>
+        <UiButton
           v-if="!bulkMode"
-          v-tippy="'新增一行'"
-          :icon="Plus"
-          label="添加"
+          variant="outline"
+          size="xs"
           @click="addRow"
-        />
+        >
+          <Plus class="h-3.5 w-3.5" />
+          <span>新增参数</span>
+        </UiButton>
       </div>
     </div>
 
-    <div v-if="bulkMode" class="p-3 flex flex-col space-y-2">
-      <p class="text-tiny text-secondaryLight">
-        每行一条 <code class="font-mono text-accent">key: value</code>，以 <code class="font-mono">#</code> 开头表示暂时禁用该行。
+    <div v-if="bulkMode" class="flex flex-col gap-2 p-4">
+      <p class="text-xs text-muted-foreground">
+        每行一条 <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">key: value</code>，以
+        <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">#</code> 开头表示暂时禁用该行。
       </p>
-      <textarea
+      <UiTextarea
         v-model="bulkText"
-        rows="8"
-        class="textarea font-mono text-body bg-primaryLight"
+        :rows="8"
+        mono
         placeholder="Content-Type: application/json&#10;# X-Debug: 1"
         @blur="applyBulkText"
       />
     </div>
 
-    <div v-else-if="rows.length === 0" class="flex flex-col items-center justify-center py-8 text-secondaryLight">
-      <p class="text-tiny mb-3">{{ emptyText }}</p>
-      <HoppButtonSecondary :icon="Plus" label="新增参数" outline @click="addRow" />
+    <div
+      v-else-if="rows.length === 0"
+      class="flex flex-col items-center justify-center py-10 text-muted-foreground"
+    >
+      <p class="mb-3 text-sm">{{ emptyText }}</p>
+      <UiButton variant="outline" size="sm" @click="addRow">
+        <Plus class="h-3.5 w-3.5" />
+        <span>添加第一行</span>
+      </UiButton>
     </div>
 
-    <div v-else class="divide-y divide-dividerLight border-b border-dividerLight">
+    <div v-else class="divide-y divide-border border-b border-border">
       <div
         v-for="(row, index) in rows"
         :key="index"
-        class="flex items-center divide-x divide-dividerLight group hover:bg-primaryLight/60 transition"
+        class="group flex items-center divide-x divide-border transition-colors hover:bg-muted/35"
       >
-        <div class="flex items-center justify-center w-9 py-1.5 flex-shrink-0">
-          <HoppSmartCheckbox
-            :on="row.active"
-            :name="`kv-active-${index}`"
+        <div class="flex h-9 w-10 shrink-0 items-center justify-center">
+          <input
+            type="checkbox"
+            :checked="row.active"
+            :aria-label="`启用第 ${index + 1} 行`"
+            class="h-4 w-4 cursor-pointer rounded border-input accent-foreground"
             @change="toggleRow(index)"
           />
         </div>
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0 flex-1">
           <input
             :value="row.key"
             type="text"
             :placeholder="keyPlaceholder"
-            class="w-full px-3 py-1.5 bg-transparent font-mono text-secondaryDark placeholder-secondaryLight"
+            class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
             :class="{ 'opacity-50 line-through': !row.active }"
             @input="updateField(index, 'key', ($event.target as HTMLInputElement).value)"
           />
         </div>
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0 flex-1">
           <input
             :value="row.value"
             type="text"
             :placeholder="valuePlaceholder"
-            class="w-full px-3 py-1.5 bg-transparent font-mono text-secondaryDark placeholder-secondaryLight"
+            class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
             :class="{ 'opacity-50': !row.active }"
             @input="updateField(index, 'value', ($event.target as HTMLInputElement).value)"
           />
         </div>
-        <div v-if="showDescription" class="flex-1 min-w-0 hidden md:block">
+        <div v-if="showDescription" class="hidden min-w-0 flex-1 md:block">
           <input
             :value="row.description ?? ''"
             type="text"
-            placeholder="说明 (可选)"
-            class="w-full px-3 py-1.5 bg-transparent text-secondary placeholder-secondaryLight"
+            placeholder="备注说明 (可选)"
+            class="h-9 w-full bg-transparent px-3 text-xs text-muted-foreground placeholder:text-muted-foreground/70 focus:text-foreground focus:outline-none"
             @input="updateField(index, 'description', ($event.target as HTMLInputElement).value)"
           />
         </div>
-        <div class="flex items-center justify-center w-9 flex-shrink-0">
-          <HoppButtonSecondary
-            v-tippy="'删除此行'"
-            :icon="Trash"
-            color="red"
+        <div class="flex h-9 w-10 shrink-0 items-center justify-center">
+          <button
+            type="button"
+            title="删除此行"
+            aria-label="删除此行"
+            class="rounded p-1 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
             @click="removeRow(index)"
-          />
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
     </div>
@@ -104,10 +125,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { HoppButtonSecondary, HoppSmartCheckbox } from "@hoppscotch/ui";
-import { FileEdit, Plus, Trash, Trash2 } from "lucide-vue-next";
+import { FileEdit, Plus, Trash2 } from "lucide-vue-next";
 import type { KeyValueRow } from "../../api/types";
 import { createEmptyKvRow } from "../../helpers/format";
+import UiButton from "../ui/UiButton.vue";
+import UiTextarea from "../ui/UiTextarea.vue";
 
 const props = withDefaults(
   defineProps<{
