@@ -184,6 +184,7 @@ cmd_apply() {
     cat "$tmp" >"${ROOT}/Cargo.lock"
     rm -f "$tmp"
     replace_in x-loadgen-bin/x-loadgen/web/package.json "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${version}\"/"
+    replace_in x-loadgen-bin/x-loadgen/openapi.json "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${version}\"/"
     replace_in deploy/config/.env.example "s/^X_LOADGEN_VERSION=.*/X_LOADGEN_VERSION=${version}/"
     replace_in deploy/README.md "s/^(\| \`X_LOADGEN_VERSION\` \| \`)[^\`]*(\`)/\1${version}\2/"
 
@@ -194,6 +195,8 @@ cmd_apply() {
         || die "Cargo.lock 版本改写失败"
     grep -q "^  \"version\": \"${version}\"," "${ROOT}/x-loadgen-bin/x-loadgen/web/package.json" \
         || die "web/package.json 版本改写失败"
+    grep -q "^    \"version\": \"${version}\"," "${ROOT}/x-loadgen-bin/x-loadgen/openapi.json" \
+        || die "openapi.json 版本改写失败"
     grep -q "^X_LOADGEN_VERSION=${version}$" "${ROOT}/deploy/config/.env.example" \
         || die "deploy/config/.env.example 版本改写失败"
     grep -q "^| \`X_LOADGEN_VERSION\` | \`${version}\`" "${ROOT}/deploy/README.md" \

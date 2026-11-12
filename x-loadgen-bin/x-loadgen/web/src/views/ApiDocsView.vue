@@ -5,32 +5,25 @@
       class="hidden lg:flex w-72 shrink-0 flex-col border-r border-border bg-surface/50 select-none"
     >
       <div class="space-y-2.5 border-b border-border p-3.5">
-        <div class="relative">
-          <Search
-            class="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground"
-          />
-          <UiInput
-            v-model="searchQuery"
-            size="sm"
-            placeholder="搜索路径、接口名称..."
-            class="pl-8"
-          />
-        </div>
+        <UiSearchInput
+          v-model="searchQuery"
+          placeholder="搜索路径、接口名称..."
+        />
 
         <div class="flex flex-wrap items-center gap-1">
           <button
             v-for="m in methodFilters"
-            :key="m"
+            :key="m.value"
             type="button"
             class="rounded px-2 py-0.5 font-mono text-[10px] font-semibold transition-colors"
             :class="
-              activeMethodFilter === m
+              activeMethodFilter === m.value
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-muted-foreground hover:text-foreground'
             "
-            @click="activeMethodFilter = m"
+            @click="activeMethodFilter = m.value"
           >
-            {{ m }}
+            {{ m.label }}
           </button>
         </div>
       </div>
@@ -87,7 +80,7 @@
         class="mx-auto max-w-3xl p-8 text-center space-y-3"
       >
         <p class="text-sm text-rose-600 dark:text-rose-400">{{ loadError }}</p>
-        <UiButton variant="outline" size="sm" @click="fetchSpec">重试加载</UiButton>
+        <UiButton variant="outline" size="sm" @click="fetchSpec">重试</UiButton>
       </div>
 
       <div v-else class="mx-auto max-w-5xl space-y-8 p-6 lg:p-8">
@@ -97,7 +90,7 @@
             <div class="space-y-1.5">
               <div class="flex flex-wrap items-center gap-2">
                 <h1 class="text-xl font-semibold tracking-tight text-foreground">
-                  {{ spec?.info?.title || "x-loadgen HTTP API" }}
+                  {{ spec?.info?.title || "x-loadgen API" }}
                 </h1>
                 <UiBadge variant="outline" class="font-mono">
                   OpenAPI {{ spec?.openapi || "3.0" }}
@@ -107,8 +100,7 @@
                 </UiBadge>
               </div>
               <p class="text-sm text-muted-foreground leading-relaxed max-w-3xl">
-                x-loadgen 内置离线可视化接口文档。涵盖工作台集合管理、环境与 Mazbri
-                租户密钥池、单次双协议探测（<code class="font-mono text-foreground">/api/v1/probe</code>）及多进程压测生命周期控制，所有接口均可一键载入工作台实时调试。
+                内置离线接口规范文档，涵盖集合管理、环境与 Mazbri 租户密钥池、单次双协议探测及多进程压测生命周期控制，所有接口均可一键载入工作台调试。
               </p>
             </div>
 
@@ -117,9 +109,9 @@
                 <ChevronsUpDown class="h-3.5 w-3.5" />
                 <span>{{ allExpanded ? "收起全部" : "展开全部" }}</span>
               </UiButton>
-              <UiButton variant="default" size="sm" @click="downloadOpenApiJson">
+              <UiButton variant="outline" size="sm" @click="downloadOpenApiJson">
                 <Download class="h-3.5 w-3.5" />
-                <span>下载 openapi.json</span>
+                <span>导出 JSON</span>
               </UiButton>
             </div>
           </div>
@@ -129,17 +121,17 @@
             class="grid grid-cols-1 gap-3 rounded-lg border border-border bg-surface/60 p-4 text-xs md:grid-cols-3"
           >
             <div class="space-y-1">
-              <div class="font-semibold text-foreground">基础服务地址 (Base URL)</div>
+              <div class="font-semibold text-foreground">服务地址</div>
               <div class="font-mono text-muted-foreground break-all">{{ originUrl }}</div>
             </div>
             <div class="space-y-1">
-              <div class="font-semibold text-foreground">自动化脚本鉴权</div>
+              <div class="font-semibold text-foreground">脚本鉴权</div>
               <div class="font-mono text-muted-foreground">
                 Authorization: Bearer &lt;token&gt;
               </div>
             </div>
             <div class="space-y-1">
-              <div class="font-semibold text-foreground">浏览器会话鉴权</div>
+              <div class="font-semibold text-foreground">会话鉴权</div>
               <div class="font-mono text-muted-foreground">
                 Cookie: x_loadgen_token=&lt;token&gt;
               </div>
@@ -149,8 +141,9 @@
 
         <!-- Mobile Search Fallback -->
         <div class="lg:hidden">
-          <UiInput
+          <UiSearchInput
             v-model="searchQuery"
+            size="default"
             placeholder="搜索路径、接口名称或关键字..."
           />
         </div>
@@ -160,7 +153,7 @@
           v-if="filteredGroups.length === 0"
           class="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground"
         >
-          未找到匹配「{{ searchQuery }}」的 API 接口
+          未找到匹配「{{ searchQuery }}」的接口
         </div>
 
         <!-- Tag Sections -->
@@ -224,10 +217,10 @@
                   <UiButton
                     variant="outline"
                     size="xs"
-                    title="将此接口载入 Studio 工作台调试"
+                    title="载入工作台调试"
                     @click="openInStudio(op)"
                   >
-                    <span>工作台调试</span>
+                    <span>调试</span>
                     <ArrowUpRight class="h-3 w-3" />
                   </UiButton>
 
@@ -265,7 +258,7 @@
                 <!-- Path & Query Parameters -->
                 <div v-if="op.parameters.length > 0" class="space-y-2">
                   <div class="text-xs font-semibold tracking-wide text-muted-foreground">
-                    请求参数 (Parameters)
+                    请求参数
                   </div>
                   <div class="overflow-x-auto rounded-lg border border-border">
                     <table class="w-full border-collapse text-left">
@@ -309,10 +302,10 @@
                   <div class="space-y-2">
                     <div class="flex items-center justify-between">
                       <span class="text-xs font-semibold tracking-wide text-muted-foreground">
-                        请求体结构 ({{ op.requestBody.schemaName || op.requestBody.contentType }})
+                        请求体结构（{{ op.requestBody.schemaName || op.requestBody.contentType }}）
                       </span>
                       <UiBadge v-if="op.requestBody.required" variant="outline">
-                        Required
+                        必填
                       </UiBadge>
                     </div>
 
@@ -371,7 +364,7 @@
                 <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <div class="space-y-2">
                     <div class="text-xs font-semibold tracking-wide text-muted-foreground">
-                      响应状态码 (Responses)
+                      响应状态
                     </div>
                     <div class="divide-y divide-border rounded-lg border border-border bg-card">
                       <div
@@ -437,7 +430,6 @@ import {
   Download,
   Loader2,
   Lock,
-  Search,
   Unlock,
 } from "lucide-vue-next";
 import { http } from "../api/http";
@@ -451,7 +443,7 @@ import { openDraftInNewTab } from "../stores/workspace";
 import UiBadge from "../components/ui/UiBadge.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
-import UiInput from "../components/ui/UiInput.vue";
+import UiSearchInput from "../components/ui/UiSearchInput.vue";
 
 interface RawSchema {
   $ref?: string;
@@ -549,41 +541,48 @@ interface ParsedOperation {
 
 const TAG_META: Record<string, { title: string; subtitle: string }> = {
   meta: {
-    title: "系统探针与元信息 (Meta)",
-    subtitle: "存活探针、实例运行容量上限与 OpenAPI 规范文档获取。",
+    title: "系统与元信息",
+    subtitle: "存活探针、实例运行规格与内置 OpenAPI 规范获取。",
   },
   auth: {
-    title: "会话与口令鉴权 (Auth)",
+    title: "会话与口令鉴权",
     subtitle: "管理员口令登录、会话状态查询、口令轮换与登出。",
   },
   collections: {
-    title: "接口集合树 (Collections)",
-    subtitle: "多层级接口集合/目录的增删改查及 JSON 批量导入导出。",
+    title: "接口集合",
+    subtitle: "多层级接口集合目录树的增删改查及 JSON 批量导入导出。",
   },
   requests: {
-    title: "已保存请求 (Requests)",
+    title: "已保存请求",
     subtitle: "HTTP 与 Mazbri 双协议请求配置的持久化归档管理。",
   },
   environments: {
-    title: "环境与密钥池 (Environments)",
-    subtitle: "Global/命名环境变量、Mazbri 多租户加权密钥池及非对称密钥对生成。",
+    title: "环境与密钥池",
+    subtitle: "全局/命名环境变量、Mazbri 多租户加权密钥池及非对称密钥对生成。",
   },
   "load-profiles": {
-    title: "负载配置预设 (Load Profiles)",
-    subtitle: "与具体接口解耦的可复用 QPS / 并发 / 爬坡 / SLA 判定模板。",
+    title: "负载预设",
+    subtitle: "与具体接口解耦的可复用 QPS / 并发 / 爬坡 / SLA 判定预设。",
   },
   probe: {
-    title: "单次双协议调试 (Probe)",
-    subtitle: "工作台 Send 按钮背后的实时 HTTP / Mazbri 单次探测与信封追踪。",
+    title: "单次接口探测",
+    subtitle: "工作台「发送」按钮背后的实时 HTTP / Mazbri 单次探测与信封追踪。",
   },
   runs: {
-    title: "压测任务与监控报告 (Runs)",
-    subtitle: "单请求/集合压测任务编排、在线动态调流、SSE 实时指标、明细样本与离线报告。",
+    title: "压测任务与报告",
+    subtitle: "单接口/集合加权压测编排、在线动态调流、SSE 实时指标、明细样本与离线报告。",
   },
 };
 
 const HTTP_VERBS = ["get", "post", "put", "patch", "delete"] as const;
-const methodFilters = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+const methodFilters = [
+  { value: "ALL", label: "全部" },
+  { value: "GET", label: "GET" },
+  { value: "POST", label: "POST" },
+  { value: "PUT", label: "PUT" },
+  { value: "PATCH", label: "PATCH" },
+  { value: "DELETE", label: "DELETE" },
+] as const;
 
 const router = useRouter();
 const spec = ref<RawOpenApiDoc | null>(null);

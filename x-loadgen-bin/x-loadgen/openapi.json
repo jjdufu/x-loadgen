@@ -2,52 +2,60 @@
   "openapi": "3.0.3",
   "info": {
     "title": "x-loadgen API",
-    "version": "0.3.0",
-    "description": "HTTP API for the x-loadgen dual-protocol (`http` + `mazbri`) API debugging & high-concurrency load-testing studio."
+    "version": "0.4.0",
+    "description": "x-loadgen 双协议（通用 `http` + `mazbri` 网关）接口调试与高并发压测工作台 HTTP API。"
   },
   "servers": [
     {
       "url": "/",
-      "description": "The process that serves this document."
+      "description": "当前 x-loadgen 服务端实例。"
     }
   ],
   "tags": [
     {
-      "name": "meta"
+      "name": "meta",
+      "description": "存活探针、实例运行规格与内置 OpenAPI 规范获取"
     },
     {
-      "name": "auth"
+      "name": "auth",
+      "description": "管理员口令登录、会话状态查询、口令轮换与退出登录"
     },
     {
-      "name": "collections"
+      "name": "collections",
+      "description": "多层级接口集合目录树的增删改查及 JSON 批量导入导出"
     },
     {
-      "name": "requests"
+      "name": "requests",
+      "description": "HTTP 与 Mazbri 双协议请求配置的持久化归档管理"
     },
     {
-      "name": "environments"
+      "name": "environments",
+      "description": "全局与命名环境变量、Mazbri 多租户加权密钥池及密钥对生成"
     },
     {
-      "name": "load-profiles"
+      "name": "load-profiles",
+      "description": "与具体接口解耦的可复用 QPS / 并发 / 爬坡 / SLA 判定预设"
     },
     {
-      "name": "probe"
+      "name": "probe",
+      "description": "工作台单次实时请求探测与 Mazbri 协议信封追踪"
     },
     {
-      "name": "runs"
+      "name": "runs",
+      "description": "压测任务编排、在线动态调流、SSE 实时指标、明细样本与离线报告"
     }
   ],
   "paths": {
     "/health": {
       "get": {
-        "summary": "Liveness and version",
+        "summary": "健康检查与版本信息",
         "tags": [
           "meta"
         ],
         "security": [],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -64,20 +72,21 @@
               }
             }
           }
-        }
+        },
+        "description": "无需鉴权，返回服务存活状态与当前版本号。"
       }
     },
     "/api/v1/openapi.json": {
       "get": {
-        "summary": "OpenAPI 3 document for this API",
+        "summary": "获取内置 OpenAPI 3 接口规范文档",
         "tags": [
           "meta"
         ],
-        "description": "Unauthenticated. Returns this document.",
+        "description": "无需鉴权，返回当前实例完整的 OpenAPI 3 JSON 文档。",
         "security": [],
         "responses": {
           "200": {
-            "description": "OpenAPI 3 JSON",
+            "description": "OpenAPI 3 JSON 规范文档",
             "content": {
               "application/json": {
                 "schema": {
@@ -91,11 +100,11 @@
     },
     "/api/v1/auth/login": {
       "post": {
-        "summary": "Verify the login token and set the auth cookie",
+        "summary": "验证访问口令并写入会话 Cookie",
         "tags": [
           "auth"
         ],
-        "description": "The login token is the long-lived credential. It is echoed in the response and set as an HttpOnly cookie (`x_loadgen_token`, SameSite=Lax, Path=/, no Secure, no Max-Age). The token never expires on its own. Scripts may skip login and send `Authorization: Bearer <token>` directly.",
+        "description": "校验管理员访问口令，成功后回显口令并下发 HttpOnly 会话 Cookie（`x_loadgen_token`，SameSite=Lax，Path=/）。口令长期有效；自动化脚本可跳过登录直接携带 `Authorization: Bearer <token>` 请求头。",
         "security": [],
         "requestBody": {
           "required": true,
@@ -109,7 +118,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -119,7 +128,7 @@
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "description": "请求参数非法或当前处于免密模式（`invalid_request` / `auth_disabled`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -129,7 +138,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -143,15 +152,15 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "summary": "Clear the auth cookie",
+        "summary": "清除当前浏览器会话 Cookie",
         "tags": [
           "auth"
         ],
-        "description": "Clears the cookie. The login token itself stays valid.",
+        "description": "清除浏览器端 `x_loadgen_token` Cookie，访问口令本身保持有效。",
         "security": [],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -170,11 +179,11 @@
     },
     "/api/v1/auth/password": {
       "post": {
-        "summary": "Change the login token",
+        "summary": "修改管理员访问口令",
         "tags": [
           "auth"
         ],
-        "description": "Requires the current token (cookie or Bearer) and `old_token`. The new token must be at least 24 characters of printable ASCII, without whitespace, quotes, semicolons, commas or backslashes, and must differ from the old token. On success the cookie is replaced and the old token is rejected immediately. `admin.passwd` is deleted after the first change.",
+        "description": "需携带当前有效口令并传入 `old_token` 与 `new_token`。新口令至少 24 位可打印 ASCII（不含空白字符、引号、分号、逗号和反斜杠），且不能与旧口令相同。修改成功后立即替换会话 Cookie、作废旧口令，并在首次改密后自动删除 `admin.passwd` 文件。",
         "requestBody": {
           "required": true,
           "content": {
@@ -187,7 +196,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -197,7 +206,7 @@
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "description": "请求参数非法或当前处于免密模式（`invalid_request` / `auth_disabled`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -207,7 +216,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -217,7 +226,7 @@
             }
           },
           "500": {
-            "description": "Internal error (`internal`)",
+            "description": "服务端内部错误（`internal`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -231,14 +240,14 @@
     },
     "/api/v1/auth/me": {
       "get": {
-        "summary": "Current authentication state",
+        "summary": "查询当前鉴权与改密状态",
         "tags": [
           "auth"
         ],
-        "description": "With `--no-auth`, returns `auth_required: false` without a token. Otherwise requires a valid login token.",
+        "description": "`--no-auth` 免密模式下无需口令即返回 `auth_required: false`；默认鉴权模式下需携带有效口令。",
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -248,7 +257,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -262,13 +271,13 @@
     },
     "/api/v1/meta": {
       "get": {
-        "summary": "Version, caps, and running traffic totals",
+        "summary": "获取实例版本、容量上限与在途压测汇总",
         "tags": [
           "meta"
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -278,7 +287,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -288,7 +297,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -297,18 +306,19 @@
               }
             }
           }
-        }
+        },
+        "description": "返回服务端版本号、全局最大 QPS / 并发护栏及当前运行中任务的实时汇总流量。"
       }
     },
     "/api/v1/collections": {
       "get": {
-        "summary": "List nested collection & request tree",
+        "summary": "获取多层级接口集合与请求目录树",
         "tags": [
           "collections"
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -321,7 +331,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "未鉴权或口令无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -331,7 +341,7 @@
             }
           },
           "403": {
-            "description": "Password change required",
+            "description": "首次启动口令尚未修改",
             "content": {
               "application/json": {
                 "schema": {
@@ -343,7 +353,7 @@
         }
       },
       "post": {
-        "summary": "Create a root collection or nested folder",
+        "summary": "创建根集合或子目录",
         "tags": [
           "collections"
         ],
@@ -359,7 +369,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created",
+            "description": "创建成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -369,7 +379,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -379,7 +389,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "未鉴权或口令无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -389,7 +399,7 @@
             }
           },
           "404": {
-            "description": "Parent collection not found",
+            "description": "父集合不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -403,7 +413,7 @@
     },
     "/api/v1/collections/export": {
       "get": {
-        "summary": "Export collections JSON (secrets redacted unless include_secrets=true)",
+        "summary": "导出接口集合 JSON（默认自动脱敏敏感凭据）",
         "tags": [
           "collections"
         ],
@@ -414,7 +424,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "可选指定导出的根集合 ID（不传则导出全部集合）"
           },
           {
             "name": "include_secrets",
@@ -422,12 +433,13 @@
             "required": false,
             "schema": {
               "type": "boolean"
-            }
+            },
+            "description": "是否包含未脱敏的密钥与口令明文（默认 false）"
           }
         ],
         "responses": {
           "200": {
-            "description": "Export bundle",
+            "description": "导出的 JSON 数据包",
             "content": {
               "application/json": {
                 "schema": {
@@ -437,7 +449,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "未鉴权或口令无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -447,7 +459,7 @@
             }
           },
           "404": {
-            "description": "Collection not found",
+            "description": "所属集合不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -456,12 +468,13 @@
               }
             }
           }
-        }
+        },
+        "description": "可通过 `include_secrets=true` 导出完整凭据，或指定 `collection_id` 导出单个集合子树。"
       }
     },
     "/api/v1/collections/import": {
       "post": {
-        "summary": "Import Hoppscotch REST Collection JSON or native x-loadgen bundle",
+        "summary": "导入接口集合 JSON（兼容 Hoppscotch 与原生格式）",
         "tags": [
           "collections"
         ],
@@ -472,7 +485,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "可选挂载的目标父集合 ID"
           }
         ],
         "requestBody": {
@@ -487,7 +501,7 @@
         },
         "responses": {
           "201": {
-            "description": "Imported collections",
+            "description": "导入后的集合节点列表",
             "content": {
               "application/json": {
                 "schema": {
@@ -500,7 +514,7 @@
             }
           },
           "400": {
-            "description": "Invalid JSON",
+            "description": "导入的 JSON 格式不合法",
             "content": {
               "application/json": {
                 "schema": {
@@ -510,7 +524,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized",
+            "description": "未鉴权或口令无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -524,7 +538,7 @@
     },
     "/api/v1/collections/{id}": {
       "get": {
-        "summary": "Get collection subtree",
+        "summary": "获取指定集合及其子树详情",
         "tags": [
           "collections"
         ],
@@ -535,12 +549,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -550,7 +565,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -562,7 +577,7 @@
         }
       },
       "put": {
-        "summary": "Update collection or folder",
+        "summary": "更新集合名称、层级或默认配置",
         "tags": [
           "collections"
         ],
@@ -573,7 +588,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -588,7 +604,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -598,7 +614,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -608,7 +624,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -620,7 +636,7 @@
         }
       },
       "delete": {
-        "summary": "Delete collection (cascades to nested folders and requests)",
+        "summary": "删除集合（级联删除下属子目录与已保存请求）",
         "tags": [
           "collections"
         ],
@@ -631,15 +647,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -653,7 +670,7 @@
     },
     "/api/v1/requests": {
       "post": {
-        "summary": "Create a saved request in a collection/folder",
+        "summary": "在指定集合中新建请求",
         "tags": [
           "requests"
         ],
@@ -669,7 +686,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created",
+            "description": "创建成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -679,7 +696,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -689,7 +706,7 @@
             }
           },
           "404": {
-            "description": "Collection not found",
+            "description": "所属集合不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -703,7 +720,7 @@
     },
     "/api/v1/requests/{id}": {
       "get": {
-        "summary": "Get saved request",
+        "summary": "获取单条已保存请求详情",
         "tags": [
           "requests"
         ],
@@ -714,12 +731,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -729,7 +747,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -741,7 +759,7 @@
         }
       },
       "put": {
-        "summary": "Update saved request",
+        "summary": "更新已保存请求配置",
         "tags": [
           "requests"
         ],
@@ -752,7 +770,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -767,7 +786,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -777,7 +796,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -787,7 +806,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -799,7 +818,7 @@
         }
       },
       "delete": {
-        "summary": "Delete saved request",
+        "summary": "删除已保存请求",
         "tags": [
           "requests"
         ],
@@ -810,15 +829,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -832,13 +852,13 @@
     },
     "/api/v1/environments": {
       "get": {
-        "summary": "List environments (Global first)",
+        "summary": "获取环境列表（内置全局环境置顶）",
         "tags": [
           "environments"
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -853,7 +873,7 @@
         }
       },
       "post": {
-        "summary": "Create an environment",
+        "summary": "新建运行环境",
         "tags": [
           "environments"
         ],
@@ -869,7 +889,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created",
+            "description": "创建成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -879,7 +899,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -903,7 +923,7 @@
     },
     "/api/v1/environments/export": {
       "get": {
-        "summary": "Export environments JSON (redacted by default)",
+        "summary": "导出运行环境 JSON（默认脱敏敏感字段）",
         "tags": [
           "environments"
         ],
@@ -914,7 +934,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "可选指定导出的环境 ID（不传则导出全部环境）"
           },
           {
             "name": "include_secrets",
@@ -922,12 +943,13 @@
             "required": false,
             "schema": {
               "type": "boolean"
-            }
+            },
+            "description": "是否包含未脱敏的密钥与口令明文（默认 false）"
           }
         ],
         "responses": {
           "200": {
-            "description": "Export bundle",
+            "description": "导出的 JSON 数据包",
             "content": {
               "application/json": {
                 "schema": {
@@ -937,7 +959,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -946,12 +968,13 @@
               }
             }
           }
-        }
+        },
+        "description": "可通过 `include_secrets=true` 包含密钥明文，或指定 `environment_id` 仅导出单个环境。"
       }
     },
     "/api/v1/environments/import": {
       "post": {
-        "summary": "Import Hoppscotch Environment JSON or native x-loadgen bundle",
+        "summary": "导入运行环境 JSON（兼容 Hoppscotch 与原生格式）",
         "tags": [
           "environments"
         ],
@@ -967,7 +990,7 @@
         },
         "responses": {
           "201": {
-            "description": "Imported",
+            "description": "导入成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -980,7 +1003,7 @@
             }
           },
           "400": {
-            "description": "Invalid JSON",
+            "description": "导入的 JSON 格式不合法",
             "content": {
               "application/json": {
                 "schema": {
@@ -994,7 +1017,7 @@
     },
     "/api/v1/environments/{id}": {
       "get": {
-        "summary": "Get environment detail including variables, TLS, and weighted tenant pool",
+        "summary": "获取环境完整配置（含变量、TLS 与租户密钥池）",
         "tags": [
           "environments"
         ],
@@ -1005,12 +1028,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1020,7 +1044,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1032,7 +1056,7 @@
         }
       },
       "put": {
-        "summary": "Update environment (supports Global id='global')",
+        "summary": "更新环境配置（支持内置 `global` 全局环境）",
         "tags": [
           "environments"
         ],
@@ -1043,7 +1067,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -1058,7 +1083,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1068,7 +1093,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1078,7 +1103,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1090,7 +1115,7 @@
         }
       },
       "delete": {
-        "summary": "Delete non-global environment",
+        "summary": "删除自定义环境（内置全局环境不可删除）",
         "tags": [
           "environments"
         ],
@@ -1101,15 +1126,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "400": {
-            "description": "Global environment cannot be deleted",
+            "description": "内置全局环境不可删除",
             "content": {
               "application/json": {
                 "schema": {
@@ -1119,7 +1145,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1133,7 +1159,7 @@
     },
     "/api/v1/environments/{id}/tenants": {
       "get": {
-        "summary": "List tenants in an environment pool",
+        "summary": "列出环境下的 Mazbri 租户密钥池",
         "tags": [
           "environments"
         ],
@@ -1144,12 +1170,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1162,7 +1189,7 @@
             }
           },
           "404": {
-            "description": "Environment not found",
+            "description": "所属环境不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1174,7 +1201,7 @@
         }
       },
       "post": {
-        "summary": "Add a tenant to an environment pool",
+        "summary": "向环境租户池添加 Mazbri 租户",
         "tags": [
           "environments"
         ],
@@ -1185,7 +1212,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -1200,7 +1228,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created",
+            "description": "创建成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1210,7 +1238,7 @@
             }
           },
           "400": {
-            "description": "Invalid tenant",
+            "description": "租户加密或签名配置校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1220,7 +1248,7 @@
             }
           },
           "404": {
-            "description": "Environment not found",
+            "description": "所属环境不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1230,7 +1258,7 @@
             }
           },
           "409": {
-            "description": "Duplicate tenant name",
+            "description": "同环境下租户名称已存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1244,7 +1272,7 @@
     },
     "/api/v1/environments/{id}/tenants/{tid}": {
       "get": {
-        "summary": "Get tenant from environment pool",
+        "summary": "获取环境下单个 Mazbri 租户详情",
         "tags": [
           "environments"
         ],
@@ -1255,7 +1283,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           },
           {
             "name": "tid",
@@ -1263,12 +1292,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "环境内租户唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1278,7 +1308,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1290,7 +1320,7 @@
         }
       },
       "put": {
-        "summary": "Update tenant in environment pool",
+        "summary": "更新环境下的 Mazbri 租户配置",
         "tags": [
           "environments"
         ],
@@ -1301,7 +1331,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           },
           {
             "name": "tid",
@@ -1309,7 +1340,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "环境内租户唯一 ID"
           }
         ],
         "requestBody": {
@@ -1324,7 +1356,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1334,7 +1366,7 @@
             }
           },
           "400": {
-            "description": "Invalid tenant",
+            "description": "租户加密或签名配置校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1344,7 +1376,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1356,7 +1388,7 @@
         }
       },
       "delete": {
-        "summary": "Delete tenant from environment pool",
+        "summary": "从环境租户池删除指定租户",
         "tags": [
           "environments"
         ],
@@ -1367,7 +1399,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           },
           {
             "name": "tid",
@@ -1375,15 +1408,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "环境内租户唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1397,7 +1431,7 @@
     },
     "/api/v1/environments/{id}/tenants/{tid}/binding-keypair": {
       "post": {
-        "summary": "Generate and store asymmetric request-binding keypair on tenant",
+        "summary": "为环境租户生成并持久化非对称请求绑定密钥对",
         "tags": [
           "environments"
         ],
@@ -1408,7 +1442,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           },
           {
             "name": "tid",
@@ -1416,7 +1451,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "环境内租户唯一 ID"
           }
         ],
         "requestBody": {
@@ -1442,7 +1478,7 @@
         },
         "responses": {
           "200": {
-            "description": "Generated public key",
+            "description": "生成成功并返回公钥信息",
             "content": {
               "application/json": {
                 "schema": {
@@ -1452,7 +1488,7 @@
             }
           },
           "400": {
-            "description": "Invalid algorithm or missing kid",
+            "description": "不支持的签名算法或缺少 Key ID",
             "content": {
               "application/json": {
                 "schema": {
@@ -1462,7 +1498,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1471,18 +1507,19 @@
               }
             }
           }
-        }
+        },
+        "description": "私钥自动安全存入该租户记录，响应仅返回公钥 PEM 以便登记到网关。"
       }
     },
     "/api/v1/load-profiles": {
       "get": {
-        "summary": "List reusable load profiles",
+        "summary": "获取可复用负载预设列表",
         "tags": [
           "load-profiles"
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1497,7 +1534,7 @@
         }
       },
       "post": {
-        "summary": "Create load profile",
+        "summary": "新建负载预设",
         "tags": [
           "load-profiles"
         ],
@@ -1513,7 +1550,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created",
+            "description": "创建成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1523,7 +1560,7 @@
             }
           },
           "400": {
-            "description": "Invalid profile",
+            "description": "负载预设参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1533,7 +1570,7 @@
             }
           },
           "409": {
-            "description": "Duplicate name",
+            "description": "名称已存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1547,7 +1584,7 @@
     },
     "/api/v1/load-profiles/{id}": {
       "get": {
-        "summary": "Get load profile",
+        "summary": "获取单个负载预设详情",
         "tags": [
           "load-profiles"
         ],
@@ -1558,12 +1595,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1573,7 +1611,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1585,7 +1623,7 @@
         }
       },
       "put": {
-        "summary": "Update load profile",
+        "summary": "更新负载预设配置",
         "tags": [
           "load-profiles"
         ],
@@ -1596,7 +1634,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -1611,7 +1650,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1621,7 +1660,7 @@
             }
           },
           "400": {
-            "description": "Invalid profile",
+            "description": "负载预设参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1631,7 +1670,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1643,7 +1682,7 @@
         }
       },
       "delete": {
-        "summary": "Delete load profile",
+        "summary": "删除负载预设",
         "tags": [
           "load-profiles"
         ],
@@ -1654,15 +1693,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "404": {
-            "description": "Not found",
+            "description": "目标资源不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1672,7 +1712,7 @@
             }
           },
           "409": {
-            "description": "Referenced by active run",
+            "description": "该资源正被运行中的压测任务引用",
             "content": {
               "application/json": {
                 "schema": {
@@ -1686,7 +1726,7 @@
     },
     "/api/v1/probe": {
       "post": {
-        "summary": "Execute interactive single-request Send (HTTP or Mazbri with wire debug)",
+        "summary": "执行单次实时请求探测（支持 HTTP 与 Mazbri 信封追踪）",
         "tags": [
           "probe"
         ],
@@ -1702,7 +1742,7 @@
         },
         "responses": {
           "200": {
-            "description": "Probe outcome",
+            "description": "单次探测响应与断言详情",
             "content": {
               "application/json": {
                 "schema": {
@@ -1712,7 +1752,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "请求参数校验失败",
             "content": {
               "application/json": {
                 "schema": {
@@ -1722,7 +1762,7 @@
             }
           },
           "404": {
-            "description": "Referenced entity not found",
+            "description": "引用的请求或环境不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1731,12 +1771,13 @@
               }
             }
           }
-        }
+        },
+        "description": "工作台「发送」按钮对应的调试接口，支持直接传入未保存草稿 `request` 或已归档 `request_id`，结合环境渲染变量并返回响应体、逐项断言结果及 Mazbri 加解密与签名明细。"
       }
     },
     "/api/v1/crypto/binding-keypair": {
       "post": {
-        "summary": "Stateless asymmetric request-binding keypair generator for inline tabs",
+        "summary": "无状态生成非对称请求绑定密钥对（供内联调试使用）",
         "tags": [
           "probe"
         ],
@@ -1763,7 +1804,7 @@
         },
         "responses": {
           "200": {
-            "description": "Generated private & public key PEMs",
+            "description": "生成成功并返回公私钥 PEM",
             "content": {
               "application/json": {
                 "schema": {
@@ -1773,7 +1814,7 @@
             }
           },
           "400": {
-            "description": "Invalid algorithm",
+            "description": "不支持的签名算法",
             "content": {
               "application/json": {
                 "schema": {
@@ -1782,12 +1823,13 @@
               }
             }
           }
-        }
+        },
+        "description": "不写入数据库，直接生成并返回非对称签名私钥 PEM 与公钥 PEM。"
       }
     },
     "/api/v1/runs": {
       "get": {
-        "summary": "List runs",
+        "summary": "获取压测任务列表",
         "tags": [
           "runs"
         ],
@@ -1798,12 +1840,13 @@
             "schema": {
               "type": "string",
               "description": "Filter, e.g. running, finished, stopped."
-            }
+            },
+            "description": "按任务状态过滤（如 `running`、`finished`、`stopped`、`failed`）"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1816,7 +1859,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1826,7 +1869,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1838,11 +1881,11 @@
         }
       },
       "post": {
-        "summary": "Start a run from a saved template",
+        "summary": "启动单接口、集合加权或临时请求压测任务",
         "tags": [
           "runs"
         ],
-        "description": "Identify the template with `template` (id or unique name) and/or `template_id` (id). Optional fields override the saved template for this run only. Optional `assert` is frozen in the snapshot and evaluated at the end (and on demand while running). Query `wait=true` holds the request until the run finishes or `timeout` seconds (default 60, max 600) elapse. A timeout returns 409 with `error.code=wait_timeout` and the current `run`. Loop runs continue in the daemon regardless of the client connection.",
+        "description": "支持按 `request_id`、`collection_id`（可配合 `selected_requests` 勾选子集与权重）或 `adhoc_request` 发起压测，可选绑定 `environment_id` 与 `load_profile_id` 并临时覆盖本次运行参数。传入查询参数 `wait=true` 时将阻塞等待至任务结束或超过 `timeout` 秒（默认 60，最大 600；等待超时返回 409 `wait_timeout` 并附带当前任务状态）。",
         "parameters": [
           {
             "name": "wait",
@@ -1850,7 +1893,8 @@
             "schema": {
               "type": "boolean",
               "default": false
-            }
+            },
+            "description": "是否同步等待压测任务结束后再返回响应"
           },
           {
             "name": "timeout",
@@ -1859,7 +1903,8 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 600
-            }
+            },
+            "description": "`wait=true` 时的最长等待秒数（1-600，默认 60）"
           }
         ],
         "requestBody": {
@@ -1874,7 +1919,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created (and finished, if wait=true completed)",
+            "description": "任务已创建（若 `wait=true` 且在超时前完成则同时包含最终状态）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1884,7 +1929,7 @@
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "description": "请求参数非法或当前处于免密模式（`invalid_request` / `auth_disabled`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1894,7 +1939,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1904,7 +1949,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1914,7 +1959,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1924,7 +1969,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1938,7 +1983,7 @@
     },
     "/api/v1/runs/{id}": {
       "get": {
-        "summary": "Run detail with a redacted snapshot and verdict",
+        "summary": "获取压测任务详情（含脱敏快照与 SLA 判定结果）",
         "tags": [
           "runs"
         ],
@@ -1949,12 +1994,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -1964,7 +2010,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1974,7 +2020,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1984,7 +2030,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1996,7 +2042,7 @@
         }
       },
       "delete": {
-        "summary": "Delete a non-running run and its directory",
+        "summary": "删除已结束或已停止的压测任务及其明细数据",
         "tags": [
           "runs"
         ],
@@ -2007,15 +2053,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "204": {
-            "description": "Deleted"
+            "description": "删除成功"
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2025,7 +2072,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2035,7 +2082,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2045,7 +2092,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2059,7 +2106,7 @@
     },
     "/api/v1/runs/{id}/stats": {
       "get": {
-        "summary": "Live or last-known counters and percentiles",
+        "summary": "获取压测任务实时或最终计数与延迟分位数",
         "tags": [
           "runs"
         ],
@@ -2070,12 +2117,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2085,7 +2133,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2095,7 +2143,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2105,7 +2153,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2119,7 +2167,7 @@
     },
     "/api/v1/runs/{id}/timeseries": {
       "get": {
-        "summary": "Second-level ring buffer (empty after the process drops it)",
+        "summary": "获取秒级吞吐量环形缓冲时序数据",
         "tags": [
           "runs"
         ],
@@ -2130,12 +2178,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2145,7 +2194,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2155,7 +2204,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2165,7 +2214,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2179,7 +2228,7 @@
     },
     "/api/v1/runs/{id}/timeline": {
       "get": {
-        "summary": "Timeline events",
+        "summary": "获取任务生命周期事件时间线",
         "tags": [
           "runs"
         ],
@@ -2190,12 +2239,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2210,7 +2260,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2220,7 +2270,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2230,7 +2280,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2244,7 +2294,7 @@
     },
     "/api/v1/runs/{id}/windows": {
       "get": {
-        "summary": "Window summaries",
+        "summary": "获取多轮循环压测窗口统计明细",
         "tags": [
           "runs"
         ],
@@ -2255,12 +2305,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2275,7 +2326,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2285,7 +2336,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2295,7 +2346,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2309,11 +2360,11 @@
     },
     "/api/v1/runs/{id}/verdict": {
       "get": {
-        "summary": "Script-friendly assertion verdict",
+        "summary": "获取便于脚本判定的 SLA 断言结论",
         "tags": [
           "runs"
         ],
-        "description": "Body is always a Verdict. HTTP status is chosen so `curl -f` yields a usable exit code: 200 for `pass` or `none` (no assert), 422 for `fail`, 409 for `pending` (still running or stopping). Loop runs do not finish on their own; stop them first, then call this endpoint.",
+        "description": "响应体固定为 `Verdict` 结构，HTTP 状态码可直接配合 `curl -f` 作为退出码判断：`pass` 或 `none` 返回 200，`fail` 返回 422，仍在运行中的 `pending` 返回 409。",
         "parameters": [
           {
             "name": "id",
@@ -2321,12 +2372,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "pass or none",
+            "description": "SLA 判定通过或未配置阈值",
             "content": {
               "application/json": {
                 "schema": {
@@ -2336,7 +2388,7 @@
             }
           },
           "422": {
-            "description": "fail",
+            "description": "至少一项 SLA 阈值未达标",
             "content": {
               "application/json": {
                 "schema": {
@@ -2346,7 +2398,7 @@
             }
           },
           "409": {
-            "description": "pending (still running)",
+            "description": "压测任务仍在运行中，尚未得出最终结论",
             "content": {
               "application/json": {
                 "schema": {
@@ -2356,7 +2408,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2366,7 +2418,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2376,7 +2428,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2390,7 +2442,7 @@
     },
     "/api/v1/runs/{id}/stop": {
       "post": {
-        "summary": "Request a graceful stop",
+        "summary": "发送平滑停止压测信号",
         "tags": [
           "runs"
         ],
@@ -2401,12 +2453,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2416,7 +2469,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2426,7 +2479,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2436,7 +2489,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2446,7 +2499,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2460,7 +2513,7 @@
     },
     "/api/v1/runs/{id}/resume": {
       "post": {
-        "summary": "Resume a stopped or interrupted run",
+        "summary": "对已停止或异常中断的任务执行断点续跑",
         "tags": [
           "runs"
         ],
@@ -2471,12 +2524,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2486,7 +2540,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2496,7 +2550,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2506,7 +2560,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2516,7 +2570,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2530,7 +2584,7 @@
     },
     "/api/v1/runs/{id}/traffic": {
       "patch": {
-        "summary": "Adjust live QPS and/or concurrency",
+        "summary": "运行期间在线动态调整目标 QPS 与并发上限",
         "tags": [
           "runs"
         ],
@@ -2541,7 +2595,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "requestBody": {
@@ -2556,7 +2611,7 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2566,7 +2621,7 @@
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "description": "请求参数非法或当前处于免密模式（`invalid_request` / `auth_disabled`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2576,7 +2631,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2586,7 +2641,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2596,7 +2651,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2606,7 +2661,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2620,7 +2675,7 @@
     },
     "/api/v1/runs/{id}/events": {
       "get": {
-        "summary": "Server-sent events with a stats snapshot once a second",
+        "summary": "订阅每秒推送一次统计快照的 SSE 实时事件流",
         "tags": [
           "runs"
         ],
@@ -2631,15 +2686,16 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "text/event-stream"
+            "description": "SSE 实时统计事件流（`text/event-stream`）"
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2649,7 +2705,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2659,7 +2715,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2673,7 +2729,7 @@
     },
     "/api/v1/runs/{id}/report": {
       "get": {
-        "summary": "Redacted report JSON (includes verdict)",
+        "summary": "获取脱敏后的完整压测报告 JSON（含 SLA 判定）",
         "tags": [
           "runs"
         ],
@@ -2684,12 +2740,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2699,7 +2756,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2709,7 +2766,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2719,7 +2776,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2733,7 +2790,7 @@
     },
     "/api/v1/runs/{id}/report.json": {
       "get": {
-        "summary": "Download the report as report.json",
+        "summary": "下载 JSON 格式压测报告附件",
         "tags": [
           "runs"
         ],
@@ -2744,12 +2801,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "attachment",
+            "description": "文件下载附件流",
             "content": {
               "application/json": {
                 "schema": {
@@ -2759,7 +2817,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2769,7 +2827,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2779,7 +2837,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2793,7 +2851,7 @@
     },
     "/api/v1/runs/{id}/report.html": {
       "get": {
-        "summary": "Download the HTML report",
+        "summary": "下载单文件离线 HTML 可视化压测报告",
         "tags": [
           "runs"
         ],
@@ -2804,12 +2862,13 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           }
         ],
         "responses": {
           "200": {
-            "description": "attachment",
+            "description": "文件下载附件流",
             "content": {
               "text/html": {
                 "schema": {
@@ -2819,7 +2878,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2829,7 +2888,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2839,7 +2898,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2853,7 +2912,7 @@
     },
     "/api/v1/runs/{id}/samples": {
       "get": {
-        "summary": "Paginated sample rows",
+        "summary": "游标分页查询请求样本明细",
         "tags": [
           "runs"
         ],
@@ -2864,40 +2923,45 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "目标资源唯一 ID"
           },
           {
             "name": "after",
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "分页游标"
           },
           {
             "name": "limit",
             "in": "query",
             "schema": {
               "type": "integer"
-            }
+            },
+            "description": "单页最大返回条数（默认 100，最大 1000）"
           },
           {
             "name": "product_id",
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "按接口或产品标识过滤样本"
           },
           {
             "name": "success",
             "in": "query",
             "schema": {
               "type": "boolean"
-            }
+            },
+            "description": "按请求成功或失败状态过滤样本"
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "请求成功",
             "content": {
               "application/json": {
                 "schema": {
@@ -2907,7 +2971,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "未鉴权或口令无效（`unauthorized`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2917,7 +2981,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "首次启动口令尚未修改（`password_change_required`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2927,7 +2991,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "目标资源不存在（`not_found`）",
             "content": {
               "application/json": {
                 "schema": {
@@ -2988,7 +3052,7 @@
             }
           },
           "run": {
-            "description": "Present on `wait_timeout`.",
+            "description": "当 `wait_timeout` 发生时附带当前任务状态。",
             "allOf": [
               {
                 "$ref": "#/components/schemas/RunView"
@@ -3017,7 +3081,7 @@
         "properties": {
           "token": {
             "type": "string",
-            "description": "The same login token that was submitted."
+            "description": "登录提交并验证通过的访问口令。"
           },
           "must_change_password": {
             "type": "boolean"
@@ -3094,7 +3158,7 @@
       },
       "AssertSpec": {
         "type": "object",
-        "description": "Optional SLA thresholds. Omitted fields are not checked. Comparisons are inclusive. Latency is milliseconds. max_error_rate is failure/samples (0\u20131). min_qps_ratio is achieved_qps/configured_qps, where achieved_qps is samples/elapsed_seconds over the wall-clock from started_at to ended_at (or now).",
+        "description": "可选的压测 SLA 判定阈值。未填写的字段不参与校验；比较均为闭区间（等于阈值视为通过）。延迟单位为毫秒，`max_error_rate` 为失败率上限（0–1），`min_qps_ratio` 为实测吞吐与目标 QPS 的最低达成比例。",
         "properties": {
           "p50_ms": {
             "type": "number"

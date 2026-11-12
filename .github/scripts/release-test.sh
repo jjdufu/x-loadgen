@@ -18,7 +18,7 @@ new_repo() {
     local dir="${WORK}/$1" f
     mkdir -p "$dir"
     for f in Cargo.toml Cargo.lock x-loadgen-bin/x-loadgen/web/package.json \
-        deploy/config/.env.example deploy/README.md; do
+        x-loadgen-bin/x-loadgen/openapi.json deploy/config/.env.example deploy/README.md; do
         mkdir -p "$(dirname "${dir}/${f}")"
         cp "${SRC}/${f}" "${dir}/${f}"
     done
@@ -83,6 +83,7 @@ sed -E -i "s/^(x-loadgen-[a-z]+ = \{ version = \")[^\"]*(\")/\1${v}\2/" Cargo.to
 awk -v v="$v" '/^name = "x-loadgen(-[a-z]+)?"$/{h=1;print;next} h&&/^version = "/{print "version = \"" v "\"";h=0;next}{print}' Cargo.lock >Cargo.lock.new
 mv Cargo.lock.new Cargo.lock
 sed -E -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${v}\"/" x-loadgen-bin/x-loadgen/web/package.json
+sed -E -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${v}\"/" x-loadgen-bin/x-loadgen/openapi.json
 sed -E -i "s/^X_LOADGEN_VERSION=.*/X_LOADGEN_VERSION=${v}/" deploy/config/.env.example
 sed -E -i "s/^(\| \`X_LOADGEN_VERSION\` \| \`)[^\`]*(\`)/\1${v}\2/" deploy/README.md
 SH
@@ -142,6 +143,7 @@ check "Cargo.toml workspace 版本" grep -q '^version = "0.1.1"$' "${r}/Cargo.to
 check "Cargo.toml 依赖版本 ×4" test "$(grep -c '^x-loadgen-[a-z]* = { version = "0.1.1"' "${r}/Cargo.toml")" -eq 4
 check "Cargo.lock ×5" test "$(grep -A1 -E '^name = "x-loadgen(-[a-z]+)?"$' "${r}/Cargo.lock" | grep -c '^version = "0.1.1"')" -eq 5
 check "package.json" grep -q '^  "version": "0.1.1",$' "${r}/x-loadgen-bin/x-loadgen/web/package.json"
+check "openapi.json" grep -q '^    "version": "0.1.1",$' "${r}/x-loadgen-bin/x-loadgen/openapi.json"
 check ".env.example" grep -q '^X_LOADGEN_VERSION=0.1.1$' "${r}/deploy/config/.env.example"
 check "deploy/README.md" grep -qF "| \`X_LOADGEN_VERSION\` | \`0.1.1\`" "${r}/deploy/README.md"
 check "CHANGELOG 新段落在前" test "$(grep -m1 '^## ' "${r}/CHANGELOG.md" | cut -c1-9)" = "## 0.1.1 "

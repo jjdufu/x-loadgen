@@ -106,7 +106,7 @@ Node、pnpm 走 `setup-node` 的 pnpm 缓存，cargo 走 `Swatinem/rust-cache`�
 - 规则与 mazbri 的 release-please 配置一致（`bump-minor-pre-major`、`bump-patch-for-minor-pre-major`）。取最高的一级，一次发版只升一级。
 - 提交标题格式：`类型(可选范围)!: 描述`，类型小写，冒号后有一个空格，描述可以写中文，例如 `feat(engine): 支持按租户限速`、`fix: 修复多进程任务不结束`。
 - 仓库还没有任何 `vX.Y.Z` tag 时，按 `Cargo.toml` 的当前版本做首次发版，与提交类型无关。
-- 发版流程：`.github/scripts/release.sh` 计算版本，改写 `Cargo.toml`（workspace 版本和内部依赖版本）、`Cargo.lock`、`web/package.json`、`deploy/config/.env.example`、`deploy/README.md`，把本次的 Features / Bug Fixes 等段落置顶写入 `CHANGELOG.md`；以 `github-actions[bot]` 提交 `chore(release): vX.Y.Z [skip ci]`，打附注 tag `vX.Y.Z` 并推回 `main`；amd64 与 arm64 原生 runner 分别构建仓库根 `Dockerfile`，合并推送 `dex2all/x-loadgen:X.Y.Z` 与 `:latest`，校验两种架构都在；最后创建 GitHub Release，内容为 CHANGELOG 段落和 `docker pull` 命令。
+- 发版流程：`.github/scripts/release.sh` 计算版本，改写 `Cargo.toml`（workspace 版本和内部依赖版本）、`Cargo.lock`、`web/package.json`、`x-loadgen-bin/x-loadgen/openapi.json`、`deploy/config/.env.example`、`deploy/README.md`，把本次的 Features / Bug Fixes 等段落置顶写入 `CHANGELOG.md`；以 `github-actions[bot]` 提交 `chore(release): vX.Y.Z [skip ci]`，打附注 tag `vX.Y.Z` 并推回 `main`；amd64 与 arm64 原生 runner 分别构建仓库根 `Dockerfile`，合并推送 `dex2all/x-loadgen:X.Y.Z` 与 `:latest`，校验两种架构都在；最后创建 GitHub Release，内容为 CHANGELOG 段落和 `docker pull` 命令。
 - release 提交不会再触发发版：用 `GITHUB_TOKEN` 推送的提交和 tag 不触发任何 workflow，提交信息又带 `[skip ci]`，`release.sh` 也不把 `chore(release)` 计入下一次发版。
 - 提交信息（标题和正文）里不要出现 `[skip ci]`、`[ci skip]`、`[no ci]`、`[skip actions]`、`[actions skip]` 或 `skip-checks: true`：GitHub 会因此跳过这次 push 的全部 workflow，CI 和发版都不会运行。只有发版流程自己的 release 提交带 `[skip ci]`。
 - CI 跑完时如果 `main` 已经有更新的提交，本次不发版，交给新提交对应的那次运行。
@@ -728,15 +728,15 @@ esac
 
 登录（或 `--no-auth`）之后可以在 Web 工作台完成全部交互调试与压测操作：
 
-1. **配置环境与租户池**：在工作台顶栏或右侧栏「环境（Environments）」新建环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
-2. **多标签接口调试（`发送`）**：在主工作台新建标签页或导入 cURL，切换协议（`HTTP 通用` / `Mazbri 网关`），配置参数、Headers、CodeMirror 请求体、鉴权与响应断言，点击 **`发送`** 即可查看格式化响应、断言结果，以及 Mazbri 专属的「信封与签名追踪」。
-3. **组织集合与预设**：点击「保存」将请求存入右侧「集合（Collections）」目录树（支持 JSON 导入导出）；在左侧导航「负载预设」管理可复用的开环/闭环流量模型与 SLA 阈值。
+1. **配置环境与租户池**：在工作台顶栏环境选择器新建或编辑环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
+2. **多标签接口调试（`发送`）**：在工作台新建标签页或导入 cURL，通过协议胶囊一键切换 `HTTP 通用` / `Mazbri 网关` 模式，配置参数、请求头、CodeMirror 请求体、鉴权与响应断言，点击 **`发送`** 自动展开响应栏查看格式化响应、断言结果及 Mazbri 信封与签名追踪。
+3. **组织集合与预设**：点击「保存」将请求存入右侧「接口集合」目录树（支持行内重命名与 JSON 导入导出）；在「负载预设」管理可复用的开环/闭环流量模型与 SLA 阈值。
 4. **发起单接口或集合加权压测（`压测`）**：在任意请求栏点击「压测」或在集合节点上点击「集合压测」，勾选参与压测的接口、调整各自权重（`weight`）、选择预设或临时覆盖 QPS/并发/多进程参数并一键启动。
-5. **实时监控与报告**：跳转至 `/runs/:id` 查看 ECharts 实时吞吐曲线、延迟分位卡片、在线热调 QPS/并发、停止/续跑、游标分页样本明细表，并一键下载脱敏 JSON 或独立离线 HTML 报告。
+5. **实时监控与报告**：跳转至 `/runs/:id` 查看 ECharts 实时吞吐曲线、延迟分位卡片、在线调整 QPS/并发、停止/续跑、游标分页样本明细表，并一键下载脱敏 JSON 或独立离线 HTML 报告。
 
 `gateway_base_url` 必须是**容器能够访问**的地址：IP、公网 URL，或 DNS 可解析的域名加端口。不要填写 `http://127.0.0.1:8888` 来指向宿主机上的网关（那是容器自己的回环）。指向宿主机上的监听时，使用宿主机在该桥接网络上的地址，或该服务对容器可见的地址。
 
-页面路由：`/`（多标签调试工作台）、`/runs`（压测任务列表）、`/runs/:id`（实时监控与报告详情）、`/profiles`（负载预设管理）、`/docs`（内置可视化 OpenAPI 接口规范）、`/settings`（`Light` / `Black` 跟随系统外观与安全设置）、`/login`、`/password`。
+页面路由：`/`（工作台）、`/runs`（压测任务）、`/runs/:id`（任务实时监控详情）、`/profiles`（负载预设）、`/docs`（内置离线接口文档）、`/settings`（右上角图标进入，含浅色/纯黑主题切换、快捷键录制管理与口令轮换）、`/login`、`/password`。
 
 ## 接入 mazbri 网关（加密与签名）
 
