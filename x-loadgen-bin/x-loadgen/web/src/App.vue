@@ -1,9 +1,10 @@
 <template>
   <RouterView />
+  <UiConfirmDialog />
 
   <!-- Shadcn / Sonner-inspired Swiss Minimalist Toast Stack -->
   <div
-    class="fixed bottom-11 right-5 z-[10000] flex flex-col gap-2.5 w-full max-w-[360px] pointer-events-none"
+    class="fixed bottom-10 right-4 z-[10000] flex flex-col gap-2.5 w-full max-w-[360px] pointer-events-none"
     aria-live="polite"
   >
     <TransitionGroup
@@ -43,6 +44,7 @@
 
 <script setup lang="ts">
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-vue-next";
+import UiConfirmDialog from "./components/ui/UiConfirmDialog.vue";
 import {
   activeToasts,
   dismissToast,

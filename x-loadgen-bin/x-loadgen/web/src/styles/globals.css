@@ -38,6 +38,7 @@
     --ring: 240 10% 3.9%;
 
     --radius: 0.5rem;
+    color-scheme: light;
   }
 
   .dark {
@@ -69,6 +70,7 @@
     --border: 240 3.7% 16.5%;
     --input: 240 3.7% 17.5%;
     --ring: 240 4.9% 83.9%;
+    color-scheme: dark;
   }
 
   * {
@@ -96,6 +98,12 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  select option,
+  select optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
   }
 
   code,
