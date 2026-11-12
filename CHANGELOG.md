@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.2](https://github.com/jjdufu/x-loadgen/compare/v0.4.1...v0.4.2) (2026-11-13)
+
+### Bug Fixes
+
+* **web:** 修复工作台分栏与主题下拉、文档/设置对齐及后台焦点抢占问题 ([42ef6bf](https://github.com/jjdufu/x-loadgen/commit/42ef6bfaba2607a930523833991fe3d7124beb8f))
+
 ## [0.4.1](https://github.com/jjdufu/x-loadgen/compare/v0.4.0...v0.4.1) (2026-11-12)
 
 ### Features

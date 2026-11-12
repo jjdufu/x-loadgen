@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "x-loadgen API",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "description": "x-loadgen 双协议（通用 `http` + `mazbri` 网关）接口调试与高并发压测工作台 HTTP API。"
   },
   "servers": [
