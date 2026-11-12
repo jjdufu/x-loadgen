@@ -158,14 +158,35 @@ fn live_inputs(
     Option<crate::engine::HistogramPercentiles>,
     Option<Vec<crate::engine::RingSlot>>,
 ) {
-    match state.supervisor.get(&record.id) {
-        Some(task) => (
-            Some(task.metrics.counters()),
-            Some(task.metrics.percentiles_us()),
-            Some(task.metrics.ring_snapshot()),
-        ),
-        None => (None, None, None),
+    let Some(task) = state.supervisor.get(&record.id) else {
+        return (None, None, None);
+    };
+    if task.processes() > 1 {
+        let snaps = crate::engine::load_live_snapshots(&state.paths, &record.id, task.processes());
+        if let Ok(merged) = crate::engine::merge_live(&snaps, 60_000_000) {
+            let counters = crate::engine::CounterSnapshot {
+                samples: merged.samples,
+                success: merged.success,
+                failure: merged.failure,
+                expected: merged.expected,
+                bytes: merged.bytes,
+                dropped_details: merged.dropped_details,
+                in_flight: merged.in_flight,
+                peak_in_flight: merged.peak_in_flight,
+            };
+            return (
+                Some(counters),
+                Some((merged.p50_us, merged.p95_us, merged.p99_us, merged.max_us)),
+                None,
+            );
+        }
+        return (None, None, None);
     }
+    (
+        Some(task.metrics.counters()),
+        Some(task.metrics.percentiles_us()),
+        Some(task.metrics.ring_snapshot()),
+    )
 }
 
 fn download_body(body: Vec<u8>, content_type: &'static str, filename: &str) -> Response {
@@ -179,12 +200,35 @@ fn download_body(body: Vec<u8>, content_type: &'static str, filename: &str) -> R
 
 fn event_payload(state: &AppState, id: &str) -> Value {
     match state.supervisor.get_run(id) {
-        Ok(record) => json!({
-            "id": record.id,
-            "status": record.status,
-            "current_qps": record.current_qps,
-            "current_concurrency": record.current_concurrency,
-        }),
+        Ok(record) => {
+            let (live_counters, live_percentiles, _) = live_inputs(state, &record);
+            if let Some(cnt) = live_counters {
+                let (p50, p95, p99, max) = live_percentiles.unwrap_or((None, None, None, None));
+                json!({
+                    "id": record.id,
+                    "status": record.status,
+                    "current_qps": record.current_qps,
+                    "current_concurrency": record.current_concurrency,
+                    "samples": cnt.samples,
+                    "success": cnt.success,
+                    "failure": cnt.failure,
+                    "expected": cnt.expected,
+                    "bytes": cnt.bytes,
+                    "in_flight": cnt.in_flight,
+                    "p50_us": p50,
+                    "p95_us": p95,
+                    "p99_us": p99,
+                    "max_us": max,
+                })
+            } else {
+                json!({
+                    "id": record.id,
+                    "status": record.status,
+                    "current_qps": record.current_qps,
+                    "current_concurrency": record.current_concurrency,
+                })
+            }
+        }
         Err(err) => json!({ "error": err.to_string() }),
     }
 }

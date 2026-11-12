@@ -1,10 +1,10 @@
 import axios, { AxiosError } from "axios";
-import { ElMessage } from "element-plus";
+import { toast } from "../modules/toast";
 
 export const http = axios.create({
   baseURL: "",
   withCredentials: true,
-  timeout: 20000,
+  timeout: 60000,
 });
 
 interface ErrorBody {
@@ -29,14 +29,13 @@ http.interceptors.response.use(
     const isMeProbe = url.includes("/api/v1/auth/me");
     const { default: router } = await import("../router");
     const current = router.currentRoute.value.name;
-    // /auth/me is owned by the navigation guard. Redirecting here retriggers
-    // beforeEach before the first navigation settles and livelocks the SPA.
+
     if (status === 401 && current !== "login" && !isMeProbe) {
       await router.push({ name: "login" });
     } else if (code === "password_change_required" && current !== "password") {
       await router.push({ name: "password" });
     } else if (message && !isMeProbe) {
-      ElMessage.error(message);
+      toast.error(message);
     }
     return Promise.reject(error);
   },

@@ -109,6 +109,7 @@ impl RequestExecutor for MockExecutor {
                 error: None,
                 response_bytes: Some(8),
                 request_id: Some(format!("r{index}")),
+                customer_name: None,
                 body: None,
             }
         })
@@ -120,6 +121,7 @@ fn plan() -> Arc<ExecutePlan> {
         products: vec![Weighted {
             weight: 1,
             value: ProductChoice {
+                request_key: "req-1".into(),
                 product_id: "P1".into(),
                 product_name: Some("pay".into()),
             },
@@ -350,6 +352,7 @@ async fn two_engines_do_not_share_metrics_or_queues() {
         products: vec![Weighted {
             weight: 1,
             value: ProductChoice {
+                request_key: "req-right".into(),
                 product_id: "RIGHT".into(),
                 product_name: None,
             },

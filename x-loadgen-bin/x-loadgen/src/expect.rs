@@ -1,14 +1,27 @@
 //! Business checks on the gateway success payload (`data`), not on the HTTP envelope.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FieldCheck {
     pub path: String,
     /// Absent means the path must exist and not be null.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eq: Option<Value>,
+}
+
+/// Per-rule evaluation result returned by single-request Probe (`POST /api/v1/probe`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DetailedCheckResult {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<Value>,
+    pub passed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 impl FieldCheck {
@@ -91,6 +104,37 @@ pub fn judge(
             Judge::Met
         }
     }
+}
+
+/// Evaluate every [`FieldCheck`] individually for Hoppscotch Probe assertion feedback.
+#[must_use]
+pub fn eval_checks_detailed(
+    data: Option<&Value>,
+    checks: &[FieldCheck],
+) -> Vec<DetailedCheckResult> {
+    let payload = data.unwrap_or(&Value::Null);
+    checks
+        .iter()
+        .map(|check| {
+            let actual = lookup(payload, &check.path).cloned();
+            match eval_check(payload, check) {
+                Ok(()) => DetailedCheckResult {
+                    path: check.path.clone(),
+                    expected: check.eq.clone(),
+                    actual,
+                    passed: true,
+                    message: None,
+                },
+                Err(msg) => DetailedCheckResult {
+                    path: check.path.clone(),
+                    expected: check.eq.clone(),
+                    actual,
+                    passed: false,
+                    message: Some(msg),
+                },
+            }
+        })
+        .collect()
 }
 
 fn eval_check(payload: &Value, check: &FieldCheck) -> Result<(), String> {

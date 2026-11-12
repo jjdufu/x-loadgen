@@ -78,43 +78,6 @@ async fn start_mock() -> (String, tokio::sync::oneshot::Sender<()>) {
     (format!("http://{addr}"), tx)
 }
 
-fn target_payload(gateway: &str) -> Value {
-    json!({
-        "name": "gw-sigint",
-        "gateway_base_url": gateway,
-        "insecure_skip_verify": true,
-        "tenants": [{
-            "name": "plain",
-            "weight": 1,
-            "api_key": "k",
-            "encryption_mode": "none"
-        }],
-        "products": [{
-            "name": "probe",
-            "product_id": "P001",
-            "path": "/ok",
-            "method": "GET",
-            "weight": 1
-        }]
-    })
-}
-
-fn once_template(target_id: &str) -> Value {
-    json!({
-        "name": "sigint-once",
-        "target_id": target_id,
-        "model": "open_loop",
-        "qps": 8,
-        "concurrency": 2,
-        "requests": 10_000,
-        "warmup_secs": 0,
-        "ramp_secs": 0,
-        "timeout_secs": 5,
-        "processes": 1,
-        "loop_enabled": false
-    })
-}
-
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .expect("bind ephemeral")
@@ -186,24 +149,27 @@ async fn sigint_stops_running_tasks_and_exits() {
     let http = client();
     wait_until_healthy(&http, &base, &log_path).await;
 
-    let (status, target) = post_json(
-        &http,
-        &format!("{base}/api/v1/targets"),
-        &target_payload(&mock),
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let (status, template) = post_json(
-        &http,
-        &format!("{base}/api/v1/templates"),
-        &once_template(target["id"].as_str().unwrap()),
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{template}");
     let (status, run) = post_json(
         &http,
         &format!("{base}/api/v1/runs"),
-        &json!({"template_id": template["id"], "mode": "once"}),
+        &json!({
+            "adhoc_request": {
+                "name": "sigint-probe",
+                "protocol": "http",
+                "method": "GET",
+                "endpoint": format!("{mock}/ok")
+            },
+            "model": "open_loop",
+            "qps": 8,
+            "concurrency": 2,
+            "requests": 10_000,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 1,
+            "loop_enabled": false,
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");

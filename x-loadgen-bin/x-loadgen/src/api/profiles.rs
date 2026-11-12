@@ -1,4 +1,4 @@
-//! HTTP handlers for load-test templates.
+//! HTTP handlers for reusable Load Profiles.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -7,68 +7,67 @@ use axum::response::{IntoResponse, Response};
 
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
-use crate::db::templates::{self, Template, TemplateInput};
+use crate::db::profiles::{self, LoadProfile, LoadProfileInput};
 
-/// `GET /api/v1/templates`
+/// `GET /api/v1/load-profiles`
 ///
 /// # Errors
 ///
 /// Returns 401/403 when unauthorized, or 500 on storage failure.
-pub async fn list_templates(
+pub async fn list_load_profiles(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Template>>, ApiError> {
+) -> Result<Json<Vec<LoadProfile>>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let db = state.lock_db()?;
-    Ok(Json(templates::list_templates(&db)?))
+    Ok(Json(profiles::list_load_profiles(&db)?))
 }
 
-/// `POST /api/v1/templates`
+/// `POST /api/v1/load-profiles`
 ///
 /// # Errors
 ///
-/// Returns 400 when the body is invalid or exceeds global caps, 409 on a name
-/// conflict, 401/403 when unauthorized, or 500 on storage failure.
-pub async fn create_template(
+/// Returns 400 when invalid or exceeding global caps, 409 on name conflict, 401/403 when unauthorized.
+pub async fn create_load_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(input): Json<TemplateInput>,
+    Json(input): Json<LoadProfileInput>,
 ) -> Result<Response, ApiError> {
     require_ready_auth(&state, &headers)?;
     let db = state.lock_db()?;
-    let template = templates::create_template(&db, &input, state.max_qps, state.max_concurrency)?;
-    Ok((StatusCode::CREATED, Json(template)).into_response())
+    let profile = profiles::create_load_profile(&db, &input, state.max_qps, state.max_concurrency)?;
+    Ok((StatusCode::CREATED, Json(profile)).into_response())
 }
 
-/// `GET /api/v1/templates/:id`
+/// `GET /api/v1/load-profiles/{id}`
 ///
 /// # Errors
 ///
 /// Returns 404 when missing, or 401/403 when unauthorized.
-pub async fn get_template(
+pub async fn get_load_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<Template>, ApiError> {
+) -> Result<Json<LoadProfile>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let db = state.lock_db()?;
-    Ok(Json(templates::get_template(&db, &id)?))
+    Ok(Json(profiles::get_load_profile(&db, &id)?))
 }
 
-/// `PUT /api/v1/templates/:id`
+/// `PUT /api/v1/load-profiles/{id}`
 ///
 /// # Errors
 ///
 /// Returns 400/404/409, 401/403, or 500 as appropriate.
-pub async fn update_template(
+pub async fn update_load_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(input): Json<TemplateInput>,
-) -> Result<Json<Template>, ApiError> {
+    Json(input): Json<LoadProfileInput>,
+) -> Result<Json<LoadProfile>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let db = state.lock_db()?;
-    Ok(Json(templates::update_template(
+    Ok(Json(profiles::update_load_profile(
         &db,
         &id,
         &input,
@@ -77,18 +76,18 @@ pub async fn update_template(
     )?))
 }
 
-/// `DELETE /api/v1/templates/:id`
+/// `DELETE /api/v1/load-profiles/{id}`
 ///
 /// # Errors
 ///
-/// Returns 409 when an unfinished run still references the template.
-pub async fn delete_template(
+/// Returns 409 if an active/interrupted run still references the profile, or 404 when missing.
+pub async fn delete_load_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     require_ready_auth(&state, &headers)?;
     let db = state.lock_db()?;
-    templates::delete_template(&db, &id)?;
+    profiles::delete_load_profile(&db, &id)?;
     Ok(StatusCode::NO_CONTENT)
 }

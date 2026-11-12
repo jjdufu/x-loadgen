@@ -1,12 +1,19 @@
 import { createApp } from "vue";
-import ElementPlus from "element-plus";
-import zhCn from "element-plus/es/locale/lang/zh-cn";
-import "element-plus/dist/index.css";
+import "@hoppscotch/ui/themes.css";
+import "./assets/themes/themes.scss";
+import "./assets/scss/tailwind.scss";
+import "./assets/scss/styles.scss";
+
 import App from "./App.vue";
 import router from "./router";
-import "./styles.css";
+import { initHoppscotchTheming } from "./modules/theming";
+import { registerHoppscotchTippy } from "./modules/tippy";
+import { registerHoppscotchUI } from "./modules/ui";
+
+initHoppscotchTheming();
 
 const app = createApp(App);
+registerHoppscotchTippy(app);
+registerHoppscotchUI(app);
 app.use(router);
-app.use(ElementPlus, { locale: zhCn });
 app.mount("#app");

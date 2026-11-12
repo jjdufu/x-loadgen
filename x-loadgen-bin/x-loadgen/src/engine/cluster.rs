@@ -15,7 +15,8 @@ use tracing::{info, warn};
 
 use crate::db::runs::{STATUS_INTERRUPTED, STATUS_STOPPED};
 use crate::db::{DataPaths, StoreError};
-use crate::engine::supervisor::{RunSnapshot, RunningTask, StopKind, Supervisor};
+use crate::engine::snapshot::RunSnapshot;
+use crate::engine::supervisor::{RunningTask, StopKind, Supervisor};
 
 /// Per-worker share of a *total* QPS or request budget.
 ///
@@ -312,19 +313,18 @@ fn write_pid_file(paths: &DataPaths, run_id: &str, index: u32, pid: u32) -> Resu
 
 /// Signal every remaining child and wait, first with TERM then KILL.
 pub fn stop_workers(workers: &mut SpawnedWorkers, timeout: Duration) {
-    if let Some(pgid) = workers.pgid {
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{pgid}")])
-            .status();
-    } else {
-        for child in &mut workers.children {
-            let _ = child.kill();
+    let _ = workers.pgid;
+    for child in &mut workers.children {
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = Command::new("kill")
+                .args(["-s", "TERM", &child.id().to_string()])
+                .status();
         }
     }
     let deadline = std::time::Instant::now() + timeout;
     for child in &mut workers.children {
         wait_child_until(child, deadline);
-        if child.try_wait().ok().and_then(|s| s).is_none() {
+        if child.try_wait().ok().flatten().is_none() {
             let _ = child.kill();
             let _ = child.wait();
         }

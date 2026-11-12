@@ -1,97 +1,85 @@
 <template>
-  <el-container class="layout">
-    <el-aside width="200px" class="aside">
-      <div class="brand">x-loadgen</div>
-      <el-menu :default-active="active" router>
-        <el-menu-item index="/targets">目标</el-menu-item>
-        <el-menu-item index="/templates">模板</el-menu-item>
-        <el-menu-item index="/runs">任务</el-menu-item>
-        <el-menu-item index="/settings">设置</el-menu-item>
-      </el-menu>
-    </el-aside>
-    <el-container>
-      <el-header class="header">
-        <span class="muted">{{ meta?.version ? `版本 ${meta.version}` : "" }}</span>
-        <el-button v-if="authRequired" text @click="logout">退出登录</el-button>
-      </el-header>
-      <el-main>
-        <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+  <div class="flex flex-col h-screen w-screen overflow-hidden bg-primary text-secondary">
+    <AppHeader />
+
+    <div class="flex flex-1 min-h-0 overflow-hidden">
+      <AppSidenav />
+      <main class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden bg-primary">
+        <RouterView />
+      </main>
+    </div>
+
+    <AppFooter />
+
+    <!-- Global Workspace Modals -->
+    <EnvironmentModal />
+    <SaveRequestModal />
+    <LoadRunnerModal />
+    <ImportCurlModal />
+    <ShortcutsModal />
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { http } from "../api/http";
-import type { MeResponse, MetaResponse } from "../api/types";
+import { onBeforeUnmount, onMounted } from "vue";
+import { useRoute } from "vue-router";
+import AppFooter from "./app/AppFooter.vue";
+import AppHeader from "./app/AppHeader.vue";
+import AppSidenav from "./app/AppSidenav.vue";
+import EnvironmentModal from "./modals/EnvironmentModal.vue";
+import ImportCurlModal from "./modals/ImportCurlModal.vue";
+import LoadRunnerModal from "./modals/LoadRunnerModal.vue";
+import SaveRequestModal from "./modals/SaveRequestModal.vue";
+import ShortcutsModal from "./modals/ShortcutsModal.vue";
+import {
+  addNewRequestTab,
+  bootstrapWorkspace,
+  refreshMeta,
+  saveActiveTab,
+  sendActiveTabProbe,
+  shortcutsModalOpen,
+} from "../stores/workspace";
 
 const route = useRoute();
-const router = useRouter();
-const meta = ref<MetaResponse | null>(null);
-const authRequired = ref(false);
-const active = computed(() => {
-  const path = route.path;
-  if (path.startsWith("/targets")) return "/targets";
-  if (path.startsWith("/templates")) return "/templates";
-  if (path.startsWith("/settings")) return "/settings";
-  return "/runs";
-});
+let metaTimer: number | null = null;
+
+function handleGlobalKeydown(e: KeyboardEvent): void {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === "/") {
+    e.preventDefault();
+    shortcutsModalOpen.value = !shortcutsModalOpen.value;
+    return;
+  }
+  if (route.name !== "workspace") return;
+
+  if (mod && e.key === "Enter") {
+    e.preventDefault();
+    void sendActiveTabProbe();
+  } else if (mod && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    void saveActiveTab();
+  } else if (e.altKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    addNewRequestTab("http");
+  } else if (e.altKey && e.key.toLowerCase() === "m") {
+    e.preventDefault();
+    addNewRequestTab("mazbri");
+  }
+}
 
 onMounted(async () => {
-  const me = await http.get<MeResponse>("/api/v1/auth/me");
-  authRequired.value = me.data.auth_required;
-  try {
-    const res = await http.get<MetaResponse>("/api/v1/meta");
-    meta.value = res.data;
-  } catch {
-    meta.value = null;
-  }
+  window.addEventListener("keydown", handleGlobalKeydown);
+  await bootstrapWorkspace();
+  metaTimer = window.setInterval(() => {
+    void refreshMeta();
+  }, 4000);
 });
 
-async function logout(): Promise<void> {
-  await http.post("/api/v1/auth/logout");
-  await router.push({ name: "login" });
-}
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleGlobalKeydown);
+  if (metaTimer !== null) {
+    window.clearInterval(metaTimer);
+    metaTimer = null;
+  }
+});
 </script>
-
-<style scoped>
-.layout {
-  height: 100%;
-}
-.aside {
-  background: #1d4ed8;
-  color: #fff;
-}
-.brand {
-  padding: 18px 16px 8px;
-  font-weight: 700;
-  font-size: 16px;
-}
-.aside :deep(.el-menu) {
-  border-right: none;
-  background: transparent;
-  color: #fff;
-}
-.aside :deep(.el-menu-item) {
-  color: #dbeafe;
-}
-.aside :deep(.el-menu-item.is-active),
-.aside :deep(.el-menu-item:hover) {
-  background: #1e40af;
-  color: #fff;
-}
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-}
-.muted {
-  color: #6b7280;
-  font-size: 13px;
-}
-</style>

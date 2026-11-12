@@ -1,12 +1,13 @@
-//! One-request execution: pick tenant/product, call the executor, classify.
+//! One-request execution: pick tenant/request, call the executor, classify.
 
 use crate::db::Sample;
 use crate::engine::metrics::OutcomeClass;
 use crate::engine::transport::{ExecOutcome, RequestCtx, RequestExecutor, Weighted, pick_weighted};
 
-/// Static description of a product used when recording a sample.
+/// Static description of a request item used when recording a sample.
 #[derive(Debug, Clone)]
 pub struct ProductChoice {
+    pub request_key: String,
     pub product_id: String,
     pub product_name: Option<String>,
 }
@@ -39,6 +40,7 @@ pub async fn execute_one(
     let product = pick_weighted(index, &plan.products)
         .cloned()
         .unwrap_or(ProductChoice {
+            request_key: "default".into(),
             product_id: "default".into(),
             product_name: None,
         });
@@ -46,6 +48,7 @@ pub async fn execute_one(
         .map(|tenant| tenant.name.clone());
     let ctx = RequestCtx {
         index,
+        request_key: product.request_key.clone(),
         product_id: product.product_id.clone(),
         product_name: product.product_name.clone(),
         tenant_name: tenant_name.clone(),
@@ -84,6 +87,7 @@ fn classify(
         class = OutcomeClass::Expected;
     }
     let success = matches!(class, OutcomeClass::Success);
+    let customer_name = outcome.customer_name.or(tenant_name);
     let sample = Sample {
         seq: None,
         start_unix_ms: outcome.start_unix_ms,
@@ -100,7 +104,7 @@ fn classify(
         request_id: outcome.request_id,
         error: outcome.error,
         response_bytes: outcome.response_bytes,
-        customer_name: tenant_name,
+        customer_name,
     };
     let _ = outcome.body;
     Executed { sample, class }

@@ -1,4 +1,6 @@
-//! HTTP tests for target and template CRUD.
+//! HTTP tests for Hoppscotch workspace catalog CRUD: Collections, Requests,
+//! Environments, Mazbri Tenant Pools, Load Profiles, and JSON Import/Export.
+#![allow(clippy::too_many_lines)]
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,7 +18,10 @@ const API_KEY_FULL: &str = "secret-api-key-omega";
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
 /// Base64 of `x-loadgen-binding-key` (HMAC request binding key).
 const BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
-const CLIENT_KEY: &str = "-----BEGIN SECRET KEY-----";
+const CLIENT_CERT: &str = "-----BEGIN CERTIFICATE-----\nTESTCERT\n-----END CERTIFICATE-----";
+const CLIENT_KEY: &str = "-----BEGIN PRIVATE KEY-----\nSECRETCLIENTKEY\n-----END PRIVATE KEY-----";
+const BEARER_SECRET: &str = "secret-bearer-token-xyz";
+const ENV_SECRET_VAL: &str = "secret-env-var-value-999";
 
 struct TempDir {
     path: PathBuf,
@@ -75,13 +80,24 @@ async fn body(response: reqwest::Response) -> Value {
     response.json::<Value>().await.expect("json")
 }
 
-fn target_payload() -> Value {
+fn env_payload() -> Value {
     json!({
         "name": "lab-gateway",
-        "protocol": "mazbri",
         "gateway_base_url": "https://10.0.0.8:8443",
-        "client_key": CLIENT_KEY,
-        "insecure_skip_verify": true,
+        "variables": [
+            {"key": "baseUrl", "value": "https://10.0.0.8:8443", "secret": false, "active": true},
+            {"key": "apiSecret", "value": ENV_SECRET_VAL, "secret": true, "active": true}
+        ],
+        "http_auth": {
+            "auth_type": "bearer",
+            "auth_active": true,
+            "token": BEARER_SECRET
+        },
+        "tls": {
+            "client_cert": CLIENT_CERT,
+            "client_key": CLIENT_KEY,
+            "insecure_skip_verify": true
+        },
         "note": "box lab",
         "tenants": [
             {
@@ -103,282 +119,19 @@ fn target_payload() -> Value {
                 "binding_alg": "hmac-sha256",
                 "binding_key": BINDING_KEY
             }
-        ],
-        "products": [
-            {
-                "name": "pay",
-                "product_id": "P001",
-                "path": "/v1/pay",
-                "method": "POST",
-                "weight": 3,
-                "body_json": {"amount": "{{seq}}"}
-            },
-            {
-                "name": "query",
-                "product_id": "P002",
-                "path": "/v1/query",
-                "method": "GET",
-                "weight": 1
-            }
         ]
     })
 }
 
-fn once_template(target_id: &str, product_ids: &[Value]) -> Value {
-    json!({
-        "name": "once-open",
-        "target_id": target_id,
-        "model": "open_loop",
-        "qps": 8,
-        "concurrency": 4,
-        "requests": 100,
-        "warmup_secs": 2,
-        "ramp_secs": 3,
-        "timeout_secs": 10,
-        "connect_timeout_secs": 5,
-        "token_refresh_skew_secs": 60,
-        "include_request_id": true,
-        "processes": 2,
-        "qps_mode": "total",
-        "requests_mode": "per_process",
-        "loop_enabled": false,
-        "product_ids": product_ids,
-        "detail_retain_days": 7,
-        "detail_retain_rows": 10_000,
-        "expected_reasons": ["ok"],
-        "note": "single window"
-    })
-}
-
-fn loop_template(target_id: &str) -> Value {
-    json!({
-        "name": "loop-closed",
-        "target_id": target_id,
-        "model": "closed_loop",
-        "concurrency": 6,
-        "duration_secs": 30,
-        "timeout_secs": 8,
-        "loop_enabled": true,
-        "loop_interval_secs": 15,
-        "processes": 1,
-        "note": "infinite loop"
-    })
-}
-
-async fn create_target(client: &reqwest::Client, base: &str) -> Value {
+async fn create_env(client: &reqwest::Client, base: &str) -> Value {
     let response = client
-        .post(format!("{base}/api/v1/targets"))
-        .json(&target_payload())
+        .post(format!("{base}/api/v1/environments"))
+        .json(&env_payload())
         .send()
         .await
-        .expect("create target");
+        .expect("create environment");
     assert_eq!(response.status(), reqwest::StatusCode::CREATED);
     body(response).await
-}
-
-#[tokio::test]
-async fn create_target_shows_secrets_in_detail_but_not_in_lists() {
-    let tmp = TempDir::new("target");
-    let (base, shutdown) = start(&tmp.path, true, None).await;
-    let client = client();
-    let detail = create_target(&client, &base).await;
-    assert_eq!(detail["name"], "lab-gateway");
-    assert_eq!(detail["protocol"], "mazbri");
-    assert_eq!(detail["client_key"], CLIENT_KEY);
-    let tenants = detail["tenants"].as_array().expect("tenants");
-    assert_eq!(tenants.len(), 2);
-    let encrypted = tenants
-        .iter()
-        .find(|tenant| tenant["name"] == "encrypted")
-        .expect("encrypted tenant");
-    assert_eq!(encrypted["api_key"], API_KEY_FULL);
-    assert_eq!(encrypted["tenant_key_base64"], TENANT_KEY);
-    assert_eq!(encrypted["binding_key"], BINDING_KEY);
-    assert_eq!(detail["products"].as_array().expect("products").len(), 2);
-
-    let list = body(
-        client
-            .get(format!("{base}/api/v1/targets"))
-            .send()
-            .await
-            .expect("list"),
-    )
-    .await;
-    let list_text = list.to_string();
-    for secret in [
-        API_KEY_NONE,
-        API_KEY_FULL,
-        TENANT_KEY,
-        BINDING_KEY,
-        CLIENT_KEY,
-    ] {
-        assert!(!list_text.contains(secret), "list leaked a secret field");
-    }
-    assert!(list[0].get("client_key").is_none());
-
-    let target_id = detail["id"].as_str().expect("id");
-    let tenant_list = body(
-        client
-            .get(format!("{base}/api/v1/targets/{target_id}/tenants"))
-            .send()
-            .await
-            .expect("tenant list"),
-    )
-    .await;
-    let tenant_text = tenant_list.to_string();
-    for secret in [API_KEY_NONE, API_KEY_FULL, TENANT_KEY, BINDING_KEY] {
-        assert!(!tenant_text.contains(secret), "tenant list leaked a secret");
-    }
-    let tid = encrypted["id"].as_str().expect("tid");
-    let one = body(
-        client
-            .get(format!("{base}/api/v1/targets/{target_id}/tenants/{tid}"))
-            .send()
-            .await
-            .expect("tenant detail"),
-    )
-    .await;
-    assert_eq!(one["api_key"], API_KEY_FULL);
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn templates_cover_once_and_loop_and_reject_illegal_combinations() {
-    let tmp = TempDir::new("tpl");
-    let (base, shutdown) = start(&tmp.path, true, None).await;
-    let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("tid").to_string();
-    let product_ids: Vec<Value> = target["products"]
-        .as_array()
-        .expect("products")
-        .iter()
-        .map(|p| json!(p["id"]))
-        .collect();
-    let product_pk = product_ids[0].as_str().expect("pid").to_string();
-
-    let once = client
-        .post(format!("{base}/api/v1/templates"))
-        .json(&once_template(&target_id, &product_ids))
-        .send()
-        .await
-        .expect("once");
-    assert_eq!(once.status(), reqwest::StatusCode::CREATED);
-    let once_body = body(once).await;
-    assert_eq!(once_body["loop_enabled"], false);
-    assert_eq!(once_body["requests"], 100);
-    assert_eq!(once_body["processes"], 2);
-    assert_eq!(once_body["detail_retain_days"], 7);
-
-    let mut loop_payload = loop_template(&target_id);
-    let mut overrides = serde_json::Map::new();
-    overrides.insert(product_pk.clone(), json!(5));
-    loop_payload["weight_overrides"] = Value::Object(overrides);
-    let looped = client
-        .post(format!("{base}/api/v1/templates"))
-        .json(&loop_payload)
-        .send()
-        .await
-        .expect("loop");
-    assert_eq!(looped.status(), reqwest::StatusCode::CREATED);
-    let loop_body = body(looped).await;
-    assert_eq!(loop_body["loop_enabled"], true);
-    assert!(loop_body["rounds"].is_null());
-    assert_eq!(loop_body["loop_interval_secs"], 15);
-    assert_eq!(loop_body["duration_secs"], 30);
-    assert_eq!(loop_body["weight_overrides"][&product_pk], 5);
-
-    let bad_both = client
-        .post(format!("{base}/api/v1/templates"))
-        .json(&json!({
-            "name": "bad-both",
-            "target_id": target_id,
-            "model": "open_loop",
-            "concurrency": 1,
-            "requests": 10,
-            "duration_secs": 10,
-            "timeout_secs": 5
-        }))
-        .send()
-        .await
-        .expect("both");
-    assert_eq!(bad_both.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let bad_url = client
-        .post(format!("{base}/api/v1/targets"))
-        .json(&json!({"name": "bad-url", "gateway_base_url": "ftp://example"}))
-        .send()
-        .await
-        .expect("url");
-    assert_eq!(bad_url.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let bad_enc = client
-        .post(format!("{base}/api/v1/targets/{target_id}/tenants"))
-        .json(&json!({
-            "name": "incomplete",
-            "api_key": "k",
-            "encryption_mode": "full"
-        }))
-        .send()
-        .await
-        .expect("enc");
-    assert_eq!(bad_enc.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let conflict = client
-        .delete(format!("{base}/api/v1/targets/{target_id}"))
-        .send()
-        .await
-        .expect("delete target");
-    assert_eq!(conflict.status(), reqwest::StatusCode::CONFLICT);
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn template_qps_above_global_cap_is_rejected() {
-    let tmp = TempDir::new("cap");
-    let (base, shutdown) = start(&tmp.path, true, Some(10)).await;
-    let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("id");
-    let response = client
-        .post(format!("{base}/api/v1/templates"))
-        .json(&json!({
-            "name": "too-fast",
-            "target_id": target_id,
-            "model": "open_loop",
-            "qps": 50,
-            "concurrency": 2,
-            "requests": 20,
-            "timeout_secs": 5
-        }))
-        .send()
-        .await
-        .expect("cap");
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-    let err = body(response).await;
-    assert_eq!(err["error"]["code"], "invalid_request");
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn unauthenticated_writes_and_detail_are_rejected() {
-    let tmp = TempDir::new("authz");
-    let (base, shutdown) = start(&tmp.path, false, None).await;
-    let client = client();
-    let write = client
-        .post(format!("{base}/api/v1/targets"))
-        .json(&target_payload())
-        .send()
-        .await
-        .expect("write");
-    assert_eq!(write.status(), reqwest::StatusCode::UNAUTHORIZED);
-    let detail = client
-        .get(format!("{base}/api/v1/targets/does-not-exist"))
-        .send()
-        .await
-        .expect("detail");
-    assert_eq!(detail.status(), reqwest::StatusCode::UNAUTHORIZED);
-    shutdown.send(()).ok();
 }
 
 async fn post_status(client: &reqwest::Client, url: &str, payload: &Value) -> reqwest::StatusCode {
@@ -392,13 +145,471 @@ async fn post_status(client: &reqwest::Client, url: &str, payload: &Value) -> re
 }
 
 #[tokio::test]
+async fn environments_preserve_global_and_redact_secrets_on_list_and_export() {
+    let tmp = TempDir::new("env");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+
+    // Built-in Global environment always exists and cannot be deleted.
+    let del_global = client
+        .delete(format!("{base}/api/v1/environments/global"))
+        .send()
+        .await
+        .expect("delete global");
+    assert_eq!(del_global.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let detail = create_env(&client, &base).await;
+    let env_id = detail["id"].as_str().expect("env id");
+    assert_eq!(detail["name"], "lab-gateway");
+    assert_eq!(detail["tls"]["client_key"], CLIENT_KEY);
+    assert_eq!(detail["http_auth"]["token"], BEARER_SECRET);
+    let tenants = detail["tenants"].as_array().expect("tenants");
+    assert_eq!(tenants.len(), 2);
+    let encrypted = tenants
+        .iter()
+        .find(|t| t["name"] == "encrypted")
+        .expect("encrypted tenant");
+    assert_eq!(encrypted["api_key"], API_KEY_FULL);
+    assert_eq!(encrypted["tenant_key_base64"], TENANT_KEY);
+    assert_eq!(encrypted["binding_key"], BINDING_KEY);
+
+    // Summary list must never expose secret fields.
+    let list = body(
+        client
+            .get(format!("{base}/api/v1/environments"))
+            .send()
+            .await
+            .expect("list envs"),
+    )
+    .await;
+    let list_arr = list.as_array().expect("env array");
+    assert!(
+        list_arr
+            .iter()
+            .any(|e| e["id"] == "global" && e["is_global"] == true)
+    );
+    let list_text = list.to_string();
+    for secret in [
+        API_KEY_NONE,
+        API_KEY_FULL,
+        TENANT_KEY,
+        BINDING_KEY,
+        CLIENT_KEY,
+        BEARER_SECRET,
+        ENV_SECRET_VAL,
+    ] {
+        assert!(!list_text.contains(secret), "summary list leaked {secret}");
+    }
+
+    // Export defaults to include_secrets=false and scrubs every secret.
+    let redacted_export = body(
+        client
+            .get(format!(
+                "{base}/api/v1/environments/export?environment_id={env_id}"
+            ))
+            .send()
+            .await
+            .expect("redacted export"),
+    )
+    .await;
+    let redacted_text = redacted_export.to_string();
+    for secret in [
+        API_KEY_NONE,
+        API_KEY_FULL,
+        TENANT_KEY,
+        BINDING_KEY,
+        CLIENT_KEY,
+        BEARER_SECRET,
+        ENV_SECRET_VAL,
+    ] {
+        assert!(
+            !redacted_text.contains(secret),
+            "default export leaked {secret}"
+        );
+    }
+
+    // Opt-in include_secrets=true preserves full credentials for secure backup.
+    let full_export = body(
+        client
+            .get(format!(
+                "{base}/api/v1/environments/export?environment_id={env_id}&include_secrets=true"
+            ))
+            .send()
+            .await
+            .expect("full export"),
+    )
+    .await;
+    let full_text = full_export.to_string();
+    assert!(full_text.contains(API_KEY_FULL));
+    assert!(full_text.contains(ENV_SECRET_VAL));
+
+    // Hoppscotch Environment JSON import works directly.
+    let imported = client
+        .post(format!("{base}/api/v1/environments/import"))
+        .json(&json!({
+            "name": "Hoppscotch Staging",
+            "variables": [
+                {"key": "baseUrl", "currentValue": "https://staging.example.com", "secret": false},
+                {"key": "token", "currentValue": "hopp-secret-123", "secret": true}
+            ]
+        }))
+        .send()
+        .await
+        .expect("import hoppscotch env");
+    assert_eq!(imported.status(), reqwest::StatusCode::CREATED);
+    let imported_body = body(imported).await;
+    assert_eq!(imported_body[0]["name"], "Hoppscotch Staging");
+
+    // Reject invalid URLs and mismatched mTLS cert/key pairs.
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/environments"),
+            &json!({"name": "bad-url", "gateway_base_url": "ftp://example"}),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/environments"),
+            &json!({
+                "name": "half-mtls",
+                "tls": {"client_key": CLIENT_KEY}
+            }),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn collections_folders_requests_and_hoppscotch_import_export_roundtrip() {
+    let tmp = TempDir::new("col");
+    let (base, shutdown) = start(&tmp.path, true, None).await;
+    let client = client();
+
+    // Root collection with auth + headers + variables.
+    let root_resp = client
+        .post(format!("{base}/api/v1/collections"))
+        .json(&json!({
+            "name": "Payment Gateway",
+            "default_protocol": "mazbri",
+            "auth": {"auth_type": "bearer", "auth_active": true, "token": BEARER_SECRET},
+            "headers": [{"key": "X-Trace-Source", "value": "hoppscotch-ui", "active": true}],
+            "variables": [{"key": "servicePrefix", "value": "/v1", "secret": false, "active": true}]
+        }))
+        .send()
+        .await
+        .expect("create root collection");
+    assert_eq!(root_resp.status(), reqwest::StatusCode::CREATED);
+    let root = body(root_resp).await;
+    let root_id = root["id"].as_str().expect("root id").to_string();
+
+    // Child folder.
+    let child_resp = client
+        .post(format!("{base}/api/v1/collections"))
+        .json(&json!({
+            "parent_id": root_id,
+            "name": "Orders"
+        }))
+        .send()
+        .await
+        .expect("create child folder");
+    assert_eq!(child_resp.status(), reqwest::StatusCode::CREATED);
+    let child = body(child_resp).await;
+    let child_id = child["id"].as_str().expect("child id").to_string();
+
+    // Cycle check: moving root under child must fail with 400.
+    let cycle = client
+        .put(format!("{base}/api/v1/collections/{root_id}"))
+        .json(&json!({
+            "parent_id": child_id,
+            "name": "Payment Gateway"
+        }))
+        .send()
+        .await
+        .expect("cycle update");
+    assert_eq!(cycle.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    // Create both an HTTP request and a Mazbri request inside the child folder.
+    let http_req = client
+        .post(format!("{base}/api/v1/requests"))
+        .json(&json!({
+            "collection_id": child_id,
+            "name": "Health Check",
+            "protocol": "http",
+            "method": "GET",
+            "endpoint": "<<baseUrl>><<servicePrefix>>/health",
+            "params": [{"key": "probe", "value": "1", "active": true}],
+            "weight": 2
+        }))
+        .send()
+        .await
+        .expect("create http request");
+    assert_eq!(http_req.status(), reqwest::StatusCode::CREATED);
+    let http_saved = body(http_req).await;
+    let http_id = http_saved["id"].as_str().expect("http id").to_string();
+
+    let mazbri_req = client
+        .post(format!("{base}/api/v1/requests"))
+        .json(&json!({
+            "collection_id": child_id,
+            "name": "Create Order",
+            "protocol": "mazbri",
+            "method": "POST",
+            "endpoint": "/v1/orders",
+            "body": {
+                "content_type": "application/json",
+                "body": "{\"order_no\":\"{{seq}}\"}"
+            },
+            "mazbri": {
+                "product_id": "P-ORDER-CREATE",
+                "tenant_source": "environment"
+            },
+            "assertions": {
+                "expect_transport": "ok",
+                "checks": [{"path": "code", "eq": 0}]
+            },
+            "weight": 5
+        }))
+        .send()
+        .await
+        .expect("create mazbri request");
+    assert_eq!(mazbri_req.status(), reqwest::StatusCode::CREATED);
+
+    // Reject unsupported protocol.
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/requests"),
+            &json!({
+                "collection_id": child_id,
+                "name": "Bad",
+                "protocol": "grpc",
+                "method": "POST",
+                "endpoint": "/x"
+            }),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+
+    // Tree listing contains nested folder & 2 requests.
+    let tree = body(
+        client
+            .get(format!("{base}/api/v1/collections"))
+            .send()
+            .await
+            .expect("tree"),
+    )
+    .await;
+    assert_eq!(
+        tree[0]["folders"][0]["requests"].as_array().map(Vec::len),
+        Some(2)
+    );
+
+    // Export redacts bearer token by default.
+    let exported = body(
+        client
+            .get(format!(
+                "{base}/api/v1/collections/export?collection_id={root_id}"
+            ))
+            .send()
+            .await
+            .expect("export col"),
+    )
+    .await;
+    assert!(!exported.to_string().contains(BEARER_SECRET));
+
+    // Import standard Hoppscotch v6 REST Collection JSON.
+    let hopp_import = client
+        .post(format!("{base}/api/v1/collections/import"))
+        .json(&json!({
+            "v": 6,
+            "name": "Hoppscotch Petstore",
+            "folders": [
+                {
+                    "v": 6,
+                    "name": "Pets",
+                    "folders": [],
+                    "requests": [
+                        {
+                            "v": "11",
+                            "name": "List Pets",
+                            "method": "GET",
+                            "endpoint": "<<baseUrl>>/pets",
+                            "params": [{"key": "limit", "value": "20", "active": true}],
+                            "headers": [],
+                            "auth": {"authType": "inherit", "authActive": true},
+                            "body": {"contentType": null, "body": null}
+                        }
+                    ]
+                }
+            ],
+            "requests": []
+        }))
+        .send()
+        .await
+        .expect("import hoppscotch collection");
+    assert_eq!(hopp_import.status(), reqwest::StatusCode::CREATED);
+    let imported_nodes = body(hopp_import).await;
+    assert_eq!(imported_nodes[0]["name"], "Hoppscotch Petstore");
+    assert_eq!(
+        imported_nodes[0]["folders"][0]["requests"][0]["name"],
+        "List Pets"
+    );
+
+    // Cascade delete removes nested folders and saved requests.
+    let del = client
+        .delete(format!("{base}/api/v1/collections/{root_id}"))
+        .send()
+        .await
+        .expect("delete root");
+    assert_eq!(del.status(), reqwest::StatusCode::NO_CONTENT);
+    let gone = client
+        .get(format!("{base}/api/v1/requests/{http_id}"))
+        .send()
+        .await
+        .expect("get deleted request");
+    assert_eq!(gone.status(), reqwest::StatusCode::NOT_FOUND);
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn load_profiles_cover_once_and_loop_and_enforce_caps() {
+    let tmp = TempDir::new("profiles");
+    let (base, shutdown) = start(&tmp.path, true, Some(25)).await;
+    let client = client();
+
+    let once = client
+        .post(format!("{base}/api/v1/load-profiles"))
+        .json(&json!({
+            "name": "once-open",
+            "model": "open_loop",
+            "qps": 12,
+            "concurrency": 4,
+            "requests": 100,
+            "warmup_secs": 2,
+            "ramp_secs": 3,
+            "timeout_secs": 10,
+            "connect_timeout_secs": 5,
+            "token_refresh_skew_secs": 60,
+            "include_request_id": true,
+            "processes": 2,
+            "qps_mode": "total",
+            "requests_mode": "per_process",
+            "loop_enabled": false,
+            "detail_retain_days": 7,
+            "detail_retain_rows": 10_000,
+            "expected_reasons": ["ok"],
+            "note": "single window"
+        }))
+        .send()
+        .await
+        .expect("create once profile");
+    assert_eq!(once.status(), reqwest::StatusCode::CREATED);
+    let once_body = body(once).await;
+    assert_eq!(once_body["loop_enabled"], false);
+    assert_eq!(once_body["requests"], 100);
+    assert_eq!(once_body["processes"], 2);
+
+    let looped = client
+        .post(format!("{base}/api/v1/load-profiles"))
+        .json(&json!({
+            "name": "loop-closed",
+            "model": "closed_loop",
+            "concurrency": 6,
+            "duration_secs": 30,
+            "timeout_secs": 8,
+            "loop_enabled": true,
+            "loop_interval_secs": 15,
+            "processes": 1,
+            "assert": {"p99_ms": 500.0, "max_error_rate": 0.05}
+        }))
+        .send()
+        .await
+        .expect("create loop profile");
+    assert_eq!(looped.status(), reqwest::StatusCode::CREATED);
+    let loop_body = body(looped).await;
+    assert_eq!(loop_body["loop_enabled"], true);
+    assert!(loop_body["rounds"].is_null());
+    assert_eq!(loop_body["loop_interval_secs"], 15);
+    assert_eq!(loop_body["duration_secs"], 30);
+
+    // Reject mutually exclusive requests + duration_secs.
+    assert_eq!(
+        post_status(
+            &client,
+            &format!("{base}/api/v1/load-profiles"),
+            &json!({
+                "name": "bad-both",
+                "model": "open_loop",
+                "qps": 5,
+                "concurrency": 1,
+                "requests": 10,
+                "duration_secs": 10,
+                "timeout_secs": 5
+            }),
+        )
+        .await,
+        reqwest::StatusCode::BAD_REQUEST
+    );
+
+    // Reject QPS above global cap (25).
+    let over_cap = client
+        .post(format!("{base}/api/v1/load-profiles"))
+        .json(&json!({
+            "name": "too-fast",
+            "model": "open_loop",
+            "qps": 50,
+            "concurrency": 2,
+            "requests": 20,
+            "timeout_secs": 5
+        }))
+        .send()
+        .await
+        .expect("over cap");
+    assert_eq!(over_cap.status(), reqwest::StatusCode::BAD_REQUEST);
+    let err = body(over_cap).await;
+    assert_eq!(err["error"]["code"], "invalid_request");
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn unauthenticated_writes_and_detail_are_rejected() {
+    let tmp = TempDir::new("authz");
+    let (base, shutdown) = start(&tmp.path, false, None).await;
+    let client = client();
+    let write = client
+        .post(format!("{base}/api/v1/environments"))
+        .json(&env_payload())
+        .send()
+        .await
+        .expect("write");
+    assert_eq!(write.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let detail = client
+        .get(format!("{base}/api/v1/collections"))
+        .send()
+        .await
+        .expect("collections");
+    assert_eq!(detail.status(), reqwest::StatusCode::UNAUTHORIZED);
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
 async fn mazbri_tenants_are_validated_against_the_client_contract() {
     let tmp = TempDir::new("validate");
     let (base, shutdown) = start(&tmp.path, true, None).await;
     let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("id");
-    let url = format!("{base}/api/v1/targets/{target_id}/tenants");
+    let env = create_env(&client, &base).await;
+    let env_id = env["id"].as_str().expect("id");
+    let url = format!("{base}/api/v1/environments/{env_id}/tenants");
     let tenant = |extra: Value| {
         let mut value = json!({
             "name": "t",
@@ -455,20 +666,20 @@ async fn mazbri_tenants_are_validated_against_the_client_contract() {
 }
 
 #[tokio::test]
-async fn binding_keypair_is_stored_on_the_tenant_and_only_the_public_key_is_returned() {
+async fn binding_keypair_endpoints_support_environment_and_stateless_modes() {
     let tmp = TempDir::new("keypair");
     let (base, shutdown) = start(&tmp.path, true, None).await;
     let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("id");
-    let tenant = target["tenants"]
+    let env = create_env(&client, &base).await;
+    let env_id = env["id"].as_str().expect("id");
+    let tenant = env["tenants"]
         .as_array()
         .expect("tenants")
         .iter()
-        .find(|tenant| tenant["name"] == "encrypted")
+        .find(|t| t["name"] == "encrypted")
         .expect("encrypted");
     let tid = tenant["id"].as_str().expect("tid");
-    let url = format!("{base}/api/v1/targets/{target_id}/tenants/{tid}/binding-keypair");
+    let url = format!("{base}/api/v1/environments/{env_id}/tenants/{tid}/binding-keypair");
 
     assert_eq!(
         post_status(&client, &url, &json!({"alg": "hmac-sha256"})).await,
@@ -489,7 +700,7 @@ async fn binding_keypair_is_stored_on_the_tenant_and_only_the_public_key_is_retu
         let text = response.text().await.expect("text");
         assert!(
             !text.contains("PRIVATE KEY"),
-            "keypair response leaked a private key"
+            "tenant keypair response must not leak private key"
         );
         let generated: Value = serde_json::from_str(&text).expect("json");
         assert_eq!(generated["binding_alg"], alg);
@@ -499,7 +710,7 @@ async fn binding_keypair_is_stored_on_the_tenant_and_only_the_public_key_is_retu
 
         let stored = body(
             client
-                .get(format!("{base}/api/v1/targets/{target_id}/tenants/{tid}"))
+                .get(format!("{base}/api/v1/environments/{env_id}/tenants/{tid}"))
                 .send()
                 .await
                 .expect("tenant"),
@@ -514,139 +725,22 @@ async fn binding_keypair_is_stored_on_the_tenant_and_only_the_public_key_is_retu
         );
     }
 
-    let listed = body(
+    // Re-saving the environment preserves tenant IDs and generated public keys.
+    assert_eq!(
+        post_status(&client, &url, &json!({"alg": "rsa-pkcs1v15-sign-sha256"}),).await,
+        reqwest::StatusCode::OK
+    );
+    let current_detail = body(
         client
-            .get(format!("{base}/api/v1/targets/{target_id}/tenants"))
-            .send()
-            .await
-            .expect("list"),
-    )
-    .await;
-    let listed_text = listed.to_string();
-    assert!(!listed_text.contains("PRIVATE KEY"));
-    assert!(listed_text.contains("BEGIN PUBLIC KEY"));
-
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn http_targets_only_take_plaintext_tenants() {
-    let tmp = TempDir::new("http");
-    let (base, shutdown) = start(&tmp.path, true, None).await;
-    let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("id");
-    let http_target = client
-        .post(format!("{base}/api/v1/targets"))
-        .json(&json!({
-            "name": "plain-http",
-            "gateway_base_url": "http://127.0.0.1:9",
-            "tenants": [{"name": "anon"}]
-        }))
-        .send()
-        .await
-        .expect("http target");
-    assert_eq!(http_target.status(), reqwest::StatusCode::CREATED);
-    let http_detail = body(http_target).await;
-    assert_eq!(http_detail["protocol"], "http");
-    let http_id = http_detail["id"].as_str().expect("id");
-    assert_eq!(
-        post_status(
-            &client,
-            &format!("{base}/api/v1/targets/{http_id}/tenants"),
-            &json!({
-                "name": "sealed",
-                "api_key": "k",
-                "encryption_mode": "full",
-                "suite": "suite/tenant-chacha20"
-            }),
-        )
-        .await,
-        reqwest::StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        post_status(
-            &client,
-            &format!("{base}/api/v1/targets"),
-            &json!({"name": "odd", "protocol": "grpc", "gateway_base_url": "http://h"}),
-        )
-        .await,
-        reqwest::StatusCode::BAD_REQUEST
-    );
-
-    let mut to_http = target.clone();
-    to_http["protocol"] = json!("http");
-    to_http.as_object_mut().expect("object").remove("tenants");
-    to_http.as_object_mut().expect("object").remove("products");
-    let switched = client
-        .put(format!("{base}/api/v1/targets/{target_id}"))
-        .json(&to_http)
-        .send()
-        .await
-        .expect("switch protocol");
-    assert_eq!(switched.status(), reqwest::StatusCode::BAD_REQUEST);
-    let keyed_target = body(
-        client
-            .post(format!("{base}/api/v1/targets"))
-            .json(&json!({
-                "name": "keyed-http",
-                "gateway_base_url": "http://127.0.0.1:9",
-                "tenants": [{"name": "anon", "api_key": "k"}]
-            }))
-            .send()
-            .await
-            .expect("http target"),
-    )
-    .await;
-    let keyed_id = keyed_target["id"].as_str().expect("id");
-    let keyed_tenant = keyed_target["tenants"][0]["id"].as_str().expect("tid");
-    assert_eq!(
-        post_status(
-            &client,
-            &format!("{base}/api/v1/targets/{keyed_id}/tenants/{keyed_tenant}/binding-keypair"),
-            &json!({"alg": "ed25519", "kid": "k"}),
-        )
-        .await,
-        reqwest::StatusCode::BAD_REQUEST
-    );
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn resaving_a_target_keeps_tenant_ids_and_generated_public_keys() {
-    let tmp = TempDir::new("resave");
-    let (base, shutdown) = start(&tmp.path, true, None).await;
-    let client = client();
-    let target = create_target(&client, &base).await;
-    let target_id = target["id"].as_str().expect("id");
-    let tid = target["tenants"]
-        .as_array()
-        .expect("tenants")
-        .iter()
-        .find(|tenant| tenant["name"] == "encrypted")
-        .and_then(|tenant| tenant["id"].as_str())
-        .expect("tid");
-    assert_eq!(
-        post_status(
-            &client,
-            &format!("{base}/api/v1/targets/{target_id}/tenants/{tid}/binding-keypair"),
-            &json!({"alg": "rsa-pkcs1v15-sign-sha256"}),
-        )
-        .await,
-        reqwest::StatusCode::OK,
-        "kid falls back to the tenant's binding_kid"
-    );
-    let detail = body(
-        client
-            .get(format!("{base}/api/v1/targets/{target_id}"))
+            .get(format!("{base}/api/v1/environments/{env_id}"))
             .send()
             .await
             .expect("detail"),
     )
     .await;
     let saved = client
-        .put(format!("{base}/api/v1/targets/{target_id}"))
-        .json(&detail)
+        .put(format!("{base}/api/v1/environments/{env_id}"))
+        .json(&current_detail)
         .send()
         .await
         .expect("resave");
@@ -656,22 +750,43 @@ async fn resaving_a_target_keeps_tenant_ids_and_generated_public_keys() {
         .as_array()
         .expect("tenants")
         .iter()
-        .find(|tenant| tenant["name"] == "encrypted")
+        .find(|t| t["name"] == "encrypted")
         .expect("encrypted");
-    assert_eq!(kept["id"], tid, "re-saving the form keeps tenant ids");
+    assert_eq!(kept["id"], tid);
     assert!(kept["binding_public_key"].is_string());
 
+    // Switching back to symmetric HMAC clears binding_public_key.
     let mut changed = kept.clone();
     changed["binding_alg"] = json!("hmac-sha256");
     changed["binding_key"] = json!(BINDING_KEY);
     let updated = client
-        .put(format!("{base}/api/v1/targets/{target_id}/tenants/{tid}"))
+        .put(format!("{base}/api/v1/environments/{env_id}/tenants/{tid}"))
         .json(&changed)
         .send()
         .await
         .expect("switch to hmac");
     assert_eq!(updated.status(), reqwest::StatusCode::OK);
     assert!(body(updated).await["binding_public_key"].is_null());
+
+    // Stateless keypair helper returns both PEMs for inline ad-hoc Mazbri requests.
+    let inline_kp = client
+        .post(format!("{base}/api/v1/crypto/binding-keypair"))
+        .json(&json!({"alg": "ed25519", "kid": "inline-kid"}))
+        .send()
+        .await
+        .expect("stateless keypair");
+    assert_eq!(inline_kp.status(), reqwest::StatusCode::OK);
+    let kp_json = body(inline_kp).await;
+    assert!(
+        kp_json["private_key_pem"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("-----BEGIN PRIVATE KEY-----"))
+    );
+    assert!(
+        kp_json["public_key_pem"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("-----BEGIN PUBLIC KEY-----"))
+    );
 
     shutdown.send(()).ok();
 }

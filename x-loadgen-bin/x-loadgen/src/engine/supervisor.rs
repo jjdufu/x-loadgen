@@ -6,24 +6,23 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::db::runs::{
     NewRun, RunRecord, STATUS_FAILED, STATUS_FINISHED, STATUS_INTERRUPTED, STATUS_RUNNING,
     STATUS_STOPPED, STATUS_STOPPING, append_interrupt_range, append_timeline, get_run, insert_run,
-    last_window_index, latest_worker_checkpoint, list_runs, reopen_for_resume, set_current_traffic,
-    set_status, set_stop_flag,
+    last_window_index, latest_worker_checkpoint, list_runs, list_windows, reopen_for_resume,
+    set_current_traffic, set_status, set_stop_flag,
 };
-use crate::db::targets::{self, Product, TargetDetail};
-use crate::db::templates::{self, Template};
 use crate::db::{
     CheckpointUpdate, DataPaths, DetailWriter, StoreError, WriterConfig, import_pending_dir,
-    open_worker_connection,
+    open_existing_worker, open_worker_connection,
 };
+use crate::engine::cluster::merge_percentiles;
 use crate::engine::limits::{self, TrafficShare};
 use crate::engine::metrics::{CounterSnapshot, Metrics, unix_now_ms};
+use crate::engine::snapshot::{RunSnapshot, compile_run_snapshot};
 use crate::engine::windows::{WindowRecord, write_window};
 use crate::engine::{
     EngineConfig, EngineHandle, EngineModel, ExecutePlan, HttpExecutor, LiveTraffic, ProductChoice,
@@ -53,17 +52,6 @@ pub enum StopKind {
     User,
     /// SIGINT / SIGTERM / process shutdown.
     Signal,
-}
-
-/// Snapshot of the target and template frozen at start (includes credentials).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunSnapshot {
-    pub target: TargetDetail,
-    pub template: Template,
-    /// Assertion thresholds frozen at start. Absent on runs created before
-    /// this field existed, and when the caller did not supply an `assert`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assert: Option<crate::run_assert::AssertSpec>,
 }
 
 /// In-memory handle for a run the supervisor is currently driving.
@@ -216,55 +204,50 @@ impl Supervisor {
             .collect()
     }
 
-    /// Start a new run from a template and immediately spawn its driver.
+    /// Start a new run from a saved request, collection, or ad-hoc draft and spawn its driver.
     ///
     /// # Errors
     ///
-    /// Returns a validation, conflict, or storage error. Already-running tasks
-    /// are not a conflict.
+    /// Returns a validation, conflict, or storage error.
     pub fn start_new(
         &self,
         request: &crate::db::runs::CreateRunRequest,
     ) -> Result<RunRecord, StoreError> {
         let (record, snapshot) = {
             let conn = self.lock_db();
-            let key = request.template_key()?;
-            let mut template = templates::get_template_by_id_or_name(&conn, key)?;
-            request.apply_to(&mut template)?;
-            templates::validate_effective(&conn, &template, self.max_qps, self.max_concurrency)?;
-            let assert = request.assert_spec();
-            if let Some(spec) = &assert {
-                spec.validate()?;
-                if spec.min_qps_ratio.is_some() && template.qps.is_none() {
-                    return Err(StoreError::invalid(
-                        "min_qps_ratio requires a configured qps",
-                    ));
-                }
-            }
-            let target = targets::get_target(&conn, &template.target_id)?;
-            let mode = resolve_mode(request.mode.as_deref(), template.loop_enabled)?;
-            let qps = opt_u64(template.qps);
-            let concurrency = as_u64(template.concurrency).max(1);
+            let snapshot =
+                compile_run_snapshot(&conn, request, self.max_qps, self.max_concurrency)?;
+            // Pre-validate that HttpExecutor can construct TLS/Mazbri sessions cleanly before inserting.
+            let _ = HttpExecutor::from_snapshot(&snapshot.target, &snapshot.template).map_err(
+                |err| StoreError::invalid(format!("invalid request/tenant config: {err}")),
+            )?;
+
+            let mode = resolve_mode(request.mode.as_deref(), snapshot.template.loop_enabled)?;
+            let eff_qps = opt_u64(snapshot.template.effective_total_qps());
+            let eff_conc = as_u64(snapshot.template.effective_total_concurrency()).max(1);
             limits::check_caps(
                 &self.running_shares(None),
-                TrafficShare { qps, concurrency },
+                TrafficShare {
+                    qps: eff_qps,
+                    concurrency: eff_conc,
+                },
                 self.max_qps,
                 self.max_concurrency,
             )?;
-            let template_id = template.id.clone();
-            let snapshot = RunSnapshot {
-                target,
-                template,
-                assert,
-            };
+
+            let profile_id = snapshot
+                .source
+                .load_profile_id
+                .clone()
+                .unwrap_or_else(|| "adhoc".to_string());
             let snapshot_json = serde_json::to_string(&snapshot)?;
-            let qps_i = i64::try_from(qps).ok();
-            let concurrency_i = i64::try_from(concurrency).unwrap_or(i64::MAX);
+            let qps_i = snapshot.template.qps;
+            let concurrency_i = snapshot.template.concurrency.max(1);
             let processes = snapshot.template.processes.max(1);
             let record = insert_run(
                 &conn,
                 &NewRun {
-                    template_id: &template_id,
+                    template_id: &profile_id,
                     target_id: &snapshot.target.id,
                     mode,
                     processes,
@@ -283,7 +266,7 @@ impl Supervisor {
     ///
     /// # Errors
     ///
-    /// Returns conflict when the run is `finished` or `failed`,  or a
+    /// Returns conflict when the run is `finished` or `failed`, or a
     /// validation error when the caps would be exceeded.
     pub fn resume(&self, id: &str) -> Result<RunRecord, StoreError> {
         let (record, snapshot, ended_at) = {
@@ -483,8 +466,8 @@ impl Supervisor {
                 .unwrap_or_else(|_| Metrics::new(2).expect("fallback histogram")),
         );
         let cancel = CancellationToken::new();
-        let qps = opt_u64(snapshot.template.qps);
-        let concurrency = as_u64(snapshot.template.concurrency).max(1);
+        let qps = opt_u64(snapshot.template.effective_total_qps());
+        let concurrency = as_u64(snapshot.template.effective_total_concurrency()).max(1);
         let traffic = Arc::new(LiveTraffic {
             qps: AtomicU64::new(qps),
             concurrency: AtomicU64::new(concurrency),
@@ -510,12 +493,123 @@ impl Supervisor {
                 Arc::clone(&task),
             )
             .await;
+            supervisor.consolidate_cluster_checkpoints(&run_id, processes);
             let status = task
                 .cluster_status()
                 .unwrap_or_else(|| STATUS_FINISHED.to_string());
             let error = result.err().map(|err| err.to_string());
             supervisor.finish_run(&run_id, &status, error.as_deref());
         });
+    }
+
+    /// Copy latest worker checkpoints from `wNN.sqlite` into central `run_checkpoints`
+    /// and synthesize a summary `run_windows` row so multiprocess reports, verdicts,
+    /// and post-completion stats match single-process runs.
+    fn consolidate_cluster_checkpoints(&self, run_id: &str, processes: u32) {
+        let mut total_samples = 0_i64;
+        let mut total_success = 0_i64;
+        let mut total_failure = 0_i64;
+        let mut total_expected = 0_i64;
+        let mut total_dropped = 0_i64;
+        let mut total_bytes = 0_i64;
+        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        let mut checkpoints = Vec::new();
+
+        for idx in 0..processes {
+            let Ok(Some(wconn)) = open_existing_worker(&self.paths, run_id, idx, true) else {
+                continue;
+            };
+            if let Ok(Some(cp)) = latest_worker_checkpoint(&wconn) {
+                if let Ok(cnt) = serde_json::from_str::<CounterSnapshot>(&cp.counters_json) {
+                    total_samples =
+                        total_samples.saturating_add(i64::try_from(cnt.samples).unwrap_or(0));
+                    total_success =
+                        total_success.saturating_add(i64::try_from(cnt.success).unwrap_or(0));
+                    total_failure =
+                        total_failure.saturating_add(i64::try_from(cnt.failure).unwrap_or(0));
+                    total_expected =
+                        total_expected.saturating_add(i64::try_from(cnt.expected).unwrap_or(0));
+                    total_dropped = total_dropped
+                        .saturating_add(i64::try_from(cnt.dropped_details).unwrap_or(0));
+                    total_bytes = total_bytes.saturating_add(i64::try_from(cnt.bytes).unwrap_or(0));
+                }
+                if let Some(blob) = cp.histogram_blob.as_ref().filter(|b| !b.is_empty()) {
+                    blobs.push(blob.clone());
+                }
+                checkpoints.push((idx, cp));
+            }
+        }
+
+        if checkpoints.is_empty() {
+            return;
+        }
+
+        let (p50, p95, p99, max) =
+            merge_percentiles(&blobs, 60_000_000).unwrap_or((None, None, None, None));
+
+        let conn = self.lock_db();
+        for (idx, cp) in checkpoints {
+            let _ = conn.execute(
+                "INSERT INTO run_checkpoints (run_id, worker_index, ts, window_index, counters_json, histogram_blob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(run_id, worker_index, ts) DO UPDATE SET
+                    window_index = excluded.window_index,
+                    counters_json = excluded.counters_json,
+                    histogram_blob = excluded.histogram_blob",
+                rusqlite::params![
+                    run_id,
+                    i64::from(idx),
+                    cp.ts,
+                    cp.window_index,
+                    cp.counters_json,
+                    cp.histogram_blob
+                ],
+            );
+        }
+
+        let existing_windows = list_windows(&conn, run_id).unwrap_or_default();
+        if existing_windows.is_empty() {
+            let now = unix_now_ms();
+            let started_at = get_run(&conn, run_id)
+                .ok()
+                .and_then(|r| r.started_at)
+                .unwrap_or(now);
+            let next_idx = next_window_index(&conn, run_id).unwrap_or(0);
+            let _ = conn.execute(
+                "INSERT INTO run_windows (
+                    run_id, window_index, started_at, ended_at, samples, success, failure,
+                    expected, dropped_details, p50_us, p95_us, p99_us, max_us, bytes
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 ON CONFLICT(run_id, window_index) DO UPDATE SET
+                    ended_at = excluded.ended_at,
+                    samples = excluded.samples,
+                    success = excluded.success,
+                    failure = excluded.failure,
+                    expected = excluded.expected,
+                    dropped_details = excluded.dropped_details,
+                    p50_us = excluded.p50_us,
+                    p95_us = excluded.p95_us,
+                    p99_us = excluded.p99_us,
+                    max_us = excluded.max_us,
+                    bytes = excluded.bytes",
+                rusqlite::params![
+                    run_id,
+                    next_idx,
+                    started_at,
+                    now,
+                    total_samples,
+                    total_success,
+                    total_failure,
+                    total_expected,
+                    total_dropped,
+                    p50.and_then(|v| i64::try_from(v).ok()),
+                    p95.and_then(|v| i64::try_from(v).ok()),
+                    p99.and_then(|v| i64::try_from(v).ok()),
+                    max.and_then(|v| i64::try_from(v).ok()),
+                    total_bytes,
+                ],
+            );
+        }
     }
 
     fn spawn_driver(&self, run_id: String, snapshot: RunSnapshot, resume: bool) {
@@ -559,7 +653,7 @@ impl Supervisor {
     ) -> Result<String, StoreError> {
         let executor = HttpExecutor::from_snapshot(&snapshot.target, &snapshot.template)
             .map_err(|err| StoreError::invalid(format!("cannot build HTTP executor: {err}")))?;
-        let plan = Arc::new(build_plan(snapshot));
+        let plan = Arc::new(build_plan_from_snapshot(snapshot));
         let timeout_us = secs_to_micros(snapshot.template.timeout_secs);
         let metrics = Arc::new(
             Metrics::new(timeout_us)
@@ -610,7 +704,6 @@ impl Supervisor {
         let checkpoint_cancel = cancel.clone();
         let checkpoint_metrics = Arc::clone(&metrics);
         let checkpoint_task = Arc::clone(&task);
-        // The writer is moved into the checkpoint loop's close path via a slot.
         let writer = Arc::new(Mutex::new(Some(writer)));
         let writer_for_cp = Arc::clone(&writer);
         let run_id_cp = run_id.to_string();
@@ -837,18 +930,20 @@ fn delta(after: u64, before: u64) -> i64 {
     i64::try_from(after.saturating_sub(before)).unwrap_or(i64::MAX)
 }
 
-fn build_plan(snapshot: &RunSnapshot) -> ExecutePlan {
-    let products = select_products(&snapshot.target, &snapshot.template)
-        .into_iter()
-        .map(|product| {
-            let weight = override_weight(&snapshot.template, &product.id, product.weight);
-            Weighted {
-                weight,
-                value: ProductChoice {
-                    product_id: product.product_id.clone(),
-                    product_name: Some(product.name.clone()),
-                },
-            }
+/// Build an [`ExecutePlan`] from a [`RunSnapshot`] (shared by single-process and worker processes).
+#[must_use]
+pub fn build_plan_from_snapshot(snapshot: &RunSnapshot) -> ExecutePlan {
+    let products = snapshot
+        .target
+        .requests
+        .iter()
+        .map(|req| Weighted {
+            weight: as_u64(req.weight).max(1),
+            value: ProductChoice {
+                request_key: req.id.clone(),
+                product_id: req.sample_product_id(),
+                product_name: Some(req.name.clone()),
+            },
         })
         .collect();
     let tenants = snapshot
@@ -858,39 +953,15 @@ fn build_plan(snapshot: &RunSnapshot) -> ExecutePlan {
         .map(|tenant| Weighted {
             weight: as_u64(tenant.weight).max(1),
             value: TenantChoice {
-                name: tenant.name.clone(),
+                name: tenant.name.trim().to_string(),
             },
         })
         .collect();
     ExecutePlan {
         products,
         tenants,
-        expected_reasons: snapshot
-            .template
-            .expected_reasons
-            .clone()
-            .unwrap_or_default(),
+        expected_reasons: snapshot.template.expected_reasons.clone(),
     }
-}
-
-fn select_products<'a>(target: &'a TargetDetail, template: &Template) -> Vec<&'a Product> {
-    match template.product_ids.as_ref() {
-        Some(ids) if !ids.is_empty() => target
-            .products
-            .iter()
-            .filter(|product| ids.iter().any(|id| id == &product.id))
-            .collect(),
-        _ => target.products.iter().collect(),
-    }
-}
-
-fn override_weight(template: &Template, product_row_id: &str, default: i64) -> u64 {
-    let overridden = template
-        .weight_overrides
-        .as_ref()
-        .and_then(|map| map.get(product_row_id).copied())
-        .unwrap_or(default);
-    as_u64(overridden).max(1)
 }
 
 fn window_config(
@@ -941,9 +1012,6 @@ fn restore_resume(paths: &DataPaths, run_id: &str, metrics: &Metrics) -> Result<
         }
     }
     drop(conn);
-    // Next window is the first one that has not yet been fully written.
-    // The central database is not opened here; the driver starts at 0 and the
-    // caller overwrites this with last_window_index + 1 when available.
     Ok(0)
 }
 

@@ -1,6 +1,6 @@
 # x-loadgen
 
-网关压测工具。通过 Web 页面或 HTTP API 配置目标与模板并执行任务。命令行只提供基础功能，不能用来发起压测。
+Hoppscotch 风格的双协议（通用 `http` + `mazbri` 网关）API 调试与压测工作台。通过 Web 页面或 HTTP API 配置集合（Collections）、请求（Requests）、环境与租户密钥池（Environments）及压测预设（Load Profiles），支持单次交互调试（`Send`）与多接口加权压测任务（`Load Test`）。命令行只提供服务启动与基础管理功能，不能直接发起压测。
 
 仓库：<https://github.com/jjdufu/x-loadgen>。自包含的独立项目，不依赖仓库外的任何路径。
 
@@ -8,11 +8,11 @@
 - 镜像：Docker Hub `dex2all/x-loadgen:<版本>`（linux/amd64 + linux/arm64），也可以在本地用仓库根 `Dockerfile` 构建
 - 布局：Cargo workspace
   - `x-loadgen-bin/x-loadgen`：守护进程与库，二进制名 `x-loadgen`
-  - `x-loadgen-bin/x-loadgen-mockgw`：基于 `x-loadgen-core` 的 mock mazbri 网关，供测试与端到端联调，不进入产品镜像
+  - `x-loadgen-bin/x-loadgen-mockgw`：基于 `x-loadgen-core` 的 mock mazbri 网关，仅供 `cargo test` 与端到端联调自测，不进入产品镜像或生产二进制
   - `x-loadgen-libs/x-loadgen-crypto`：算法闭集、注册表与软件密码学原语
   - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封与请求绑定签名编解码
   - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、绑定头、解码响应）
-- 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3），发布时嵌入二进制
+- 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3 + `@hoppscotch/ui` + Hoppscotch 主题系统），发布时完整嵌入单二进制
 - 依赖全部来自 crates.io（sparse），不添加项目级 `.cargo` 代理。
 
 ## 命令行
@@ -30,7 +30,7 @@ x-loadgen health [--url http://127.0.0.1:8757/health]
 
 默认开启登录。口令写在数据目录下的 `admin.passwd`。`X_LOADGEN_NO_AUTH=1` 或 `--no-auth` 时无需登录即可打开页面和调用 API。`health` 在进程尚未监听时以非 0 退出。
 
-凭据、目标、模板和压测参数都通过页面或 HTTP API 配置，不使用 toml 配置文件，也没有 `--config` 或压测子命令。
+凭据、集合、请求、环境（含租户池）和压测预设都通过页面或 HTTP API 配置，不使用 toml 配置文件，也没有 `--config` 或压测子命令。
 
 ## 开发
 
@@ -135,7 +135,7 @@ deploy/scripts/stop.sh       # 或 down.sh（删容器与网络，数据保留�
 
 ## 用 curl 调用 HTTP API
 
-命令行本身不能发起压测。所有自动化（建目标、建模板、启动任务、调流量、取报告、判定）都通过 HTTP API 完成，推荐用 `curl` + `jq`。本节覆盖全部接口，例子均可直接复制。完整机器可读清单见无需认证的 [OpenAPI 文档](#openapi-文档)。
+命令行本身不能发起压测。所有自动化（建环境与租户池、建集合与请求、单次 `probe` 调试、建压测预设、启动任务、调流量、取报告、判定）都通过 HTTP API 完成，推荐用 `curl` + `jq`。本节覆盖全部接口，例子均可直接复制。完整机器可读清单见无需认证的 [OpenAPI 文档](#openapi-文档)。
 
 ### 变量
 
@@ -269,126 +269,162 @@ GET $XLG/api/v1/openapi.json
 
 可导入 Postman、Insomnia，或用浏览器打开。路径与运行中的路由一一对应。
 
-### 目标（Targets）
+### 环境与租户密钥池（Environments & Tenants）
 
-协议为 `http`（普通 HTTP）或 `mazbri`。列表不返回密钥；详情（`GET /targets/{id}`）包含密钥明文，请妥善保管输出。
+环境用于管理键值变量（支持 `<<var>>` 与 `{{var}}`）、默认 `gateway_base_url`、环境级 HTTP 鉴权、TLS 证书（同时支持直接粘贴 PEM 文本或服务器文件路径），以及 `mazbri` 加权多租户密钥池。系统内置一条 `is_global = true` 的全局环境（可编辑变量，不可删除）。
+
+列表不返回密钥明文；详情（`GET /environments/{id}`）包含密钥字段；导出接口默认脱敏（`?include_secrets=true` 才导出真实密钥）。
 
 ```bash
-# 创建一个普通 HTTP 目标（租户只能是 encryption_mode=none，不能填加密或绑定字段）
-TARGET=$(xlg -X POST "$XLG/api/v1/targets" --data-binary @- <<EOF | jq .
+# 创建一个包含变量和明文/加密租户池的环境
+ENV_DOC=$(xlg -X POST "$XLG/api/v1/environments" --data-binary @- <<EOF | jq .
 {
-  "name": "http-demo",
-  "protocol": "http",
+  "name": "staging-env",
   "gateway_base_url": "$GW",
-  "insecure_skip_verify": true,
-  "note": "curl 手册演示",
-  "tenants": [
-    {"name": "plain", "weight": 1, "api_key": "demo-key", "encryption_mode": "none"}
+  "variables": [
+    {"key": "base_url", "value": "$GW", "secret": false, "active": true},
+    {"key": "api_token", "value": "demo-token", "secret": true, "active": true}
   ],
-  "products": [
-    {
-      "name": "probe",
-      "product_id": "P001",
-      "path": "/ok",
-      "method": "GET",
-      "weight": 1
-    }
+  "tls": {"insecure_skip_verify": true},
+  "note": "curl 手册演示环境",
+  "tenants": [
+    {"name": "plain-tenant", "weight": 1, "api_key": "demo-key", "encryption_mode": "none"}
   ]
 }
 EOF
 )
-echo "$TARGET" | jq '{id, name, protocol}'
-TARGET_ID=$(echo "$TARGET" | jq -r .id)
+ENV_ID=$(echo "$ENV_DOC" | jq -r .id)
+echo "$ENV_DOC" | jq '{id, name, gateway_base_url, tenants: [.tenants[].name]}'
 
-xlg "$XLG/api/v1/targets" | jq '[.[] | {id, name, protocol, gateway_base_url}]'
-xlg "$XLG/api/v1/targets/$TARGET_ID" | jq '{id, name, tenants: [.tenants[].name], products: [.products[].name]}'
+xlg "$XLG/api/v1/environments" | jq '[.[] | {id, name, is_global, variable_count, tenant_count}]'
+xlg "$XLG/api/v1/environments/$ENV_ID" | jq '{id, name, variables: [.variables[].key]}'
 
-# 更新（PUT）。省略 tenants / products 时保留原有子资源；省略 client_cert、client_key、ca_cert 等密钥字段会被清空，修改时要带上原值或有意覆盖
-xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID" --data-binary @- <<EOF | jq '{id, note}'
-{"name":"http-demo","protocol":"http","gateway_base_url":"$GW","insecure_skip_verify":true,"note":"已更新"}
-EOF
-
-# 删除（若仍有模板引用会 409 conflict）
-# xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID"    # 204 无响应体
-```
-
-mazbri 目标在创建时一并给出租户的协议与密码学字段（`encryption_mode`、`suite` 或 `data_alg`/`mac_alg`、`tenant_id`、`tenant_key_base64`、`key_version`、`binding_*` 等），详见下文「租户」和后面的「接入 mazbri 网关」。API Key 在普通 HTTP 下以 `X-API-KEY` 头发送。
-
-### 租户（Tenants）
-
-挂在目标下，可单独增删改。普通 HTTP 目标只接受 `encryption_mode=none` 的明文租户。
-
-```bash
-# 列表 / 创建
-xlg "$XLG/api/v1/targets/$TARGET_ID/tenants" | jq '[.[] | {id, name, weight, encryption_mode}]'
-
-TENANT=$(xlg -X POST "$XLG/api/v1/targets/$TARGET_ID/tenants" --data-binary @- <<'EOF'
-{"name":"plain-2","weight":1,"api_key":"demo-key-2","encryption_mode":"none"}
-EOF
-)
-TENANT_ID=$(echo "$TENANT" | jq -r .id)
-echo "$TENANT" | jq '{id, name, weight}'
-
-xlg "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID" | jq '{id, name, encryption_mode}'
-
-xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID" --data-binary @- <<'EOF' | jq '{id, weight}'
-{"name":"plain-2","weight":2,"api_key":"demo-key-2","encryption_mode":"none"}
-EOF
-
-# 删除：204
-xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID/tenants/$TENANT_ID"
-```
-
-为 mazbri 租户生成请求绑定密钥对（私钥存进租户，响应 **只返回公钥**）：
-
-```bash
-# 目标协议必须是 mazbri；alg 例如 sm2-sign
-xlg -X POST "$XLG/api/v1/targets/$MAZBRI_TARGET_ID/tenants/$MAZBRI_TENANT_ID/binding-keypair" \
-  --data-binary '{"alg":"sm2-sign","kid":"kid-curl-demo"}' \
-  | jq '{binding_kid, binding_alg, public_key_pem}'
-```
-
-租户上与协议 / 密码学相关的字段包括：`api_key`、`encryption_mode`（`none` / `request` / `response` / `full`）、`tenant_id`、`tenant_key_base64`、`key_version`、`suite`、`data_alg`、`mac_alg`、`require_signature`、`allow_insecure`、`binding_kid`、`binding_alg`、`binding_key`、`binding_public_key`。生成密钥对后 `binding_key` 由服务保存，详情接口会返回，列表和报告会脱敏。
-
-### 产品（Products）
-
-```bash
-xlg "$XLG/api/v1/targets/$TARGET_ID/products" | jq '[.[] | {id, name, product_id, path, method, weight}]'
-
-PRODUCT=$(xlg -X POST "$XLG/api/v1/targets/$TARGET_ID/products" --data-binary @- <<'EOF'
+# 在环境下单独增删改租户
+TENANT=$(xlg -X POST "$XLG/api/v1/environments/$ENV_ID/tenants" --data-binary @- <<'EOF'
 {
-  "name": "echo",
-  "product_id": "P-ECHO",
-  "path": "/ok",
-  "method": "POST",
-  "weight": 1,
-  "body_json": {"seq": "{{seq}}"}
+  "name": "gm-tenant",
+  "weight": 2,
+  "api_key": "gm-api-key",
+  "encryption_mode": "full",
+  "tenant_id": "t-gm-01",
+  "key_version": "v1",
+  "tenant_key_base64": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+  "suite": "suite/gm-sm4-hmac-sm3",
+  "binding_alg": "sm2-sign",
+  "binding_kid": "kid-gm-01"
 }
 EOF
 )
-PRODUCT_ID=$(echo "$PRODUCT" | jq -r .id)
+TENANT_ID=$(echo "$TENANT" | jq -r .id)
 
-xlg "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID" | jq '{id, name, method, path}'
+# 为环境租户生成非对称请求绑定密钥对（私钥自动存入该租户，响应只返回公钥 PEM）
+xlg -X POST "$XLG/api/v1/environments/$ENV_ID/tenants/$TENANT_ID/binding-keypair" \
+  --data-binary '{"alg":"sm2-sign","kid":"kid-gm-01"}' \
+  | jq '{binding_kid, binding_alg, public_key_pem}'
 
-xlg -X PUT "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID" --data-binary @- <<'EOF' | jq '{id, weight}'
-{"name":"echo","product_id":"P-ECHO","path":"/ok","method":"POST","weight":2,"body_json":{"seq":"{{seq}}"}}
-EOF
+# 无状态生成非对称绑定密钥对（供未保存的草稿请求内联租户使用，返回公私钥 PEM）
+xlg -X POST "$XLG/api/v1/crypto/binding-keypair" \
+  --data-binary '{"alg":"ed25519","kid":"draft-kid"}' \
+  | jq '{binding_kid, binding_alg, public_key_pem}'
 
-# 删除：204
-xlg -X DELETE "$XLG/api/v1/targets/$TARGET_ID/products/$PRODUCT_ID"
+# 导入 / 导出环境（兼容 Hoppscotch Environment JSON 与原生格式）
+xlg "$XLG/api/v1/environments/export" | jq 'length'
 ```
 
-可选字段：`qps_limit`、`timeout_secs`、`query_json`、`headers_json`、`body_json`、`expect_transport`、`expect_checks_json`。
+### 集合与请求（Collections & Requests）
 
-### 模板（Templates）
-
-模板保存一次压测的全部参数，启动任务必须引用一份已保存的模板（按 id 或名称），并可以在启动时覆盖部分字段。
+集合（`collections`）支持通过 `parent_id` 组织无限层级目录树，可配置目录级默认协议、可继承的 HTTP Auth / Headers / Variables；请求（`requests`）归属于集合，每条请求可独立选择 `protocol`（`http` 或 `mazbri`）。
 
 ```bash
-TEMPLATE=$(xlg -X POST "$XLG/api/v1/templates" --data-binary @- <<EOF
+# 创建集合
+COLL=$(xlg -X POST "$XLG/api/v1/collections" --data-binary @- <<'EOF'
+{
+  "name": "gateway-smoke",
+  "default_protocol": "http",
+  "description": "HTTP 与 Mazbri 双协议回归集合"
+}
+EOF
+)
+COLL_ID=$(echo "$COLL" | jq -r .id)
+
+# 在集合内创建一条通用 HTTP 请求（支持 <<base_url>> 与 {{seq}} 动态变量）
+HTTP_REQ=$(xlg -X POST "$XLG/api/v1/requests" --data-binary @- <<EOF
+{
+  "collection_id": "$COLL_ID",
+  "name": "http-echo",
+  "protocol": "http",
+  "method": "POST",
+  "endpoint": "<<base_url>>/ok",
+  "params": [{"key": "from", "value": "curl", "active": true}],
+  "headers": [{"key": "X-Trace", "value": "req-{{seq}}", "active": true}],
+  "body": {
+    "content_type": "application/json",
+    "body": "{\"seq\":\"{{seq}}\"}",
+    "form": []
+  },
+  "auth": {"auth_type": "bearer", "auth_active": true, "token": "<<api_token>>"},
+  "assertions": {"expect_transport": "ok", "checks": []},
+  "weight": 2
+}
+EOF
+)
+HTTP_REQ_ID=$(echo "$HTTP_REQ" | jq -r .id)
+
+# 在同一集合内创建一条 Mazbri 网关协议请求（引用环境租户池或使用内联租户）
+MZ_REQ=$(xlg -X POST "$XLG/api/v1/requests" --data-binary @- <<EOF
+{
+  "collection_id": "$COLL_ID",
+  "name": "mazbri-order-query",
+  "protocol": "mazbri",
+  "method": "POST",
+  "endpoint": "/orders/query",
+  "params": [],
+  "headers": [],
+  "body": {
+    "content_type": "application/json",
+    "body": "{\"order_no\":\"ORD-{{seq}}\"}",
+    "form": []
+  },
+  "mazbri": {
+    "product_id": "P-ORDER-01",
+    "tenant_source": "environment",
+    "tenant_name": "gm-tenant"
+  },
+  "assertions": {"expect_transport": "ok", "checks": []},
+  "weight": 1
+}
+EOF
+)
+MZ_REQ_ID=$(echo "$MZ_REQ" | jq -r .id)
+
+# 查看完整集合目录树、导入 / 导出（兼容 Hoppscotch REST Collection JSON 与原生格式）
+xlg "$XLG/api/v1/collections" | jq '[.[] | {id, name, requests: [.requests[].name]}]'
+xlg "$XLG/api/v1/collections/export" | jq 'length'
+```
+
+### 单次交互调试（Probe / Send）
+
+`POST /api/v1/probe` 对应工作台里的 **`Send`** 按钮：可按 `request_id` 发送已保存请求，也可直接传未保存草稿 `request`，结合可选 `environment_id` 发起 **1 次真实请求**。
+- `http` 模式返回状态码、耗时（`latency_us`）、字节数、响应头、格式化 JSON、逐项断言结果与实际发出的请求预览。
+- `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、5 个 `x-mazbri-*` 绑定签名头、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
+
+```bash
+xlg -X POST "$XLG/api/v1/probe" --data-binary @- <<EOF | jq '{http_status, transport_ok, passed_assertions, latency_us}'
+{
+  "request_id": "$HTTP_REQ_ID",
+  "environment_id": "$ENV_ID"
+}
+EOF
+```
+
+### 压测预设（Load Profiles）
+
+压测预设（`load-profiles`）将流量模型与具体接口解耦，可复用于任意单接口、未保存草稿或整个集合。
+
+```bash
+PROFILE=$(xlg -X POST "$XLG/api/v1/load-profiles" --data-binary @- <<'EOF'
 {
   "name": "nightly-once",
-  "target_id": "$TARGET_ID",
   "model": "open_loop",
   "qps": 20,
   "concurrency": 4,
@@ -397,65 +433,67 @@ TEMPLATE=$(xlg -X POST "$XLG/api/v1/templates" --data-binary @- <<EOF
   "ramp_secs": 0,
   "timeout_secs": 5,
   "connect_timeout_secs": 5,
+  "token_refresh_skew_secs": 30,
+  "include_request_id": true,
   "processes": 1,
   "qps_mode": "total",
   "requests_mode": "total",
-  "loop_enabled": false
+  "loop_enabled": false,
+  "loop_interval_secs": 2,
+  "expected_reasons": []
 }
 EOF
 )
-TEMPLATE_ID=$(echo "$TEMPLATE" | jq -r .id)
-echo "$TEMPLATE" | jq '{id, name, qps, requests, loop_enabled}'
+PROFILE_ID=$(echo "$PROFILE" | jq -r .id)
 
-xlg "$XLG/api/v1/templates" | jq '[.[] | {id, name, qps, requests, duration_secs, loop_enabled}]'
-xlg "$XLG/api/v1/templates/$TEMPLATE_ID" | jq '{id, name, target_id, qps, concurrency, processes}'
-
-# 再存一份循环模板，供 loop 模式使用
-LOOP_TPL=$(xlg -X POST "$XLG/api/v1/templates" --data-binary @- <<EOF
+LOOP_PROFILE=$(xlg -X POST "$XLG/api/v1/load-profiles" --data-binary @- <<'EOF'
 {
   "name": "nightly-loop",
-  "target_id": "$TARGET_ID",
   "model": "open_loop",
   "qps": 10,
   "concurrency": 2,
   "requests": 20,
+  "warmup_secs": 0,
+  "ramp_secs": 0,
   "timeout_secs": 5,
+  "connect_timeout_secs": 5,
+  "token_refresh_skew_secs": 30,
+  "include_request_id": true,
   "processes": 1,
+  "qps_mode": "total",
+  "requests_mode": "total",
   "loop_enabled": true,
   "rounds": 100,
-  "loop_interval_secs": 2
+  "loop_interval_secs": 2,
+  "expected_reasons": []
 }
 EOF
 )
-LOOP_TEMPLATE_ID=$(echo "$LOOP_TPL" | jq -r .id)
+LOOP_PROFILE_ID=$(echo "$LOOP_PROFILE" | jq -r .id)
 
-# 更新 / 删除
-# xlg -X PUT "$XLG/api/v1/templates/$TEMPLATE_ID" --data-binary @file.json
-# xlg -X DELETE "$XLG/api/v1/templates/$TEMPLATE_ID"    # 204；被运行中任务占用时可能 409
+xlg "$XLG/api/v1/load-profiles" | jq '[.[] | {id, name, model, qps, requests, loop_enabled}]'
 ```
-
-常用字段：`model`（`open_loop` / `closed_loop`）、`qps`、`concurrency`、`requests` 与 `duration_secs` 二选一、`warmup_secs`、`ramp_secs`、`timeout_secs`、`connect_timeout_secs`、`token_refresh_skew_secs`、`include_request_id`、`processes`（≥1，大于 1 时按进程拆分）、`qps_mode` / `requests_mode`（`total` 或 `per_process`）、`loop_enabled`、`rounds`（空表示循环不限轮次）、`loop_interval_secs`、`product_ids`、`weight_overrides`、`expected_reasons`、`detail_retain_days`、`detail_retain_rows`、`note`。
 
 ### 启动任务（Runs）
 
-`POST /api/v1/runs` 必须指定已保存的模板：`template`（id 或名称，优先）或 `template_id`。同一次请求里可以带覆盖字段，只作用于这次运行的内存副本，**已保存的模板不会被改掉**。`requests` 与 `duration_secs` 互斥，设置其中一个会清掉另一个。`rounds` 与 `clear_rounds` 不能同时给；`clear_rounds: true` 用于把循环改为不限轮次。
+`POST /api/v1/runs` 支持三种压测目标来源（三选一）：
+1. `request_id`：压已保存的单条请求；
+2. `collection_id`（可选 `selected_requests: [{request_id, weight}]` 勾选子集并覆盖权重）：对集合（含子目录）做多接口加权混合压测；
+3. `adhoc_request` / `adhoc_requests`：不保存集合，直接压临时请求对象。
 
-`mode` 为 `once` 或 `loop`（可省略，默认跟随模板的 `loop_enabled`）。`once` 跑完 `requests` 或 `duration_secs` 即结束；`loop` 按 `rounds` 与 `loop_interval_secs` 重复窗口。`processes`、`concurrency`、`qps` 控制进程数、并发与目标速率；`qps_mode=total` 表示所有进程合计，`per_process` 表示每个进程各自那么多。
+同时可指定 `environment_id`、可选预设 `load_profile`（名称或 ID）或 `load_profile_id`，以及本次运行的覆盖字段（只作用于本次 `snapshot`，不会修改已保存的预设）。`requests` 与 `duration_secs` 互斥，设置其中一个会清掉另一个。
 
-可选 `assert`：`p50_ms` / `p95_ms` / `p99_ms` / `max_ms`（必须 > 0）、`max_error_rate`（0–1）、`min_qps_ratio`（> 0，且创建时模板或覆盖里要有 `qps`）。比较采用闭区间（等于阈值算通过）。达成 QPS = 样本数 ÷ 墙钟耗时（`started_at` 到 `ended_at` 或当前时间）。断言冻结在任务快照里。
+可选 `assert`：`p50_ms` / `p95_ms` / `p99_ms` / `max_ms`（必须 > 0）、`max_error_rate`（0–1）、`min_qps_ratio`（> 0，且需设置 `qps`）。比较采用闭区间（等于阈值算通过）。
 
 `?wait=true&timeout=N`：请求会等到任务离开 `running`/`stopping` 再返回 201；`timeout` 默认 60 秒、最大 600、最小 1。超时返回 **409**，`error.code` 为 `wait_timeout`，同时带上当前 `run`。
 
 ```bash
-# 按模板 id 启动一次任务（once），不覆盖参数
-xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<EOF | jq '{id, status, template_id, current_qps, mode}'
-{"template_id":"$TEMPLATE_ID","mode":"once"}
-EOF
-
-# 按模板名称启动，并覆盖 QPS / 请求数 / 进程，附带断言；wait 等到结束
-RUN=$(xlg -X POST "$XLG/api/v1/runs?wait=true&timeout=60" --data-binary @- <<'EOF'
+# 对单条已保存请求按预设启动一次压测，覆盖 QPS / 请求数并附带 SLA 断言，wait 等待结束
+RUN=$(xlg -X POST "$XLG/api/v1/runs?wait=true&timeout=60" --data-binary @- <<EOF
 {
-  "template": "nightly-once",
+  "request_id": "$HTTP_REQ_ID",
+  "environment_id": "$ENV_ID",
+  "load_profile": "nightly-once",
   "mode": "once",
   "qps": 15,
   "concurrency": 4,
@@ -469,18 +507,19 @@ RUN=$(xlg -X POST "$XLG/api/v1/runs?wait=true&timeout=60" --data-binary @- <<'EO
 }
 EOF
 )
-echo "$RUN" | jq '{id, status, current_qps, verdict}'
+echo "$RUN" | jq '{id, title, status, current_qps, verdict}'
 RUN_ID=$(echo "$RUN" | jq -r .id)
 
-# 确认已保存的模板没被改掉
-xlg "$XLG/api/v1/templates/$TEMPLATE_ID" | jq '{qps, requests}'
-# 覆盖只出现在这次任务的 snapshot 里
-xlg "$XLG/api/v1/runs/$RUN_ID" | jq '{status, snapshot_qps: .snapshot.template.qps, snapshot_requests: .snapshot.template.requests, verdict}'
-
-# 按名称启动循环任务（不要 wait，或接受 409 wait_timeout）
-LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<'EOF'
+# 对整个集合启动循环加权压测（通过 selected_requests 勾选请求并指定权重）
+LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<EOF
 {
-  "template": "nightly-loop",
+  "collection_id": "$COLL_ID",
+  "selected_requests": [
+    {"request_id": "$HTTP_REQ_ID", "weight": 3},
+    {"request_id": "$MZ_REQ_ID", "weight": 1}
+  ],
+  "environment_id": "$ENV_ID",
+  "load_profile_id": "$LOOP_PROFILE_ID",
   "mode": "loop",
   "qps": 8,
   "rounds": 50,
@@ -493,7 +532,7 @@ LOOP_ID=$(echo "$LOOP" | jq -r .id)
 echo "$LOOP" | jq '{id, status, mode, current_qps}'
 ```
 
-同时已有任务在跑时，API **不会**因此返回 409（页面会先确认）。若触发全局 `max_qps` / `max_concurrency` 上限则 400 `invalid_request`。模板不存在 404；非法断言或两个互斥字段同时给出 400。
+同时已有任务在跑时，API **不会**因此返回 409。若触发全局 `max_qps` / `max_concurrency` 上限则 400 `invalid_request`。资源不存在 404；非法断言或互斥字段同时给出则 400。
 
 ### 运行中调整流量
 
@@ -531,7 +570,7 @@ xlg -X DELETE "$XLG/api/v1/runs/$LOOP_ID"    # 204，同时删除任务目录
 xlg "$XLG/api/v1/runs/$RUN_ID/stats" | jq '{status, samples, success, failure, p50_us, p95_us, p99_us, max_us, current_qps, in_flight}'
 
 xlg "$XLG/api/v1/runs/$RUN_ID/timeseries" | jq '{count: (.points | length), last: .points[-1]}'
-# points[]: unix_sec 或 started_at、samples、success、failure、bytes 等
+# points[]: unix_sec、samples、success、failure、bytes 等
 
 xlg "$XLG/api/v1/runs/$RUN_ID/timeline" | jq '.events[] | {ts, event, payload}'
 # 例如 start / window / traffic / stop / end
@@ -583,11 +622,11 @@ esac
 xlg "$XLG/api/v1/runs/$RUN_ID/report" | jq '{id, status, counters, percentiles, verdict}'
 
 xlg -o "run-$RUN_ID-report.json" "$XLG/api/v1/runs/$RUN_ID/report.json"
-# HTML 是完整页面，嵌入了同一份 JSON（含 verdict）
+# HTML 是完整独立页面，嵌入了同一份脱敏 JSON（含 verdict）
 curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/report.html"
 ```
 
-报告和快照会脱敏密钥（`api_key`、`binding_key`、`tenant_key_base64`、`client_key` 等）。
+报告、任务快照和默认集合/环境导出会自动脱敏所有敏感凭据（`api_key`、`binding_key`、`tenant_key_base64`、`client_key`、环境变量 secret、HTTP auth 令牌/密码等）。
 
 ### 错误格式与状态码
 
@@ -605,8 +644,8 @@ curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/repo
 | 400 | `auth_disabled` | `--no-auth` 下调用登录或改密 |
 | 401 | `unauthorized` | 未带令牌、口令错误、改密/重置后仍用旧口令 |
 | 403 | `password_change_required` | 首次口令尚未更改时访问业务接口 |
-| 404 | `not_found` | 目标、租户、产品、模板、任务不存在 |
-| 409 | `conflict` | 资源冲突（例如删除仍被引用的目标、删除运行中的任务） |
+| 404 | `not_found` | 集合、请求、环境、租户、压测预设、任务不存在 |
+| 409 | `conflict` | 资源冲突（例如删除运行中的任务、尝试删除内置 Global 环境） |
 | 409 | `wait_timeout` | `POST /runs?wait=true` 在 timeout 内未结束（附带 `run`） |
 | 409 | （verdict 正文） | 判定结果为 `pending`（正文是 Verdict，不是 Error） |
 | 422 | （verdict 正文） | 判定结果为 `fail`（正文是 Verdict，不是 Error） |
@@ -614,19 +653,21 @@ curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/repo
 
 ### 端到端自动化脚本示例
 
-下面的脚本：按名称启动一个循环任务、轮询统计、把 QPS 调高、停止、下载报告、检查判定。把前面的「变量」「鉴权」和已有的 `nightly-loop` 模板准备好之后即可运行。
+下面的脚本：对已保存请求启动一个循环压测任务、轮询统计、在线把 QPS 调高、停止、下载报告并检查判定。把前面的「变量」「鉴权」以及 `$HTTP_REQ_ID`、`$ENV_ID` 准备好之后即可运行。
 
 ```bash
 #!/usr/bin/env bash
 # 依赖：curl、jq。令牌已写入 $TOKEN_FILE 并执行过 write_hdr。
 set -euo pipefail
-: "${XLG:?set XLG}" "${HDR:?run write_hdr first}"
+: "${XLG:?set XLG}" "${HDR:?run write_hdr first}" "${HTTP_REQ_ID:?set HTTP_REQ_ID}"
 xlg() { curl -fsS -H @"$HDR" "$@"; }
 
 echo "== 启动循环任务"
-LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<'EOF'
+LOOP=$(xlg -X POST "$XLG/api/v1/runs" --data-binary @- <<EOF
 {
-  "template": "nightly-loop",
+  "request_id": "$HTTP_REQ_ID",
+  "environment_id": "${ENV_ID:-}",
+  "load_profile": "nightly-loop",
   "mode": "loop",
   "qps": 8,
   "concurrency": 2,
@@ -680,29 +721,30 @@ esac
 
 运行中的循环任务不要对 `POST /runs?wait=true` 设过短的 timeout 却期望 201：到点会 409 `wait_timeout`，任务本身继续跑，用返回体里的 `run.id` 再去 stop。
 
-### 在页面里配置并启动任务
+### 在 Hoppscotch 风格工作台里调试与压测
 
-登录（或 `--no-auth`）之后也可以用页面完成同样的事情：
+登录（或 `--no-auth`）之后可以在 Web 工作台完成全部交互调试与压测操作：
 
-1. 打开「目标」，新建目标。选择协议（mazbri 网关 / 普通 HTTP），填写名称和 `gateway_base_url`，再配置租户与产品。mazbri 的加密与签名字段见下一节。
-2. 打开「模板」，新建模板并绑定目标。单次任务填写 `requests` 或 `duration_secs`；循环任务打开 loop，填写 `rounds` 与 `loop_interval_secs`。
-3. 打开「任务」，选择模板和模式（`once` / `loop`），可选填写断言后启动。若已有正在运行的任务，页面会先确认再启动；API 不会只因为另有任务在跑就返回 409。
-4. 任务详情页可看实时统计、判定、调整流量、停止或续跑。报告页查看脱敏摘要和判定，并可下载 JSON / HTML。
+1. **配置环境与租户池**：在右上角或右侧栏「环境（Environments）」新建环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
+2. **多标签接口调试（`Send`）**：在主工作台新建标签页或导入 cURL，切换协议（`HTTP` 通用协议 / `Mazbri` 专有网关协议），配置参数、Headers、CodeMirror 请求体、鉴权与响应断言，点击 **`Send`** 即可查看格式化响应、断言结果，以及 Mazbri 专属的「信封与签名追踪（`Wire Inspector`）」。
+3. **组织集合与预设**：点击「Save」将请求存入右侧「集合（Collections）」目录树（支持 JSON 导入导出）；在左侧导航「压测预设（Profiles）」管理可复用的开环/闭环流量模型与 SLA 阈值。
+4. **发起单接口或集合加权压测（`Load Test`）**：在任意请求栏点击「Load Test」或在集合节点上点击「集合压测」，勾选参与压测的接口、调整各自权重（`weight`）、选择预设或临时覆盖 QPS/并发/多进程参数并一键启动。
+5. **实时监控与报告**：跳转至 `/runs/:id` 查看 ECharts 实时吞吐曲线、延迟分位卡片、在线热调 QPS/并发、停止/续跑、游标分页样本明细表，并一键下载脱敏 JSON 或独立离线 HTML 报告。
 
 `gateway_base_url` 必须是**容器能够访问**的地址：IP、公网 URL，或 DNS 可解析的域名加端口。不要填写 `http://127.0.0.1:8888` 来指向宿主机上的网关（那是容器自己的回环）。指向宿主机上的监听时，使用宿主机在该桥接网络上的地址，或该服务对容器可见的地址。
 
-页面路由：`/login`、`/password`、`/targets`、`/templates`、`/runs`、`/runs/:id`、`/runs/:id/report`、`/settings`。
+页面路由：`/`（多标签调试工作台）、`/runs`（压测运行中心）、`/runs/:id`（实时监控与报告详情）、`/profiles`（压测预设管理）、`/settings`（Hoppscotch 主题/强调色与安全设置）、`/login`、`/password`。
 
 ## 接入 mazbri 网关（加密与签名）
 
-协议选「mazbri 网关」时，x-loadgen 按 mazbri 官方客户端合同发请求，加解密逻辑来自仓库内的 `x-loadgen-libs`，报文格式与网关一致：
+请求协议选 **`Mazbri`** 时，x-loadgen 按 mazbri 官方客户端合同发请求，加解密逻辑完全来自仓库内的 `x-loadgen-libs`，报文格式与网关一致：
 
 1. 换 token：`POST {gateway_base_url}/auth/token`，body 为 `{"api_key":"...","grant_type":"client_credentials"}`。token 按进程、按租户缓存，过期前（`expires_in` 减去刷新提前量）单飞刷新；网关返回 401 时作废缓存并重新换取。
-2. 调用：`POST {gateway_base_url}/api/v1/gateway`，带 `Authorization: Bearer <token>`。请求体为 `GatewayRequest`（`product_id`、`path`、`method`、`query`、`headers`、`body`），产品里的 `{{seq}}` 在渲染时替换为请求序号。
+2. 调用：`POST {gateway_base_url}/api/v1/gateway`，带 `Authorization: Bearer <token>`。请求体为 `GatewayRequest`（`product_id`、`path`、`method`、`query`、`headers`、`body`），请求里的 `<<var>>` / `{{var}}` 与压测动态变量 `{{seq}}`、`{{$timestamp}}`、`{{$randomUUID}}` 在发送前自动渲染。
 3. 请求绑定（可选）：对 `METHOD\npath\ntimestamp\nnonce\nbody` 签名，附带 `x-mazbri-timestamp`、`x-mazbri-nonce`、`x-mazbri-signature`、`x-mazbri-signature-input`、`x-mazbri-key-id`。
 4. 加密：`none` 发明文；`request` 只密封请求，响应按明文解析；`full` 请求和响应都加密，响应解密并校验 MAC 后才参与统计。
 
-耗时、状态统计和业务校验（`expect_transport`、`expect_checks_json`）都基于解密后的响应。
+耗时、状态统计和业务校验（`assertions.expect_transport`、`assertions.checks`）都基于解密后的响应。
 
 ### 支持矩阵
 
@@ -720,11 +762,11 @@ esac
 
 ### 在页面上完成配置
 
-每个租户可填写：API Key、加密模式、租户 ID、密钥版本、租户密钥（标准 Base64）、套件或自定义 `data_alg`/`mac_alg`、信封签名要求、允许不安全算法；请求绑定填写算法、Key ID，以及 HMAC 密钥或 PKCS#8 PEM 私钥。
+Mazbri 请求既可以引用当前激活环境中的加权租户池（支持多租户混合压测，也可指定单一租户名），也可以在当前请求标签页直接使用「内联独立租户（Inline Tenant）」快速联调。每个租户可填写：API Key、加密模式、租户 ID、密钥版本、租户密钥（标准 Base64）、套件或自定义 `data_alg`/`mac_alg`、信封签名要求、允许不安全算法；请求绑定填写算法、Key ID，以及 HMAC 密钥或 PKCS#8 PEM 私钥。
 
-非对称绑定可以不准备私钥文件：先保存目标，填写 Key ID，点击「生成签名密钥对」。私钥写入本机 SQLite 的租户记录，页面只显示公钥，复制后到 mgmt 登记该 kid 即可。修改绑定算法或私钥后，已生成的公钥会被清空，需要重新生成或登记。
+非对称绑定无需手工准备私钥文件：填写算法与 Key ID 后点击「一键生成非对称密钥对」，环境租户会把私钥安全保存在本机 SQLite 并展示公钥 PEM，复制公钥到网关管理端（或联调时的 `mockgw`）登记该 `kid` 即可。
 
-API Key、租户密钥、HMAC 密钥和私钥在目标详情里默认遮盖，可点眼睛图标显示或直接复制；目标列表、任务详情、报告和导出始终脱敏，公钥不属于敏感字段。
+API Key、租户密钥、HMAC 密钥和私钥在编辑表单里默认遮盖，可点眼睛图标切换显示；环境列表、任务详情、报告和默认导出始终脱敏，公钥不属于敏感字段。
 
 ### 错误分类
 
@@ -739,9 +781,9 @@ API Key、租户密钥、HMAC 密钥和私钥在目标详情里默认遮盖，�
 
 带错误分类的样本都计为失败。
 
-### 普通 HTTP 目标
+### 通用 HTTP 协议
 
-协议选「普通 HTTP」时直接请求「地址 + 产品路径」，租户 API Key（可选）以 `X-API-KEY` 头发送；此时租户只能使用 `none` 加密模式，不能填写加密或绑定字段。
+请求协议选 **`HTTP`** 时直接按标准 HTTP 客户端访问目标 URL（支持绝对 URL，或结合环境 `gateway_base_url` 拼接相对路径），原生支持任意 Method、多同名 Query / Header 启停行、`application/json` / `application/x-www-form-urlencoded` / `multipart/form-data` / `text/plain` / `application/xml` 请求体，以及 `Inherit` / `None` / `Bearer` / `Basic` / `API Key`（Header 或 Query）鉴权。
 
 ## Mock 网关
 

@@ -1,4 +1,5 @@
-//! Multi-process workers, split QPS, merged stats, isolation, and log files.
+//! Multi-process workers, split QPS, merged stats/reports/verdicts, isolation, and log files.
+#![allow(clippy::too_many_lines)]
 
 use std::fs;
 use std::net::TcpListener;
@@ -82,31 +83,9 @@ async fn start_mock() -> (String, tokio::sync::oneshot::Sender<()>) {
     (format!("http://{addr}"), tx)
 }
 
-fn target_payload(name: &str, gateway: &str) -> Value {
+fn mp_duration_profile(name: &str, qps: u64) -> Value {
     json!({
         "name": name,
-        "gateway_base_url": gateway,
-        "insecure_skip_verify": true,
-        "tenants": [{
-            "name": "plain",
-            "weight": 1,
-            "api_key": "k",
-            "encryption_mode": "none"
-        }],
-        "products": [{
-            "name": "probe",
-            "product_id": "P001",
-            "path": "/ok",
-            "method": "GET",
-            "weight": 1
-        }]
-    })
-}
-
-fn mp_template(name: &str, target_id: &str, qps: u64) -> Value {
-    json!({
-        "name": name,
-        "target_id": target_id,
         "model": "open_loop",
         "qps": qps,
         "concurrency": 4,
@@ -119,6 +98,70 @@ fn mp_template(name: &str, target_id: &str, qps: u64) -> Value {
         "requests_mode": "total",
         "loop_enabled": false
     })
+}
+
+fn mp_request_profile(name: &str, requests: u64, qps: u64) -> Value {
+    json!({
+        "name": name,
+        "model": "open_loop",
+        "qps": qps,
+        "concurrency": 2,
+        "requests": requests,
+        "warmup_secs": 0,
+        "ramp_secs": 0,
+        "timeout_secs": 5,
+        "processes": 2,
+        "qps_mode": "total",
+        "requests_mode": "total",
+        "loop_enabled": false,
+        "assert": {"p99_ms": 5000.0, "max_error_rate": 0.0}
+    })
+}
+
+async fn seed_http_item(
+    http: &reqwest::Client,
+    base: &str,
+    name: &str,
+    gateway: &str,
+) -> (String, String) {
+    let (st, env) = post_json(
+        http,
+        &format!("{base}/api/v1/environments"),
+        &json!({
+            "name": format!("env-{name}"),
+            "gateway_base_url": gateway,
+            "tls": {"insecure_skip_verify": true},
+            "tenants": [{"name": "plain", "weight": 1, "api_key": "k", "encryption_mode": "none"}]
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{env}");
+    let env_id = env["id"].as_str().unwrap().to_string();
+
+    let (st, col) = post_json(
+        http,
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": format!("col-{name}")}),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{col}");
+
+    let (st, req) = post_json(
+        http,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "probe",
+            "protocol": "http",
+            "method": "GET",
+            "endpoint": format!("{gateway}/ok"),
+            "mazbri": {"product_id": "P001"},
+            "weight": 1
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{req}");
+    (env_id, req["id"].as_str().unwrap().to_string())
 }
 
 fn free_port() -> u16 {
@@ -188,25 +231,23 @@ async fn start_named_run(
     name: &str,
     qps: u64,
 ) -> String {
-    let (status, target) = post_json(
+    let (env_id, req_id) = seed_http_item(http, base, name, gateway).await;
+    let (status, profile) = post_json(
         http,
-        &format!("{base}/api/v1/targets"),
-        &target_payload(name, gateway),
+        &format!("{base}/api/v1/load-profiles"),
+        &mp_duration_profile(&format!("tmpl-{name}"), qps),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().unwrap();
-    let (status, template) = post_json(
-        http,
-        &format!("{base}/api/v1/templates"),
-        &mp_template(&format!("tmpl-{name}"), target_id, qps),
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{template}");
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
     let (status, run) = post_json(
         http,
         &format!("{base}/api/v1/runs"),
-        &json!({"template_id": template["id"], "mode": "once"}),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
@@ -260,8 +301,6 @@ async fn processes_two_split_qps_and_merge_stats() {
         "worker QPS shares should sum to 50: {live0} {live1}"
     );
 
-    // Live snapshots are published once a second; wait until they catch up
-    // with the worker databases. Allow extra time under a loaded test suite.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let (from_stats, from_db, live) = loop {
         let (code, live) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
@@ -382,32 +421,15 @@ async fn two_multiprocess_runs_are_isolated_and_killing_one_worker_stays_local()
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let _ = (child.kill(), status_a);
+    let _ = http
+        .post(format!("{base}/api/v1/runs/{id_b}/stop"))
+        .send()
+        .await;
+    let _ = (child.kill(), child.wait(), status_a);
 }
 
-fn mp_request_template(name: &str, target_id: &str, requests: u64, qps: u64) -> Value {
-    json!({
-        "name": name,
-        "target_id": target_id,
-        "model": "open_loop",
-        "qps": qps,
-        "concurrency": 2,
-        "requests": requests,
-        "warmup_secs": 0,
-        "ramp_secs": 0,
-        "timeout_secs": 5,
-        "processes": 2,
-        "qps_mode": "total",
-        "requests_mode": "total",
-        "loop_enabled": false
-    })
-}
-
-/// A short request-count once run with two workers must reach `finished` on
-/// its own after the samples are complete. Stopping the run is not allowed
-/// here: that was masking workers that stayed alive after `in_flight` hit 0.
 #[tokio::test]
-async fn processes_two_request_once_finishes_without_stop() {
+async fn processes_two_request_once_finishes_and_consolidates_report_and_verdict() {
     let tmp = TempDir::new("once-finish");
     let (mock, _shutdown_mock) = start_mock().await;
     let listen = format!("127.0.0.1:{}", free_port());
@@ -418,25 +440,23 @@ async fn processes_two_request_once_finishes_without_stop() {
     wait_healthy(&http, &base, &log).await;
 
     let request_count = 10_u64;
-    let (created, target) = post_json(
+    let (env_id, req_id) = seed_http_item(&http, &base, "once-finish", &mock).await;
+    let (created, profile) = post_json(
         &http,
-        &format!("{base}/api/v1/targets"),
-        &target_payload("once-finish", &mock),
+        &format!("{base}/api/v1/load-profiles"),
+        &mp_request_profile("tmpl-once-finish", request_count, 20),
     )
     .await;
-    assert_eq!(created, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().unwrap();
-    let (created, template) = post_json(
-        &http,
-        &format!("{base}/api/v1/templates"),
-        &mp_request_template("tmpl-once-finish", target_id, request_count, 20),
-    )
-    .await;
-    assert_eq!(created, reqwest::StatusCode::CREATED, "{template}");
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{profile}");
     let (created, run) = post_json(
         &http,
         &format!("{base}/api/v1/runs"),
-        &json!({"template_id": template["id"], "mode": "once"}),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(created, reqwest::StatusCode::CREATED, "{run}");
@@ -468,6 +488,21 @@ async fn processes_two_request_once_finishes_without_stop() {
     assert_eq!(final_status, "finished");
     assert_eq!(samples, request_count, "expected all request-count samples");
     assert_eq!(in_flight, 0);
+
+    // Consolidated report and verdict must reflect worker samples & histograms!
+    let (st, report) = get_json(&http, &format!("{base}/api/v1/runs/{id}/report")).await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{report}");
+    assert_eq!(report["counters"]["samples"], request_count, "{report}");
+    assert!(
+        report["percentiles"]["p99_us"].as_u64().is_some(),
+        "{report}"
+    );
+
+    let (st, verdict) = get_json(&http, &format!("{base}/api/v1/runs/{id}/verdict")).await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["result"], "pass", "{verdict}");
+    assert_eq!(verdict["actual"]["samples"], request_count, "{verdict}");
+
     let _ = child.kill();
 }
 
@@ -475,7 +510,6 @@ const MP_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
 const MP_BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const MP_TENANT_UUID: &str = "1a2b3c4d-0000-4000-8000-00000000c003";
 
-/// Gateway view of the encrypted tenant used by the multi-process test.
 fn mazbri_mock_config() -> x_loadgen_mockgw::MockConfig {
     x_loadgen_mockgw::MockConfig {
         tenants: vec![x_loadgen_mockgw::MockTenant {
@@ -494,38 +528,6 @@ fn mazbri_mock_config() -> x_loadgen_mockgw::MockConfig {
     }
 }
 
-/// Client view of the same tenant, as entered on the target page.
-fn mazbri_target_payload(gateway: &str) -> Value {
-    json!({
-        "name": "mazbri-mp",
-        "protocol": "mazbri",
-        "gateway_base_url": gateway,
-        "tenants": [{
-            "name": "sealed",
-            "api_key": "ak-mp",
-            "encryption_mode": "full",
-            "tenant_id": MP_TENANT_UUID,
-            "tenant_key_base64": MP_TENANT_KEY,
-            "key_version": "1",
-            "suite": "suite/tenant-chacha20",
-            "binding_kid": "kid-mp",
-            "binding_alg": "hmac-sha256",
-            "binding_key": MP_BINDING_KEY
-        }],
-        "products": [{
-            "name": "echo",
-            "product_id": "P-ECHO",
-            "path": "/upstream/echo",
-            "method": "POST",
-            "body_json": {"seq": "{{seq}}"},
-            "expect_checks_json": [{"path": "echo.product_id", "eq": "P-ECHO"}]
-        }]
-    })
-}
-
-/// Two worker processes against the mock mazbri gateway with full encryption
-/// and HMAC request binding: each worker exchanges its own token, every
-/// request is sealed, signed, opened, and judged on the decrypted response.
 #[tokio::test]
 async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_successful() {
     let gateway = x_loadgen_mockgw::MockGateway::start("127.0.0.1:0", &mazbri_mock_config())
@@ -540,30 +542,80 @@ async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_success
     let http = client();
     wait_healthy(&http, &base, &log).await;
 
-    let (created, target) = post_json(
+    let (created, env) = post_json(
         &http,
-        &format!("{base}/api/v1/targets"),
-        &mazbri_target_payload(&gateway.base_url()),
+        &format!("{base}/api/v1/environments"),
+        &json!({
+            "name": "mazbri-mp",
+            "gateway_base_url": gateway.base_url(),
+            "tenants": [{
+                "name": "sealed",
+                "api_key": "ak-mp",
+                "encryption_mode": "full",
+                "tenant_id": MP_TENANT_UUID,
+                "tenant_key_base64": MP_TENANT_KEY,
+                "key_version": "1",
+                "suite": "suite/tenant-chacha20",
+                "binding_kid": "kid-mp",
+                "binding_alg": "hmac-sha256",
+                "binding_key": MP_BINDING_KEY
+            }]
+        }),
     )
     .await;
-    assert_eq!(created, reqwest::StatusCode::CREATED, "{target}");
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{env}");
+
+    let (created, col) = post_json(
+        &http,
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": "mazbri-mp-col", "default_protocol": "mazbri"}),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{col}");
+
+    let (created, req) = post_json(
+        &http,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "echo",
+            "protocol": "mazbri",
+            "method": "POST",
+            "endpoint": "/upstream/echo",
+            "body": {
+                "content_type": "application/json",
+                "body": "{\"seq\":\"{{seq}}\"}"
+            },
+            "mazbri": {
+                "product_id": "P-ECHO",
+                "tenant_source": "environment"
+            },
+            "assertions": {
+                "expect_transport": "ok",
+                "checks": [{"path": "echo.product_id", "eq": "P-ECHO"}]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{req}");
+
     let request_count = 12_u64;
-    let (created, template) = post_json(
+    let (created, profile) = post_json(
         &http,
-        &format!("{base}/api/v1/templates"),
-        &mp_request_template(
-            "tmpl-mazbri-mp",
-            target["id"].as_str().unwrap(),
-            request_count,
-            40,
-        ),
+        &format!("{base}/api/v1/load-profiles"),
+        &mp_request_profile("tmpl-mazbri-mp", request_count, 40),
     )
     .await;
-    assert_eq!(created, reqwest::StatusCode::CREATED, "{template}");
+    assert_eq!(created, reqwest::StatusCode::CREATED, "{profile}");
     let (created, run) = post_json(
         &http,
         &format!("{base}/api/v1/runs"),
-        &json!({"template_id": template["id"], "mode": "once"}),
+        &json!({
+            "request_id": req["id"],
+            "environment_id": env["id"],
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(created, reqwest::StatusCode::CREATED, "{run}");

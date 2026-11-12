@@ -3,50 +3,89 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>压测报告 __ID__</title>
+<title>x-loadgen 压测报告 · __ID__</title>
 <style>
-  body { font-family: "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
-         margin: 0; background: #f5f7fa; color: #1f2a37; }
-  header { background: #1d4ed8; color: #fff; padding: 16px 24px; }
-  main { max-width: 1100px; margin: 0 auto; padding: 16px 24px 48px; }
-  section { background: #fff; border-radius: 8px; padding: 16px 20px; margin-top: 16px;
-             box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  h2 { font-size: 16px; margin: 0 0 12px; }
-  .muted { opacity: .85; font-size: 13px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { border-bottom: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
-  .cards { display: flex; flex-wrap: wrap; gap: 12px; }
-  .card { background: #eff6ff; border-radius: 6px; padding: 10px 14px; min-width: 120px; }
-  .card b { display: block; font-size: 18px; }
+  :root {
+    --bg: #121215;
+    --surface: #18181c;
+    --surface-elevated: #202026;
+    --border: #2a2a33;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --accent: #6366f1;
+    --emerald: #10b981;
+    --rose: #f43f5e;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    margin: 0; background: var(--bg); color: var(--text); line-height: 1.5;
+  }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 18px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 28px 56px; }
+  section {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 22px; margin-top: 16px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 14px; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .badge {
+    display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; background: var(--surface-elevated); border: 1px solid var(--border);
+  }
+  .badge-pass { color: var(--emerald); border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.1); }
+  .badge-fail { color: var(--rose); border-color: rgba(244,63,94,.35); background: rgba(244,63,94,.1); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+  td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .card {
+    background: var(--surface-elevated); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .card span { font-size: 11.5px; color: var(--muted); display: block; }
+  .card b { display: block; font-size: 18px; margin-top: 3px; font-variant-numeric: tabular-nums; }
   .chart { width: 100%; height: 280px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>压测报告</h1>
-  <div class="muted">任务 __ID__ · 状态 __STATUS__</div>
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <div>
+      <h1 id="title">压测报告</h1>
+      <div class="muted">任务 __ID__ · 状态 __STATUS__</div>
+    </div>
+  </div>
+  <div id="verdict-badge"></div>
 </header>
 <main>
   <section>
-    <h2>总览</h2>
+    <h2>总览指标</h2>
     <div class="cards" id="overview"></div>
-    <p class="muted" id="range"></p>
+    <p class="muted" id="range" style="margin: 12px 0 0;"></p>
   </section>
   <section>
-    <h2>窗口</h2>
-    <div id="windows"></div>
-  </section>
-  <section>
-    <h2>时序</h2>
+    <h2>时序吞吐</h2>
     <div id="timeseries" class="chart"></div>
   </section>
   <section>
-    <h2>时间线</h2>
+    <h2>窗口明细</h2>
+    <div id="windows"></div>
+  </section>
+  <section>
+    <h2>时间线事件</h2>
     <div id="timeline"></div>
   </section>
   <section>
-    <h2>中断段</h2>
+    <h2>中断区间</h2>
     <div id="interrupts"></div>
   </section>
 </main>
@@ -57,48 +96,59 @@
   const r = window.__REPORT__ || {};
   const counters = r.counters || {};
   const pct = r.percentiles || {};
+  if (r.title) {
+    document.getElementById("title").textContent = "压测报告 · " + r.title;
+  }
+  const v = r.verdict || {};
+  if (v.result) {
+    const cls = v.result === "pass" ? "badge badge-pass" : (v.result === "fail" ? "badge badge-fail" : "badge");
+    document.getElementById("verdict-badge").innerHTML = '<span class="' + cls + '">断言: ' + escapeHtml(String(v.result).toUpperCase()) + '</span>';
+  }
   const cards = [
-    ["样本", counters.samples],
+    ["总样本", counters.samples],
     ["成功", counters.success],
     ["失败", counters.failure],
-    ["预期", counters.expected],
+    ["预期拒绝", counters.expected],
     ["p50 (µs)", pct.p50_us],
     ["p95 (µs)", pct.p95_us],
     ["p99 (µs)", pct.p99_us],
-    ["最大 (µs)", pct.max_us]
+    ["Max (µs)", pct.max_us]
   ];
-  document.getElementById("overview").innerHTML = cards.map(([k, v]) =>
-    '<div class="card"><span>' + k + '</span><b>' + fmt(v) + '</b></div>').join("");
+  document.getElementById("overview").innerHTML = cards.map(([k, val]) =>
+    '<div class="card"><span>' + k + '</span><b>' + fmt(val) + '</b></div>').join("");
+  const envName = (r.source && r.source.environment_name) ? (" · 环境 " + r.source.environment_name) : "";
   document.getElementById("range").textContent =
     "开始 " + fmt(r.started_at) + " · 结束 " + fmt(r.ended_at) +
-    " · 模式 " + (r.mode || "-") + " · 进程数 " + fmt(r.processes);
+    " · 模式 " + (r.mode || "-") + " · 进程数 " + fmt(r.processes) + envName;
   document.getElementById("windows").innerHTML = table(
     ["窗口", "开始", "结束", "样本", "成功", "失败", "预期", "p99 (µs)", "字节"],
     (r.windows || []).map(w => [w.window_index, w.started_at, w.ended_at, w.samples,
       w.success, w.failure, w.expected, w.p99_us, w.bytes])
   );
   document.getElementById("timeline").innerHTML = table(
-    ["时间", "事件", "载荷"],
+    ["时间戳", "事件", "载荷"],
     (r.timeline || []).map(e => [e.ts, e.event, e.payload ? JSON.stringify(e.payload) : ""])
   );
   const ranges = r.interrupt_ranges || [];
   document.getElementById("interrupts").innerHTML = ranges.length
     ? table(["开始", "结束"], ranges.map(x => [x.start, x.end]))
-    : "<p class='muted'>无中断段</p>";
+    : "<p class='muted'>无中断区间</p>";
   const points = r.timeseries || [];
   const chart = echarts.init(document.getElementById("timeseries"));
   chart.setOption({
+    backgroundColor: "transparent",
+    textStyle: { color: "#a1a1aa" },
     tooltip: { trigger: "axis" },
-    legend: { data: ["样本", "成功", "失败"] },
-    xAxis: { type: "category", data: points.map(p => p.unix_sec || p.started_at || "") },
-    yAxis: { type: "value" },
+    legend: { data: ["样本", "成功", "失败"], textStyle: { color: "#a1a1aa" } },
+    xAxis: { type: "category", data: points.map(p => p.unix_sec || p.started_at || ""), axisLine: { lineStyle: { color: "#2a2a33" } } },
+    yAxis: { type: "value", splitLine: { lineStyle: { color: "#2a2a33" } } },
     series: [
-      { name: "样本", type: "line", data: points.map(p => p.samples || 0) },
-      { name: "成功", type: "line", data: points.map(p => p.success || 0) },
-      { name: "失败", type: "line", data: points.map(p => p.failure || 0) }
+      { name: "样本", type: "line", smooth: true, itemStyle: { color: "#6366f1" }, data: points.map(p => p.samples || 0) },
+      { name: "成功", type: "line", smooth: true, itemStyle: { color: "#10b981" }, data: points.map(p => p.success || 0) },
+      { name: "失败", type: "line", smooth: true, itemStyle: { color: "#f43f5e" }, data: points.map(p => p.failure || 0) }
     ]
   });
-  function fmt(v) { return (v === null || v === undefined) ? "-" : String(v); }
+  function fmt(val) { return (val === null || val === undefined) ? "-" : String(val); }
   function table(headers, rows) {
     const th = headers.map(h => "<th>" + h + "</th>").join("");
     const tr = rows.map(row => "<tr>" + row.map(c => "<td>" + escapeHtml(fmt(c)) + "</td>").join("") + "</tr>").join("");

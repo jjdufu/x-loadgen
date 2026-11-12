@@ -1,4 +1,4 @@
-//! HTTP tests for template-name start, overrides, wait, assertions, and `OpenAPI`.
+//! HTTP tests for load-profile-by-name start, overrides, wait, SLA assertions, and `OpenAPI`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,43 +92,6 @@ async fn start_mock(fail: bool) -> (String, tokio::sync::oneshot::Sender<()>) {
     (format!("http://{addr}"), tx)
 }
 
-fn target_payload(gateway: &str, name: &str) -> Value {
-    json!({
-        "name": name,
-        "gateway_base_url": gateway,
-        "insecure_skip_verify": true,
-        "tenants": [{
-            "name": "plain",
-            "weight": 1,
-            "api_key": "k",
-            "encryption_mode": "none"
-        }],
-        "products": [{
-            "name": "probe",
-            "product_id": "P001",
-            "path": "/ok",
-            "method": "GET",
-            "weight": 1
-        }]
-    })
-}
-
-fn once_template(name: &str, target_id: &str, qps: u64, requests: u64) -> Value {
-    json!({
-        "name": name,
-        "target_id": target_id,
-        "model": "open_loop",
-        "qps": qps,
-        "concurrency": 2,
-        "requests": requests,
-        "warmup_secs": 0,
-        "ramp_secs": 0,
-        "timeout_secs": 5,
-        "processes": 1,
-        "loop_enabled": false
-    })
-}
-
 async fn post_json(
     client: &reqwest::Client,
     url: &str,
@@ -145,32 +108,78 @@ async fn get_json(client: &reqwest::Client, url: &str) -> (reqwest::StatusCode, 
     (status, body(response).await)
 }
 
-async fn seed_template(
+/// Seed a workspace request + environment + named load profile and return
+/// `(profile_id, profile_name, request_id, environment_id)`.
+async fn seed_profile(
     client: &reqwest::Client,
     base: &str,
     gateway: &str,
     name: &str,
+    method: &str,
     qps: u64,
     requests: u64,
-) -> (String, String) {
-    let (status, target) = post_json(
+) -> (String, String, String, String) {
+    let (st, env) = post_json(
         client,
-        &format!("{base}/api/v1/targets"),
-        &target_payload(gateway, name),
+        &format!("{base}/api/v1/environments"),
+        &json!({
+            "name": format!("env-{name}"),
+            "gateway_base_url": gateway,
+            "tls": {"insecure_skip_verify": true}
+        }),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().unwrap().to_string();
-    let (status, template) = post_json(
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{env}");
+    let env_id = env["id"].as_str().unwrap().to_string();
+
+    let (st, col) = post_json(
         client,
-        &format!("{base}/api/v1/templates"),
-        &once_template(name, &target_id, qps, requests),
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": format!("col-{name}")}),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{template}");
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{col}");
+
+    let (st, req) = post_json(
+        client,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "probe",
+            "protocol": "http",
+            "method": method,
+            "endpoint": format!("{gateway}/ok"),
+            "mazbri": {"product_id": "P001"},
+            "weight": 1
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{req}");
+    let req_id = req["id"].as_str().unwrap().to_string();
+
+    let (st, profile) = post_json(
+        client,
+        &format!("{base}/api/v1/load-profiles"),
+        &json!({
+            "name": name,
+            "model": "open_loop",
+            "qps": qps,
+            "concurrency": 2,
+            "requests": requests,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 1,
+            "loop_enabled": false
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{profile}");
     (
-        template["id"].as_str().unwrap().to_string(),
+        profile["id"].as_str().unwrap().to_string(),
         name.to_string(),
+        req_id,
+        env_id,
     )
 }
 
@@ -203,22 +212,27 @@ async fn openapi_is_public_and_parses() {
         "{value}"
     );
     assert!(value["paths"]["/api/v1/runs/{id}/verdict"].is_object());
+    assert!(value["paths"]["/api/v1/probe"].is_object());
+    assert!(value["paths"]["/api/v1/collections"].is_object());
     shutdown.send(()).ok();
 }
 
 #[tokio::test]
-async fn start_by_name_with_overrides_leaves_saved_template_unchanged() {
+async fn start_by_name_with_overrides_leaves_saved_profile_unchanged() {
     let tmp = TempDir::new("override");
     let (mock, _ms) = start_mock(false).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let (id, name) = seed_template(&client, &base, &mock, "nightly-sma", 20, 200).await;
+    let (id, name, req_id, env_id) =
+        seed_profile(&client, &base, &mock, "nightly-sma", "GET", 20, 200).await;
 
     let (status, run) = post_json(
         &client,
         &format!("{base}/api/v1/runs"),
         &json!({
-            "template": name,
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile": name,
             "mode": "once",
             "qps": 8,
             "requests": 6
@@ -234,7 +248,7 @@ async fn start_by_name_with_overrides_leaves_saved_template_unchanged() {
     assert_eq!(detail["snapshot"]["template"]["qps"], 8);
     assert_eq!(detail["snapshot"]["template"]["requests"], 6);
 
-    let (st, saved) = get_json(&client, &format!("{base}/api/v1/templates/{id}")).await;
+    let (st, saved) = get_json(&client, &format!("{base}/api/v1/load-profiles/{id}")).await;
     assert_eq!(st, reqwest::StatusCode::OK);
     assert_eq!(saved["qps"], 20);
     assert_eq!(saved["requests"], 200);
@@ -254,25 +268,29 @@ async fn wait_returns_finished_run_and_timeout_is_409() {
     let (mock, _ms) = start_mock(false).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let (_id, name) = seed_template(&client, &base, &mock, "wait-once", 20, 8).await;
+    let (_id, name, req_id, env_id) =
+        seed_profile(&client, &base, &mock, "wait-once", "GET", 20, 8).await;
 
     let (status, run) = post_json(
         &client,
         &format!("{base}/api/v1/runs?wait=true&timeout=15"),
-        &json!({"template": name, "mode": "once"}),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile": name,
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
     let status_name = run["status"].as_str().unwrap_or("");
     assert!(["finished", "failed"].contains(&status_name), "{run}");
 
-    // A loop run will not finish within 1 second.
-    let (st, tpl) = post_json(
+    let (st, prof) = post_json(
         &client,
-        &format!("{base}/api/v1/templates"),
+        &format!("{base}/api/v1/load-profiles"),
         &json!({
             "name": "wait-loop",
-            "target_id": run["target_id"],
             "model": "open_loop",
             "qps": 5,
             "concurrency": 1,
@@ -284,10 +302,15 @@ async fn wait_returns_finished_run_and_timeout_is_409() {
         }),
     )
     .await;
-    assert_eq!(st, reqwest::StatusCode::CREATED, "{tpl}");
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{prof}");
     let response = client
         .post(format!("{base}/api/v1/runs?wait=true&timeout=1"))
-        .json(&json!({"template": "wait-loop", "mode": "loop"}))
+        .json(&json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile": "wait-loop",
+            "mode": "loop"
+        }))
         .send()
         .await
         .expect("wait loop");
@@ -303,56 +326,22 @@ async fn wait_returns_finished_run_and_timeout_is_409() {
     shutdown.send(()).ok();
 }
 
-async fn seed_failing_template(
-    client: &reqwest::Client,
-    base: &str,
-    gateway: &str,
-    name: &str,
-) -> String {
-    let payload = json!({
-        "name": name,
-        "gateway_base_url": gateway,
-        "insecure_skip_verify": true,
-        "tenants": [{
-            "name": "plain",
-            "weight": 1,
-            "api_key": "k",
-            "encryption_mode": "none"
-        }],
-        "products": [{
-            "name": "probe",
-            "product_id": "P001",
-            "path": "/ok",
-            "method": "POST",
-            "weight": 1
-        }]
-    });
-    let (status, target) = post_json(client, &format!("{base}/api/v1/targets"), &payload).await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().unwrap();
-    let (status, template) = post_json(
-        client,
-        &format!("{base}/api/v1/templates"),
-        &once_template(name, target_id, 10, 6),
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{template}");
-    name.to_string()
-}
-
 #[tokio::test]
 async fn verdict_pass_and_report_include_result() {
     let tmp = TempDir::new("verdict-pass");
     let (mock, _ms) = start_mock(false).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let (_id, name) = seed_template(&client, &base, &mock, "assert-ok", 20, 8).await;
+    let (_id, name, req_id, env_id) =
+        seed_profile(&client, &base, &mock, "assert-ok", "GET", 20, 8).await;
 
     let (status, run) = post_json(
         &client,
         &format!("{base}/api/v1/runs?wait=true&timeout=15"),
         &json!({
-            "template": name,
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile": name,
             "mode": "once",
             "assert": { "p99_ms": 5000.0, "max_error_rate": 1.0 }
         }),
@@ -381,13 +370,16 @@ async fn verdict_fail_is_422_and_running_is_409() {
     let (fail_gw, _fms) = start_mock(true).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let name = seed_failing_template(&client, &base, &fail_gw, "assert-fail").await;
+    let (_fid, fname, freq_id, fenv_id) =
+        seed_profile(&client, &base, &fail_gw, "assert-fail", "POST", 10, 6).await;
 
     let (status, run) = post_json(
         &client,
         &format!("{base}/api/v1/runs?wait=true&timeout=15"),
         &json!({
-            "template": name,
+            "request_id": freq_id,
+            "environment_id": fenv_id,
+            "load_profile": fname,
             "mode": "once",
             "assert": { "max_error_rate": 0.0 }
         }),
@@ -408,12 +400,15 @@ async fn verdict_fail_is_422_and_running_is_409() {
     );
 
     let (ok_gw, _oms) = start_mock(false).await;
-    let (_oid, oname) = seed_template(&client, &base, &ok_gw, "pending-loop", 5, 40).await;
+    let (_oid, oname, oreq_id, oenv_id) =
+        seed_profile(&client, &base, &ok_gw, "pending-loop", "GET", 5, 40).await;
     let (st, running) = post_json(
         &client,
         &format!("{base}/api/v1/runs"),
         &json!({
-            "template": oname,
+            "request_id": oreq_id,
+            "environment_id": oenv_id,
+            "load_profile": oname,
             "mode": "loop",
             "loop_enabled": true,
             "rounds": 50,
@@ -435,17 +430,18 @@ async fn verdict_fail_is_422_and_running_is_409() {
 }
 
 #[tokio::test]
-async fn invalid_assert_and_unknown_template_are_rejected() {
+async fn invalid_assert_and_unknown_profile_are_rejected() {
     let tmp = TempDir::new("validate");
     let (mock, _ms) = start_mock(false).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let (_id, name) = seed_template(&client, &base, &mock, "valid-tpl", 10, 8).await;
+    let (_id, name, req_id, _env_id) =
+        seed_profile(&client, &base, &mock, "valid-tpl", "GET", 10, 8).await;
 
     let (st, body) = post_json(
         &client,
         &format!("{base}/api/v1/runs"),
-        &json!({"template": name, "assert": {"p99_ms": 0}}),
+        &json!({"request_id": req_id, "load_profile": name, "assert": {"p99_ms": 0}}),
     )
     .await;
     assert_eq!(st, reqwest::StatusCode::BAD_REQUEST, "{body}");
@@ -454,7 +450,7 @@ async fn invalid_assert_and_unknown_template_are_rejected() {
     let (st, body) = post_json(
         &client,
         &format!("{base}/api/v1/runs"),
-        &json!({"template": "no-such-template"}),
+        &json!({"request_id": req_id, "load_profile": "no-such-profile"}),
     )
     .await;
     assert_eq!(st, reqwest::StatusCode::NOT_FOUND, "{body}");
@@ -475,11 +471,17 @@ async fn no_assert_verdict_is_200_none() {
     let (mock, _ms) = start_mock(false).await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let client = client();
-    let (_id, name) = seed_template(&client, &base, &mock, "no-assert", 20, 8).await;
+    let (_id, name, req_id, env_id) =
+        seed_profile(&client, &base, &mock, "no-assert", "GET", 20, 8).await;
     let (status, run) = post_json(
         &client,
         &format!("{base}/api/v1/runs?wait=true&timeout=15"),
-        &json!({"template": name, "mode": "once"}),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile": name,
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");

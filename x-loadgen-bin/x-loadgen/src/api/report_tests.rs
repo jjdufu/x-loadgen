@@ -1,4 +1,4 @@
-//! HTTP tests for redacted reports, sample pagination, and interrupt ranges.
+//! HTTP tests for redacted reports, sample pagination, SSE, and Mazbri E2E secret scrubbing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,8 @@ use crate::cli::ServeArgs;
 use crate::db::{DataPaths, Sample, insert_samples, open_worker_connection};
 
 const API_KEY: &str = "SECRET-API-KEY-AAAA-REPORT";
-const CLIENT_KEY: &str = "SECRET-CLIENT-KEY-DDDD-REPORT";
+const BEARER_TOKEN: &str = "SECRET-BEARER-BBBB-REPORT";
+const SECRET_VAR: &str = "SECRET-ENV-VAR-CCCC-REPORT";
 
 struct TempDir {
     path: PathBuf,
@@ -88,28 +89,6 @@ async fn start_mock() -> (String, tokio::sync::oneshot::Sender<()>) {
     (format!("http://{addr}"), tx)
 }
 
-fn target_payload(gateway: &str, name: &str) -> Value {
-    json!({
-        "name": name,
-        "gateway_base_url": gateway,
-        "insecure_skip_verify": true,
-        "client_key": CLIENT_KEY,
-        "tenants": [{
-            "name": "plain",
-            "weight": 1,
-            "api_key": API_KEY,
-            "encryption_mode": "none"
-        }],
-        "products": [{
-            "name": "probe",
-            "product_id": "P001",
-            "path": "/ok",
-            "method": "GET",
-            "weight": 1
-        }]
-    })
-}
-
 async fn post_json(
     client: &reqwest::Client,
     url: &str,
@@ -145,7 +124,7 @@ async fn wait_status(client: &reqwest::Client, base: &str, id: &str, want: &[&st
 }
 
 fn assert_no_secrets(text: &str) {
-    for secret in [API_KEY, CLIENT_KEY] {
+    for secret in [API_KEY, BEARER_TOKEN, SECRET_VAR] {
         assert!(!text.contains(secret), "secret leaked in output: {secret}");
     }
 }
@@ -157,47 +136,102 @@ async fn start_once_run(
     name: &str,
     requests: u64,
 ) -> (String, String) {
-    let (status, target) = post_json(
+    let (status, env) = post_json(
         http,
-        &format!("{base}/api/v1/targets"),
-        &target_payload(gateway, name),
+        &format!("{base}/api/v1/environments"),
+        &json!({
+            "name": format!("env-{name}"),
+            "gateway_base_url": gateway,
+            "variables": [
+                {"key": "baseUrl", "value": gateway, "secret": false, "active": true},
+                {"key": "secretToken", "value": SECRET_VAR, "secret": true, "active": true}
+            ],
+            "http_auth": {
+                "auth_type": "bearer",
+                "auth_active": true,
+                "token": BEARER_TOKEN
+            },
+            "tls": {"insecure_skip_verify": true},
+            "tenants": [{
+                "name": "plain",
+                "weight": 1,
+                "api_key": API_KEY,
+                "encryption_mode": "none"
+            }]
+        }),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().unwrap().to_string();
-    let template = json!({
-        "name": format!("tpl-{name}"),
-        "target_id": target_id,
-        "model": "open_loop",
-        "qps": 20,
-        "concurrency": 2,
-        "requests": requests,
-        "warmup_secs": 0,
-        "ramp_secs": 0,
-        "timeout_secs": 5,
-        "processes": 1,
-        "loop_enabled": false
-    });
-    let (status, tpl) = post_json(http, &format!("{base}/api/v1/templates"), &template).await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{tpl}");
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{env}");
+    let env_id = env["id"].as_str().unwrap().to_string();
+
+    let (status, col) = post_json(
+        http,
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": format!("col-{name}")}),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{col}");
+    let col_id = col["id"].as_str().unwrap();
+
+    let (status, req) = post_json(
+        http,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col_id,
+            "name": "probe",
+            "protocol": "http",
+            "method": "GET",
+            "endpoint": "<<baseUrl>>/ok",
+            "headers": [{"key": "X-Api-Key", "value": API_KEY, "active": true}],
+            "mazbri": {"product_id": "P001"},
+            "weight": 1
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{req}");
+
+    let (status, profile) = post_json(
+        http,
+        &format!("{base}/api/v1/load-profiles"),
+        &json!({
+            "name": format!("tpl-{name}"),
+            "model": "open_loop",
+            "qps": 20,
+            "concurrency": 2,
+            "requests": requests,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 1,
+            "loop_enabled": false
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
+
     let (status, run) = post_json(
         http,
         &format!("{base}/api/v1/runs"),
-        &json!({ "template_id": tpl["id"], "mode": "once" }),
+        &json!({
+            "request_id": req["id"],
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
     let id = run["id"].as_str().unwrap().to_string();
-    (id, target_id)
+    (id, env_id)
 }
 
 #[tokio::test]
-async fn report_and_run_detail_redact_secrets_but_target_detail_does_not() {
+async fn report_and_run_detail_redact_secrets_but_environment_detail_does_not() {
     let tmp = TempDir::new("redact");
     let (gateway, _mock) = start_mock().await;
     let (base, shutdown) = start_api(&tmp.path).await;
     let http = client();
-    let (id, target_id) = start_once_run(&http, &base, &gateway, "redact", 4).await;
+    let (id, env_id) = start_once_run(&http, &base, &gateway, "redact", 4).await;
     let _ = wait_status(&http, &base, &id, &["finished", "stopped"]).await;
 
     let (code, detail) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
@@ -237,11 +271,10 @@ async fn report_and_run_detail_redact_secrets_but_target_detail_does_not() {
     assert_no_secrets(&html);
     assert!(html.contains("压测报告"), "{html:.200}");
 
-    let (code, target) = get_json(&http, &format!("{base}/api/v1/targets/{target_id}")).await;
-    assert_eq!(code, reqwest::StatusCode::OK, "{target}");
-    assert_eq!(target["client_key"], CLIENT_KEY);
-    let tenant = &target["tenants"][0];
-    assert_eq!(tenant["api_key"], API_KEY);
+    let (code, env) = get_json(&http, &format!("{base}/api/v1/environments/{env_id}")).await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{env}");
+    assert_eq!(env["http_auth"]["token"], BEARER_TOKEN);
+    assert_eq!(env["tenants"][0]["api_key"], API_KEY);
 
     let forbidden = [
         "summary.json",
@@ -312,7 +345,6 @@ async fn samples_filter_and_keyset_pagination_are_stable() {
     assert_eq!(code, reqwest::StatusCode::OK, "{page2}");
     let items2 = page2["items"].as_array().expect("items2");
     assert_ne!(items2.len(), 0);
-    // Keyset pages must not overlap and must stay ordered.
     let last1 = (
         items.last().unwrap()["end_unix_ms"].as_i64().unwrap(),
         items.last().unwrap()["worker"].as_u64().unwrap(),
@@ -347,7 +379,6 @@ async fn samples_filter_and_keyset_pagination_are_stable() {
     let fail_items = fails["items"].as_array().expect("fails");
     assert_ne!(fail_items.len(), 0);
     assert!(fail_items.iter().all(|row| row["success"] == false));
-    // Seeded error text had the api key; the API must mask it.
     for row in fail_items {
         if let Some(err) = row["error"].as_str() {
             assert_no_secrets(err);
@@ -404,8 +435,6 @@ async fn sse_sends_a_stats_event() {
 }
 
 fn seed_pages(paths: &DataPaths, run_id: &str) {
-    // Deterministic two-worker set used only for pagination / filter assertions.
-    // Ends 10000..10059 across two workers, mixed products and success flags.
     let mut left = Vec::new();
     let mut right = Vec::new();
     for i in 0..60 {
@@ -441,7 +470,6 @@ fn seed_pages(paths: &DataPaths, run_id: &str) {
             right.push(sample);
         }
     }
-    // Open / create worker 1 even if the once-run only used w00.
     let conn0 = open_worker_connection(paths, run_id, 0).expect("w00");
     conn0.execute("DELETE FROM samples", []).expect("clear w00");
     insert_samples(&conn0, &left).expect("seed 0");
@@ -470,28 +498,22 @@ fn walk_named(root: &Path, names: &[&str]) -> Vec<PathBuf> {
     found
 }
 
-/// Base64 of the 32-byte key `x-loadgen-test-tenant-key-32byte`.
 const MAZBRI_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
 const MAZBRI_API_KEY: &str = "SECRET-MAZBRI-API-KEY-EEEE";
-
 const MAZBRI_TENANT_UUID: &str = "7d1c2b3a-0000-4000-8000-00000000b002";
 
-/// Create a full-encryption mazbri target, generate its SM2 binding key pair
-/// through the API, and register the public key with the mock gateway.
-/// Returns the target id and the stored private key (to assert it never leaks).
-async fn mazbri_target_with_generated_sm2_key(
+async fn mazbri_workspace_with_generated_sm2_key(
     http: &reqwest::Client,
     base: &str,
     gateway: &x_loadgen_mockgw::MockGateway,
-) -> (String, String) {
+) -> (String, String, String) {
     use x_loadgen_mockgw::{MockConfig, MockTenant};
 
-    let (status, target) = post_json(
+    let (status, env) = post_json(
         http,
-        &format!("{base}/api/v1/targets"),
+        &format!("{base}/api/v1/environments"),
         &json!({
             "name": "mazbri-mock",
-            "protocol": "mazbri",
             "gateway_base_url": gateway.base_url(),
             "tenants": [{
                 "name": "gm",
@@ -501,27 +523,17 @@ async fn mazbri_target_with_generated_sm2_key(
                 "tenant_key_base64": MAZBRI_TENANT_KEY,
                 "key_version": "3",
                 "suite": "suite/gm-sm4-hmac-sm3"
-            }],
-            "products": [{
-                "name": "echo",
-                "product_id": "P-ECHO",
-                "path": "/upstream/echo",
-                "method": "POST",
-                "body_json": {"seq": "{{seq}}"},
-                "expect_checks_json": [{"path": "echo.product_id", "eq": "P-ECHO"}]
             }]
         }),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{target}");
-    let target_id = target["id"].as_str().expect("id").to_string();
-    let tid = target["tenants"][0]["id"]
-        .as_str()
-        .expect("tid")
-        .to_string();
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{env}");
+    let env_id = env["id"].as_str().expect("env id").to_string();
+    let tid = env["tenants"][0]["id"].as_str().expect("tid").to_string();
+
     let (status, keypair) = post_json(
         http,
-        &format!("{base}/api/v1/targets/{target_id}/tenants/{tid}/binding-keypair"),
+        &format!("{base}/api/v1/environments/{env_id}/tenants/{tid}/binding-keypair"),
         &json!({"alg": "sm2-sign", "kid": "kid-gm"}),
     )
     .await;
@@ -530,6 +542,7 @@ async fn mazbri_target_with_generated_sm2_key(
         .as_str()
         .expect("public")
         .to_string();
+
     gateway
         .set_config(&MockConfig {
             tenants: vec![MockTenant {
@@ -547,15 +560,49 @@ async fn mazbri_target_with_generated_sm2_key(
             ..MockConfig::default()
         })
         .expect("register tenant");
-    let (_, stored) = get_json(http, &format!("{base}/api/v1/targets/{target_id}")).await;
+
+    let (status, col) = post_json(
+        http,
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": "mazbri-suite", "default_protocol": "mazbri"}),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{col}");
+    let (status, req) = post_json(
+        http,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "echo",
+            "protocol": "mazbri",
+            "method": "POST",
+            "endpoint": "/upstream/echo",
+            "body": {
+                "content_type": "application/json",
+                "body": "{\"seq\":\"{{seq}}\"}"
+            },
+            "mazbri": {
+                "product_id": "P-ECHO",
+                "tenant_source": "environment"
+            },
+            "assertions": {
+                "expect_transport": "ok",
+                "checks": [{"path": "echo.product_id", "eq": "P-ECHO"}]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{req}");
+    let req_id = req["id"].as_str().expect("req id").to_string();
+
+    let (_, stored) = get_json(http, &format!("{base}/api/v1/environments/{env_id}")).await;
     let private_pem = stored["tenants"][0]["binding_key"]
         .as_str()
         .expect("private key")
         .to_string();
-    (target_id, private_pem)
+    (env_id, req_id, private_pem)
 }
 
-/// Run detail, report, exports, and samples must not contain any credential.
 async fn assert_run_outputs_hide(
     http: &reqwest::Client,
     base: &str,
@@ -592,10 +639,6 @@ async fn assert_run_outputs_hide(
     }
 }
 
-/// Full encryption + SM2 request binding, configured only through the API
-/// (key pair generated by the server): the run finishes with every request
-/// successful, the gateway verified every signature and sealed every response,
-/// and no credential reaches the run detail or the report exports.
 #[tokio::test]
 async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
     let tmp = TempDir::new("mazbri");
@@ -607,16 +650,15 @@ async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
     .expect("mock gateway");
     let (base, shutdown) = start_api(&tmp.path).await;
     let http = client();
-    let (target_id, private_pem) =
-        mazbri_target_with_generated_sm2_key(&http, &base, &gateway).await;
+    let (env_id, req_id, private_pem) =
+        mazbri_workspace_with_generated_sm2_key(&http, &base, &gateway).await;
 
     let requests = 6_u64;
-    let (status, tpl) = post_json(
+    let (status, profile) = post_json(
         &http,
-        &format!("{base}/api/v1/templates"),
+        &format!("{base}/api/v1/load-profiles"),
         &json!({
             "name": "tpl-mazbri",
-            "target_id": target_id,
             "model": "open_loop",
             "qps": 20,
             "concurrency": 2,
@@ -627,11 +669,16 @@ async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
         }),
     )
     .await;
-    assert_eq!(status, reqwest::StatusCode::CREATED, "{tpl}");
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
     let (status, run) = post_json(
         &http,
         &format!("{base}/api/v1/runs"),
-        &json!({ "template_id": tpl["id"], "mode": "once" }),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");

@@ -13,6 +13,8 @@ pub mod expect;
 pub mod http;
 pub mod log;
 pub mod num;
+pub mod probe;
 pub mod report;
 pub mod run_assert;
 pub mod signal;
+pub mod vars;

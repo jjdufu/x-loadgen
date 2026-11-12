@@ -4,9 +4,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::collections::RequestDraft;
 use super::error::StoreError;
-use super::targets::new_id;
-use super::targets::now_ms;
+use super::profiles::LoadConfig;
+use super::workspace::{new_id, now_ms};
 
 /// Task statuses stored in `runs.status`.
 pub const STATUS_RUNNING: &str = "running";
@@ -479,21 +480,54 @@ fn run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     })
 }
 
+/// Weight selection for one request when running a Collection Load Test.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectedRequestWeight {
+    pub request_id: String,
+    #[serde(default = "default_one")]
+    pub weight: i64,
+}
+
+const fn default_one() -> i64 {
+    1
+}
+
 /// Body for `POST /api/v1/runs`.
 ///
-/// Identify the template with `template` (id or name) and/or `template_id`
-/// (id, as used by the Web UI). Optional fields override the saved template
-/// for this run only; the stored template is left unchanged.
-#[derive(Debug, Clone, Deserialize, Default)]
+/// Supports launching a load test from:
+/// 1. A saved single request (`request_id`),
+/// 2. A saved collection/folder (`collection_id`, optionally filtered/re-weighted via `selected_requests`), or
+/// 3. Unsaved Hoppscotch tab drafts (`adhoc_request` / `adhoc_requests`).
+///
+/// Load parameters can come from a saved `load_profile_id` / `load_profile` (id or name)
+/// and/or inline overrides (`model`, `qps`, `concurrency`, `requests`, `duration_secs`, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateRunRequest {
-    /// Template id (Web UI and older clients).
     #[serde(default)]
-    pub template_id: Option<String>,
-    /// Template id or unique name.
+    pub request_id: Option<String>,
     #[serde(default)]
-    pub template: Option<String>,
+    pub collection_id: Option<String>,
+    #[serde(default)]
+    pub selected_requests: Option<Vec<SelectedRequestWeight>>,
+    #[serde(default)]
+    pub adhoc_request: Option<RequestDraft>,
+    #[serde(default)]
+    pub adhoc_requests: Option<Vec<RequestDraft>>,
+    #[serde(default)]
+    pub environment_id: Option<String>,
+    #[serde(default)]
+    pub variables_override: Option<std::collections::BTreeMap<String, String>>,
+
+    /// Saved Load Profile ID or unique name.
+    #[serde(default, alias = "template_id", alias = "template")]
+    pub load_profile_id: Option<String>,
+    #[serde(default)]
+    pub load_profile: Option<String>,
+
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub qps: Option<i64>,
     #[serde(default)]
@@ -524,58 +558,50 @@ pub struct CreateRunRequest {
     pub loop_enabled: Option<bool>,
     #[serde(default)]
     pub rounds: Option<i64>,
-    /// Explicitly clear `rounds` (infinite loop) when set to `true`.
     #[serde(default)]
     pub clear_rounds: Option<bool>,
     #[serde(default)]
     pub loop_interval_secs: Option<i64>,
     #[serde(default)]
-    pub product_ids: Option<Vec<String>>,
+    pub expected_reasons: Option<Vec<String>>,
     #[serde(default)]
-    pub weight_overrides: Option<std::collections::HashMap<String, i64>>,
+    pub detail_retain_days: Option<i64>,
+    #[serde(default)]
+    pub detail_retain_rows: Option<i64>,
     #[serde(default)]
     pub assert: Option<crate::run_assert::AssertSpec>,
 }
 
 impl CreateRunRequest {
-    /// Resolve the template lookup key (`template` preferred, else `template_id`).
-    ///
-    /// # Errors
-    ///
-    /// Returns a validation error when neither field is provided.
-    pub fn template_key(&self) -> Result<&str, StoreError> {
+    /// Optional saved Load Profile lookup key (`load_profile` preferred, else `load_profile_id`).
+    #[must_use]
+    pub fn profile_key(&self) -> Option<&str> {
         let named = self
-            .template
+            .load_profile
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
         let by_id = self
-            .template_id
+            .load_profile_id
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        match (named, by_id) {
-            (Some(key), _) | (None, Some(key)) => Ok(key),
-            (None, None) => Err(StoreError::invalid("template or template_id is required")),
-        }
+        named.or(by_id)
     }
 
-    /// Apply optional overrides onto a copy of the saved template.
+    /// Apply inline load overrides onto `config`.
     ///
-    /// Setting `requests` clears `duration_secs`, and the other way around,
-    /// so the "exactly one of the two" template rule still holds.
+    /// Setting `requests` clears `duration_secs` and vice versa so the XOR budget
+    /// rule holds when overriding a profile or defaults.
     ///
     /// # Errors
     ///
-    /// Returns a validation error when both `requests` and `duration_secs` are
-    /// set, or when `clear_rounds` is combined with a `rounds` value.
-    pub fn apply_to(
-        &self,
-        template: &mut crate::db::templates::Template,
-    ) -> Result<(), StoreError> {
+    /// Returns validation error when both `requests` and `duration_secs` are set
+    /// simultaneously or when `clear_rounds` is combined with `rounds`.
+    pub fn apply_to(&self, config: &mut LoadConfig) -> Result<(), StoreError> {
         if self.requests.is_some() && self.duration_secs.is_some() {
             return Err(StoreError::invalid(
-                "cannot override both requests and duration_secs",
+                "cannot specify both requests and duration_secs",
             ));
         }
         if self.clear_rounds == Some(true) && self.rounds.is_some() {
@@ -583,71 +609,92 @@ impl CreateRunRequest {
                 "cannot set both rounds and clear_rounds",
             ));
         }
+        if let Some(m) = self
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            config.model = m.to_string();
+            if config.model == "closed_loop" && self.qps.is_none() {
+                config.qps = None;
+            }
+        }
         if let Some(v) = self.qps {
-            template.qps = Some(v);
+            config.qps = Some(v);
         }
         if let Some(v) = self.concurrency {
-            template.concurrency = v;
+            config.concurrency = v;
         }
         if let Some(v) = self.requests {
-            template.requests = Some(v);
-            template.duration_secs = None;
+            config.requests = Some(v);
+            config.duration_secs = None;
         }
         if let Some(v) = self.duration_secs {
-            template.duration_secs = Some(v);
-            template.requests = None;
+            config.duration_secs = Some(v);
+            config.requests = None;
         }
         if let Some(v) = self.warmup_secs {
-            template.warmup_secs = v;
+            config.warmup_secs = v;
         }
         if let Some(v) = self.ramp_secs {
-            template.ramp_secs = v;
+            config.ramp_secs = v;
         }
         if let Some(v) = self.timeout_secs {
-            template.timeout_secs = v;
+            config.timeout_secs = v;
         }
         if let Some(v) = self.connect_timeout_secs {
-            template.connect_timeout_secs = v;
+            config.connect_timeout_secs = v;
         }
         if let Some(v) = self.token_refresh_skew_secs {
-            template.token_refresh_skew_secs = v;
+            config.token_refresh_skew_secs = v;
         }
         if let Some(v) = self.include_request_id {
-            template.include_request_id = v;
+            config.include_request_id = v;
         }
         if let Some(v) = self.processes {
-            template.processes = v;
+            config.processes = v;
         }
         if let Some(v) = self.qps_mode.clone() {
-            template.qps_mode = v;
+            config.qps_mode = v;
         }
         if let Some(v) = self.requests_mode.clone() {
-            template.requests_mode = v;
+            config.requests_mode = v;
         }
         if let Some(v) = self.loop_enabled {
-            template.loop_enabled = v;
+            config.loop_enabled = v;
         }
         if self.clear_rounds == Some(true) {
-            template.rounds = None;
+            config.rounds = None;
         } else if let Some(v) = self.rounds {
-            template.rounds = Some(v);
+            config.rounds = Some(v);
         }
         if let Some(v) = self.loop_interval_secs {
-            template.loop_interval_secs = v;
+            config.loop_interval_secs = v;
         }
-        if let Some(v) = self.product_ids.clone() {
-            template.product_ids = Some(v);
+        if let Some(v) = self.expected_reasons.clone() {
+            config.expected_reasons = v;
         }
-        if let Some(v) = self.weight_overrides.clone() {
-            template.weight_overrides = Some(v);
+        if let Some(v) = self.detail_retain_days {
+            config.detail_retain_days = Some(v);
+        }
+        if let Some(v) = self.detail_retain_rows {
+            config.detail_retain_rows = Some(v);
         }
         Ok(())
     }
 
     /// Assertion thresholds to freeze in the run snapshot, if any.
     #[must_use]
-    pub fn assert_spec(&self) -> Option<crate::run_assert::AssertSpec> {
-        self.assert.as_ref().filter(|s| !s.is_empty()).cloned()
+    pub fn assert_spec(
+        &self,
+        fallback: Option<&crate::run_assert::AssertSpec>,
+    ) -> Option<crate::run_assert::AssertSpec> {
+        match self.assert.as_ref() {
+            Some(spec) if !spec.is_empty() => Some(spec.clone()),
+            Some(_) => None,
+            None => fallback.filter(|s| !s.is_empty()).cloned(),
+        }
     }
 }
 

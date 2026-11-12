@@ -1,4 +1,4 @@
-//! mazbri executor against the local mock gateway (token, binding, envelopes, failures).
+//! Mazbri executor against the local mock gateway (token, binding, envelopes, failures).
 
 use serde_json::{Value, json};
 use x_loadgen_mockgw::{Fault, MockConfig, MockGateway, MockStats, MockTenant};
@@ -6,12 +6,12 @@ use x_loadgen_sdk::generate_binding_keypair;
 
 use super::execute::execute_one;
 use super::metrics::OutcomeClass;
+use super::snapshot::ExecutionTarget;
 use super::{
     ExecOutcome, ExecutePlan, HttpExecutor, ProductChoice, RequestCtx, RequestExecutor,
     TenantChoice, Weighted,
 };
-use crate::db::targets::TargetDetail;
-use crate::db::templates::Template;
+use crate::db::profiles::LoadConfig;
 
 /// Base64 of the 32-byte key `x-loadgen-test-tenant-key-32byte`.
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
@@ -93,10 +93,9 @@ impl Case {
     }
 }
 
-fn snapshot(base: &str, case: &Case) -> (TargetDetail, Template) {
+fn snapshot(base: &str, case: &Case) -> (ExecutionTarget, LoadConfig) {
     let mut tenant = json!({
         "id": "tenant-1",
-        "target_id": "target-1",
         "name": "t",
         "weight": 1,
         "api_key": API_KEY,
@@ -105,38 +104,45 @@ fn snapshot(base: &str, case: &Case) -> (TargetDetail, Template) {
     for (key, value) in case.client.as_object().expect("object") {
         tenant[key] = value.clone();
     }
+    let body_raw = serde_json::to_string(&json!({"seq": "{{seq}}", "note": "压测"})).unwrap();
     let target = json!({
         "id": "target-1",
         "name": "mock",
-        "protocol": "mazbri",
         "gateway_base_url": base,
-        "insecure_skip_verify": false,
-        "created_at": 0,
-        "updated_at": 0,
+        "tls": { "insecure_skip_verify": false },
         "tenants": [tenant],
-        "products": [{
-            "id": "product-1",
-            "target_id": "target-1",
+        "requests": [{
+            "id": "req-1",
             "name": "echo",
-            "product_id": "P-ECHO",
-            "path": "/upstream/echo",
+            "protocol": "mazbri",
             "method": "POST",
+            "endpoint": "/upstream/echo",
+            "params": [{"key": "q", "value": "{{seq}}", "active": true}],
+            "headers": [{"key": "x-trace", "value": "trace-{{seq}}", "active": true}],
+            "body": {
+                "content_type": "application/json",
+                "body": body_raw,
+                "form": []
+            },
+            "auth": { "auth_type": "none", "auth_active": true },
+            "mazbri": {
+                "product_id": "P-ECHO",
+                "tenant_source": "environment"
+            },
+            "tls": {},
+            "assertions": {
+                "expect_transport": "ok",
+                "checks": [
+                    {"path": "echo.product_id", "eq": "P-ECHO"},
+                    {"path": "echo.body.note", "eq": "压测"},
+                    {"path": "tenant_id", "exists": true}
+                ]
+            },
             "weight": 1,
-            "query_json": {"q": "{{seq}}"},
-            "headers_json": {"x-trace": "trace-{{seq}}"},
-            "body_json": {"seq": "{{seq}}", "note": "压测"},
-            "expect_transport": "ok",
-            "expect_checks_json": [
-                {"path": "echo.product_id", "eq": "P-ECHO"},
-                {"path": "echo.body.note", "eq": "压测"},
-                {"path": "tenant_id", "exists": true}
-            ]
+            "variables": {}
         }]
     });
     let template = json!({
-        "id": "template-1",
-        "name": "mazbri",
-        "target_id": "target-1",
         "model": "closed_loop",
         "concurrency": 1,
         "requests": REQUESTS,
@@ -150,9 +156,7 @@ fn snapshot(base: &str, case: &Case) -> (TargetDetail, Template) {
         "qps_mode": "total",
         "requests_mode": "total",
         "loop_enabled": false,
-        "loop_interval_secs": 0,
-        "created_at": 0,
-        "updated_at": 0
+        "loop_interval_secs": 0
     });
     (
         serde_json::from_value(target).expect("target"),
@@ -167,7 +171,7 @@ async fn run(case: &Case, gateway_view: Option<MockTenant>) -> (Vec<ExecOutcome>
 async fn run_with(
     case: &Case,
     gateway_view: Option<MockTenant>,
-    edit: impl FnOnce(&mut TargetDetail),
+    edit: impl FnOnce(&mut ExecutionTarget),
 ) -> (Vec<ExecOutcome>, MockStats) {
     let config = MockConfig {
         tenants: vec![gateway_view.unwrap_or_else(|| case.gateway.clone())],
@@ -183,6 +187,7 @@ async fn run_with(
     for index in 0..REQUESTS {
         let ctx = RequestCtx {
             index,
+            request_key: "req-1".into(),
             product_id: "P-ECHO".into(),
             product_name: Some("echo".into()),
             tenant_name: Some("t".into()),
@@ -361,8 +366,10 @@ async fn gateway_rejections_and_token_failures_are_counted() {
 async fn business_checks_run_on_the_decrypted_data() {
     let case = Case::encrypted("full", Some("suite/gm-sm4-hmac-sm3"), None, None).bound("sm2-sign");
     let (outcomes, stats) = run_with(&case, None, |target| {
-        target.products[0].expect_checks_json =
-            Some(json!([{"path": "echo.body.note", "eq": "不是这个"}]));
+        target.requests[0].assertions.checks = serde_json::from_value(json!([
+            {"path": "echo.body.note", "eq": "不是这个"}
+        ]))
+        .unwrap();
     })
     .await;
     assert_eq!(stats.responses_sealed, REQUESTS);
@@ -400,13 +407,14 @@ async fn crypto_and_business_failures_are_recorded_as_failed_samples() {
             .expect("mock gateway");
         let (mut target, template) = snapshot(&gateway.base_url(), &case);
         if let Some(checks) = checks {
-            target.products[0].expect_checks_json = Some(checks);
+            target.requests[0].assertions.checks = serde_json::from_value(checks).unwrap();
         }
         let executor = HttpExecutor::from_snapshot(&target, &template).expect("executor");
         let plan = ExecutePlan {
             products: vec![Weighted {
                 weight: 1,
                 value: ProductChoice {
+                    request_key: "req-1".into(),
                     product_id: "P-ECHO".into(),
                     product_name: Some("echo".into()),
                 },

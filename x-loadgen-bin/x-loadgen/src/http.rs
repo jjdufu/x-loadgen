@@ -74,16 +74,22 @@ pub fn build_http_client(options: &HttpClientOptions) -> Result<Client> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if let (Some(cert_path), Some(key_path)) = (cert, key) {
-        let cert_pem = fs::read(Path::new(cert_path))
-            .with_context(|| format!("read client certificate {cert_path}"))?;
-        let key_pem =
-            fs::read(Path::new(key_path)).with_context(|| format!("read client key {key_path}"))?;
-        let mut identity_pem = cert_pem;
-        identity_pem.extend_from_slice(&key_pem);
-        let identity = reqwest::Identity::from_pem(&identity_pem)
-            .context("failed to load mTLS client identity (PEM cert+key)")?;
-        builder = builder.identity(identity);
+    match (cert, key) {
+        (Some(cert_src), Some(key_src)) => {
+            let mut identity_pem = load_pem_bytes(cert_src, "client certificate")?;
+            if !identity_pem.ends_with(b"\n") {
+                identity_pem.push(b'\n');
+            }
+            let key_pem = load_pem_bytes(key_src, "client key")?;
+            identity_pem.extend_from_slice(&key_pem);
+            let identity = reqwest::Identity::from_pem(&identity_pem)
+                .context("failed to load mTLS client identity (PEM cert+key)")?;
+            builder = builder.identity(identity);
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            anyhow::bail!("client_cert and client_key must both be set when configuring mTLS");
+        }
+        (None, None) => {}
     }
     if let Some(ca) = options
         .ca_cert
@@ -91,7 +97,7 @@ pub fn build_http_client(options: &HttpClientOptions) -> Result<Client> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        let pem = fs::read(Path::new(ca)).with_context(|| format!("read CA certificate {ca}"))?;
+        let pem = load_pem_bytes(ca, "CA certificate")?;
         let certificate =
             reqwest::Certificate::from_pem(&pem).context("failed to parse CA certificate PEM")?;
         builder = builder.add_root_certificate(certificate);
@@ -102,13 +108,38 @@ pub fn build_http_client(options: &HttpClientOptions) -> Result<Client> {
     builder.build().context("failed to build HTTP client")
 }
 
+/// Load PEM bytes either from inline PEM text (`-----BEGIN ...`) or from a filesystem path.
+fn load_pem_bytes(source: &str, label: &str) -> Result<Vec<u8>> {
+    if source.contains("-----BEGIN ") {
+        Ok(source.as_bytes().to_vec())
+    } else {
+        fs::read(Path::new(source)).with_context(|| format!("read {label} {source}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HttpClientOptions, build_http_client};
+    use super::{HttpClientOptions, build_http_client, load_pem_bytes};
 
     #[test]
     fn builds_default_client() {
         let client = build_http_client(&HttpClientOptions::new());
         assert!(client.is_ok(), "default client: {client:?}");
+    }
+
+    #[test]
+    fn inline_pem_is_loaded_without_filesystem_read() {
+        let pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+        let bytes = load_pem_bytes(pem, "CA certificate").expect("inline pem");
+        assert_eq!(bytes, pem.as_bytes());
+    }
+
+    #[test]
+    fn partial_mtls_is_rejected() {
+        let mut opts = HttpClientOptions::new();
+        opts.client_cert =
+            Some("-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".into());
+        let err = build_http_client(&opts).expect_err("must reject cert without key");
+        assert!(err.to_string().contains("client_cert and client_key"));
     }
 }

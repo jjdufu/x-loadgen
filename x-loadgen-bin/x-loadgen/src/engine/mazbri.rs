@@ -4,15 +4,11 @@
 //! single-flight, refreshed `token_refresh_skew_secs` before expiry) and one
 //! [`GatewaySession`] built from the page-entered settings. Each request:
 //!
-//! 1. renders the product into a [`GatewayRequest`];
+//! 1. renders the request into a [`GatewayRequest`] (with Hoppscotch `<<var>>` / `{{seq}}` interpolation);
 //! 2. seals it (`request` / `full`) and adds `x-mazbri-*` binding headers;
 //! 3. sends `POST {base}/api/v1/gateway` with `Authorization: Bearer`;
 //! 4. decodes the response (opening the envelope under `full`) and judges the
 //!    decrypted `data`. Latency covers sealing, the call, and decoding.
-//!
-//! Error classes: `token_refresh` (no token), `crypto` (seal / open / signature
-//! failure), `protocol` (response does not match the contract), `transport`
-//! (network or gateway rejection).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -26,20 +22,22 @@ use x_loadgen_sdk::{
     GatewaySession, TOKEN_PATH, parse_token_response, token_request_body,
 };
 
-use crate::db::targets::Tenant;
+use crate::db::workspace::TenantSpec;
 use crate::engine::metrics::unix_now_ms;
 use crate::engine::token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 use crate::engine::transport::{
-    ExecOutcome, HttpExecutor, PreparedProduct, RequestCtx, apply_judge, apply_seq, elapsed_us,
-    failed_outcome, join_url,
+    ExecOutcome, PreparedRequest, RequestCtx, active_kv_pairs, apply_judge, elapsed_us,
+    failed_outcome, join_url, urlencoding_lite,
 };
 use crate::expect::judge;
+use crate::vars::{RuntimeVars, render_str};
 
 /// Shortest token lifetime used after subtracting the refresh skew.
 const MIN_TOKEN_LIFETIME: Duration = Duration::from_secs(1);
 
-/// Credentials and codec for one mazbri tenant.
+/// Credentials and codec for one mazbri tenant against one gateway URL.
 pub struct MazbriTenant {
+    invoke_url: String,
     session: GatewaySession,
     broker: TokenBroker,
 }
@@ -51,7 +49,12 @@ impl MazbriTenant {
     ///
     /// Returns an error naming the tenant when its settings are invalid or the
     /// `api_key` is missing; key material never appears in the message.
-    pub fn new(client: &Client, base_url: &str, tenant: &Tenant, skew: Duration) -> Result<Self> {
+    pub fn new(
+        client: &Client,
+        base_url: &str,
+        tenant: &TenantSpec,
+        skew: Duration,
+    ) -> Result<Self> {
         let session = tenant
             .settings()
             .session()
@@ -70,18 +73,20 @@ impl MazbriTenant {
             skew,
         );
         Ok(Self {
+            invoke_url: join_url(base_url, GATEWAY_INVOKE_PATH),
             session,
             broker: TokenBroker::new(refresh),
         })
     }
 
-    /// Execute one product call through the gateway.
+    /// Execute one request call through the gateway.
     pub async fn execute(
         &self,
-        executor: &HttpExecutor,
+        client: &Client,
         ctx: &RequestCtx,
-        product: &PreparedProduct,
+        req: &PreparedRequest,
         request_id: Option<String>,
+        customer_name: Option<String>,
     ) -> ExecOutcome {
         let token = match self.broker.get().await {
             Ok(token) => token,
@@ -95,6 +100,7 @@ impl MazbriTenant {
                     Some("token_refresh".into()),
                     Some(message),
                     None,
+                    customer_name,
                 );
             }
         };
@@ -109,9 +115,10 @@ impl MazbriTenant {
                 Some(class.into()),
                 Some(message),
                 status,
+                customer_name.clone(),
             )
         };
-        let request = match self.build_call(executor, ctx, product, &token, request_id.as_deref()) {
+        let request = match self.build_call(client, ctx, req, &token, request_id.as_deref()) {
             Ok(request) => request,
             Err((class, message)) => return fail(class, message, None),
         };
@@ -143,31 +150,31 @@ impl MazbriTenant {
             response_bytes: i64::try_from(raw.len()).ok(),
             request_id,
             body: None,
+            customer_name,
         };
-        judge_decoded(&mut outcome, decoded, http_status, product);
+        judge_decoded(&mut outcome, decoded, http_status, req);
         outcome
     }
-}
 
-impl MazbriTenant {
     /// Render, seal, and sign one gateway call.
     fn build_call(
         &self,
-        executor: &HttpExecutor,
+        client: &Client,
         ctx: &RequestCtx,
-        product: &PreparedProduct,
+        req: &PreparedRequest,
         token: &str,
         request_id: Option<&str>,
     ) -> Result<reqwest::RequestBuilder, (&'static str, String)> {
-        let plaintext = serde_json::to_vec(&gateway_request(product, ctx.index))
+        let runtime = RuntimeVars::for_index(ctx.index);
+        let gw_req = build_gateway_request(req, &runtime);
+        let plaintext = serde_json::to_vec(&gw_req)
             .map_err(|error| ("config", format!("gateway request: {error}")))?;
         let encoded = self
             .session
             .encode_request(&plaintext, unix_now_secs())
             .map_err(|error| ("crypto", format!("seal request: {error}")))?;
-        let mut request = executor
-            .client
-            .post(join_url(&executor.base_url, GATEWAY_INVOKE_PATH))
+        let mut request = client
+            .post(&self.invoke_url)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(encoded.body);
@@ -177,19 +184,103 @@ impl MazbriTenant {
         if let Some(id) = request_id {
             request = request.header("X-Request-Id", id);
         }
-        if let Some(timeout) = product.timeout {
+        if let Some(timeout) = req.timeout {
             request = request.timeout(timeout);
         }
         Ok(request)
     }
 }
 
-/// Fill `outcome` from the decoded response and run the product expectations.
+/// Render a [`PreparedRequest`] into a [`GatewayRequest`] for `runtime`.
+pub(crate) fn build_gateway_request(
+    req: &PreparedRequest,
+    runtime: &RuntimeVars,
+) -> GatewayRequest {
+    let render_map = |pairs: &[(String, String)]| {
+        (!pairs.is_empty()).then(|| {
+            pairs
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        render_str(key, &req.variables, runtime),
+                        render_str(value, &req.variables, runtime),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+    };
+
+    let ct = req
+        .body
+        .content_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"));
+
+    let body = match ct {
+        Some("application/x-www-form-urlencoded") => {
+            let active_form = active_kv_pairs(&req.body.form);
+            if active_form.is_empty() {
+                req.body
+                    .body
+                    .as_deref()
+                    .map(|raw| Value::String(render_str(raw, &req.variables, runtime)))
+            } else {
+                let encoded = active_form
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "{}={}",
+                            urlencoding_lite(&render_str(k, &req.variables, runtime)),
+                            urlencoding_lite(&render_str(v, &req.variables, runtime))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&");
+                Some(Value::String(encoded))
+            }
+        }
+        Some("application/json") | None => {
+            req.body
+                .body
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(|text| {
+                    let rendered = render_str(text, &req.variables, runtime);
+                    serde_json::from_str(&rendered).unwrap_or(Value::String(rendered))
+                })
+        }
+        Some(_) => req
+            .body
+            .body
+            .as_deref()
+            .map(|text| Value::String(render_str(text, &req.variables, runtime))),
+    };
+
+    let raw_ep = render_str(&req.endpoint_template, &req.variables, runtime);
+    let path = if raw_ep.is_empty() {
+        "/".to_string()
+    } else {
+        raw_ep
+    };
+    let product_id = render_str(&req.product_id_template, &req.variables, runtime);
+
+    GatewayRequest {
+        product_id,
+        path,
+        method: req.method.as_str().to_string(),
+        query: render_map(&req.params),
+        headers: render_map(&req.headers),
+        body,
+    }
+}
+
+/// Fill `outcome` from the decoded response and run the request expectations.
 fn judge_decoded(
     outcome: &mut ExecOutcome,
     decoded: Result<GatewayResponseEnvelope, SdkError>,
     http_status: u16,
-    product: &PreparedProduct,
+    req: &PreparedRequest,
 ) {
     let http_ok = (200..300).contains(&http_status);
     let rejection = match decoded {
@@ -212,8 +303,8 @@ fn judge_decoded(
     let judgement = judge(
         outcome.transport_ok,
         outcome.body.as_ref(),
-        product.transport,
-        &product.checks,
+        req.transport,
+        &req.checks,
     );
     apply_judge(outcome, judgement);
     if !outcome.transport_ok && outcome.error_class.as_deref() == Some("transport") {
@@ -251,34 +342,6 @@ fn token_refresher(client: Client, url: String, api_key: String, skew: Duration)
     })
 }
 
-/// Render a product into the gateway request body for request `index`.
-fn gateway_request(product: &PreparedProduct, index: u64) -> GatewayRequest {
-    let render_map = |pairs: &[(String, String)]| {
-        (!pairs.is_empty()).then(|| {
-            pairs
-                .iter()
-                .map(|(key, value)| (key.clone(), apply_seq(value, index)))
-                .collect::<BTreeMap<_, _>>()
-        })
-    };
-    let body = product.body.as_deref().map(|text| {
-        let rendered = apply_seq(text, index);
-        if product.body_is_json {
-            serde_json::from_str(&rendered).unwrap_or(Value::String(rendered))
-        } else {
-            Value::String(rendered)
-        }
-    });
-    GatewayRequest {
-        product_id: product.product_id.clone(),
-        path: product.path.clone(),
-        method: product.method.as_str().to_string(),
-        query: render_map(&product.query),
-        headers: render_map(&product.headers),
-        body,
-    }
-}
-
 fn rejection_message(envelope: &GatewayResponseEnvelope, http_status: u16) -> String {
     envelope.error.clone().unwrap_or_else(|| {
         format!(
@@ -288,7 +351,7 @@ fn rejection_message(envelope: &GatewayResponseEnvelope, http_status: u16) -> St
     })
 }
 
-fn decode_error_class(error: &SdkError) -> &'static str {
+pub(crate) fn decode_error_class(error: &SdkError) -> &'static str {
     match error {
         SdkError::Crypto(_) | SdkError::LegacyDenied(_) | SdkError::UnsupportedAlgorithm(_) => {
             "crypto"

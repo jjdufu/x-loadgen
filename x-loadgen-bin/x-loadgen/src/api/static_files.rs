@@ -1,5 +1,6 @@
 //! Serve the embedded Vue SPA, or a short message when it was not embedded.
 
+#[cfg(frontend_embedded)]
 use std::path::Path;
 
 use axum::http::{StatusCode, Uri, header};
@@ -44,6 +45,7 @@ fn serve_asset(path: &str) -> Response {
     }
 }
 
+#[cfg(frontend_embedded)]
 fn should_fallback(path: &str) -> bool {
     Path::new(path).extension().is_none()
 }

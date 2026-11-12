@@ -1,15 +1,17 @@
 //! HTTP API surface.
 
 pub mod auth;
+pub mod collections;
+pub mod environments;
 pub mod error;
 pub mod openapi;
+pub mod probe;
+pub mod profiles;
 pub mod report;
 pub mod runs;
 pub mod server;
 pub mod state;
 pub mod static_files;
-pub mod targets;
-pub mod templates;
 
 #[cfg(test)]
 mod automation_tests;

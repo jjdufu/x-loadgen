@@ -1,21 +1,27 @@
-//! Tenant/product mixing and the request executor interface.
+//! Tenant/request mixing and the dual-protocol (`http` + `mazbri`) request executor.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method};
 use serde_json::Value;
 
-use crate::db::targets::{PROTOCOL_HTTP, PROTOCOL_MAZBRI, Product, TargetDetail};
-use crate::db::templates::Template;
+use crate::db::profiles::LoadConfig;
+use crate::db::workspace::{
+    HttpAuthSpec, KeyValueRow, PROTOCOL_HTTP, PROTOCOL_MAZBRI, RequestBodySpec, TlsSpec,
+    non_empty_owned, non_empty_str,
+};
 use crate::engine::mazbri::MazbriTenant;
 use crate::engine::metrics::unix_now_ms;
+use crate::engine::snapshot::{ExecutionRequest, ExecutionTarget};
 use crate::expect::{FieldCheck, Judge, TransportExpect, judge};
 use crate::http::{HttpClientOptions, build_http_client};
+use crate::vars::{RuntimeVars, render_str};
 
 /// Deterministic weighted pick. `seed` is the request index (`next_index`).
 #[must_use]
@@ -41,6 +47,7 @@ pub fn mix_request_seed(seed: u64, weights: &[u64]) -> usize {
 #[derive(Debug, Clone)]
 pub struct RequestCtx {
     pub index: u64,
+    pub request_key: String,
     pub product_id: String,
     pub product_name: Option<String>,
     pub tenant_name: Option<String>,
@@ -61,6 +68,7 @@ pub struct ExecOutcome {
     pub response_bytes: Option<i64>,
     pub request_id: Option<String>,
     pub body: Option<Value>,
+    pub customer_name: Option<String>,
 }
 
 /// Executes one request (HTTP, mazbri gateway, or a test mock).
@@ -72,7 +80,7 @@ pub trait RequestExecutor: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = ExecOutcome> + Send + 'a>>;
 }
 
-/// A product or tenant entry with a weight used by [`mix_request_seed`].
+/// A request or tenant entry with a weight used by [`mix_request_seed`].
 #[derive(Debug, Clone)]
 pub struct Weighted<T> {
     pub weight: u64,
@@ -90,190 +98,252 @@ pub fn pick_weighted<T>(seed: u64, items: &[Weighted<T>]) -> Option<&T> {
     items.get(index).map(|item| &item.value)
 }
 
-/// Executor built from a run snapshot. The client (and, for mazbri targets,
-/// each tenant's token cache and gateway session) is reused across windows.
+/// Executor built from a [`crate::engine::RunSnapshot`].
 ///
-/// - `http` targets call `{base}{product.path}` directly, with the tenant's
-///   optional `api_key` as `X-API-KEY`.
-/// - `mazbri` targets exchange the tenant `api_key` for a bearer token and send
-///   every product as a [`x_loadgen_sdk::GatewayRequest`] to `/api/v1/gateway`,
-///   sealed and signed per the tenant settings; the response is decoded before
-///   it is timed and judged.
+/// Reuses connection pools and per-tenant [`MazbriTenant`] token brokers / sessions
+/// across windows, supporting both `http` and `mazbri` requests inside the same
+/// workspace or collection.
 pub struct HttpExecutor {
-    pub(super) client: Client,
-    pub(super) base_url: String,
-    pub(super) include_request_id: bool,
-    mazbri: bool,
-    products: HashMap<String, PreparedProduct>,
-    tenants: HashMap<String, PreparedTenant>,
+    pub(crate) client: Client,
+    pub(crate) base_url: Option<String>,
+    pub(crate) include_request_id: bool,
+    requests: HashMap<String, PreparedRequest>,
+    http_tenants: HashMap<String, Option<String>>,
+    mazbri_tenants: HashMap<(String, String), Arc<MazbriTenant>>,
 }
 
-pub(super) struct PreparedProduct {
-    pub(super) product_id: String,
-    pub(super) method: Method,
-    pub(super) path: String,
-    pub(super) query: Vec<(String, String)>,
-    pub(super) headers: Vec<(String, String)>,
-    pub(super) body: Option<String>,
-    pub(super) body_is_json: bool,
-    pub(super) timeout: Option<Duration>,
-    pub(super) transport: TransportExpect,
-    pub(super) checks: Vec<FieldCheck>,
+pub(crate) enum PreparedMazbriMode {
+    Inline {
+        tenant_name: String,
+        tenant: Arc<MazbriTenant>,
+    },
+    Environment {
+        gateway_base_url: String,
+        pinned_tenant: Option<String>,
+    },
 }
 
-enum PreparedTenant {
-    Http { api_key: Option<String> },
-    Mazbri(Box<MazbriTenant>),
+pub(crate) struct PreparedRequest {
+    pub(crate) product_id_template: String,
+    pub(crate) method: Method,
+    pub(crate) endpoint_template: String,
+    pub(crate) params: Vec<(String, String)>,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: RequestBodySpec,
+    pub(crate) auth: HttpAuthSpec,
+    pub(crate) variables: BTreeMap<String, String>,
+    pub(crate) timeout: Option<Duration>,
+    pub(crate) transport: TransportExpect,
+    pub(crate) checks: Vec<FieldCheck>,
+    pub(crate) custom_client: Option<Client>,
+    pub(crate) mazbri_mode: Option<PreparedMazbriMode>,
+}
+
+/// Rendered HTTP wire components shared between load-test execution and Probe (`Send`).
+#[derive(Debug, Clone)]
+pub(crate) struct RenderedHttpCall {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub basic_auth: Option<(String, String)>,
+    pub body_bytes: Option<Vec<u8>>,
+    pub content_type: Option<String>,
+    pub body_preview: Option<String>,
 }
 
 impl HttpExecutor {
-    /// Build a client and per-product request templates from a snapshot.
+    /// Build a client and per-request execution templates from a frozen snapshot.
     ///
     /// # Errors
     ///
-    /// Returns an error if the HTTP client cannot be constructed or a product
-    /// method / expectation is invalid.
-    pub fn from_snapshot(target: &TargetDetail, template: &Template) -> Result<Self> {
-        let options = HttpClientOptions {
-            connect_timeout_secs: u64::try_from(template.connect_timeout_secs.max(0))
-                .unwrap_or(u64::MAX)
-                .max(1),
-            timeout_secs: u64::try_from(template.timeout_secs.max(0))
-                .unwrap_or(u64::MAX)
-                .max(1),
-            user_agent: format!("x-loadgen/{}", env!("CARGO_PKG_VERSION")),
-            client_cert: target.client_cert.clone(),
-            client_key: target.client_key.clone(),
-            ca_cert: target.ca_cert.clone(),
-            insecure_skip_verify: target.insecure_skip_verify,
-            ..HttpClientOptions::new()
-        };
-        let client = build_http_client(&options)?;
-        let selected = select_products(target, template);
-        if selected.is_empty() {
-            bail!("the snapshot has no products to execute");
+    /// Returns an error if the HTTP/TLS client cannot be constructed or any
+    /// request / Mazbri session is invalid.
+    pub fn from_snapshot(target: &ExecutionTarget, template: &LoadConfig) -> Result<Self> {
+        if target.requests.is_empty() {
+            bail!("the snapshot has no requests to execute");
         }
-        let mut products = HashMap::new();
-        for product in selected {
-            let prepared = prepare_product(product, template.timeout_secs)?;
-            products.insert(product.product_id.clone(), prepared);
+        let client = build_client_for_tls(&target.tls, template)?;
+        let skew = Duration::from_secs(
+            u64::try_from(template.token_refresh_skew_secs.max(0)).unwrap_or(0),
+        );
+
+        let mut http_tenants = HashMap::new();
+        for tenant in &target.tenants {
+            http_tenants.insert(
+                tenant.name.trim().to_string(),
+                non_empty_owned(tenant.api_key.as_deref()),
+            );
         }
-        let mut tenants = HashMap::new();
-        match target.protocol.as_str() {
-            PROTOCOL_HTTP => {
-                for tenant in &target.tenants {
-                    let api_key = tenant.api_key.clone().filter(|key| !key.trim().is_empty());
-                    tenants.insert(tenant.name.clone(), PreparedTenant::Http { api_key });
-                }
-            }
-            PROTOCOL_MAZBRI => {
-                if target.tenants.is_empty() {
-                    bail!("a mazbri target needs at least one tenant");
-                }
-                let skew = Duration::from_secs(
-                    u64::try_from(template.token_refresh_skew_secs.max(0)).unwrap_or(0),
-                );
-                for tenant in &target.tenants {
-                    let prepared =
-                        MazbriTenant::new(&client, &target.gateway_base_url, tenant, skew)?;
-                    tenants.insert(
-                        tenant.name.clone(),
-                        PreparedTenant::Mazbri(Box::new(prepared)),
-                    );
-                }
-            }
-            other => bail!("unsupported target protocol {other:?}"),
+
+        let mut mazbri_tenants: HashMap<(String, String), Arc<MazbriTenant>> = HashMap::new();
+        let mut requests = HashMap::with_capacity(target.requests.len());
+
+        for req in &target.requests {
+            let prepared =
+                prepare_request(req, target, template, &client, skew, &mut mazbri_tenants)?;
+            requests.insert(req.id.clone(), prepared);
         }
+
         Ok(Self {
             client,
             base_url: target.gateway_base_url.clone(),
             include_request_id: template.include_request_id,
-            mazbri: target.protocol == PROTOCOL_MAZBRI,
-            products,
-            tenants,
+            requests,
+            http_tenants,
+            mazbri_tenants,
         })
     }
 }
 
-fn select_products<'a>(target: &'a TargetDetail, template: &Template) -> Vec<&'a Product> {
-    match template.product_ids.as_ref() {
-        Some(ids) if !ids.is_empty() => target
-            .products
-            .iter()
-            .filter(|product| ids.iter().any(|id| id == &product.id))
-            .collect(),
-        _ => target.products.iter().collect(),
-    }
+pub(crate) fn build_client_for_tls(tls: &TlsSpec, template: &LoadConfig) -> Result<Client> {
+    let options = HttpClientOptions {
+        connect_timeout_secs: u64::try_from(template.connect_timeout_secs.max(0))
+            .unwrap_or(u64::MAX)
+            .max(1),
+        timeout_secs: u64::try_from(template.timeout_secs.max(0))
+            .unwrap_or(u64::MAX)
+            .max(1),
+        user_agent: format!("x-loadgen/{}", env!("CARGO_PKG_VERSION")),
+        client_cert: non_empty_owned(tls.client_cert.as_deref()),
+        client_key: non_empty_owned(tls.client_key.as_deref()),
+        ca_cert: non_empty_owned(tls.ca_cert.as_deref()),
+        insecure_skip_verify: tls.insecure_skip_verify,
+        ..HttpClientOptions::new()
+    };
+    build_http_client(&options)
 }
 
-fn prepare_product(product: &Product, default_timeout_secs: i64) -> Result<PreparedProduct> {
-    let method = Method::from_bytes(product.method.trim().as_bytes())
-        .with_context(|| format!("invalid HTTP method {}", product.method))?;
-    let timeout_secs = product.timeout_secs.unwrap_or(default_timeout_secs);
-    let timeout = if timeout_secs > 0 {
-        Some(Duration::from_secs(
-            u64::try_from(timeout_secs).unwrap_or(u64::MAX),
-        ))
-    } else {
+fn prepare_request(
+    req: &ExecutionRequest,
+    target: &ExecutionTarget,
+    template: &LoadConfig,
+    default_client: &Client,
+    skew: Duration,
+    mazbri_tenants: &mut HashMap<(String, String), Arc<MazbriTenant>>,
+) -> Result<PreparedRequest> {
+    let method = Method::from_bytes(req.method.trim().as_bytes())
+        .with_context(|| format!("invalid HTTP method {}", req.method))?;
+    let timeout_secs = req.timeout_secs.unwrap_or(template.timeout_secs);
+    let timeout = (timeout_secs > 0)
+        .then(|| Duration::from_secs(u64::try_from(timeout_secs).unwrap_or(u64::MAX)));
+    let transport =
+        TransportExpect::parse(&req.assertions.expect_transport).unwrap_or(TransportExpect::Ok);
+
+    let merged_tls = req.tls.overlay_on(&target.tls);
+    let custom_client = if merged_tls == target.tls {
         None
+    } else {
+        Some(build_client_for_tls(&merged_tls, template)?)
     };
-    let transport = product
-        .expect_transport
-        .as_deref()
-        .and_then(TransportExpect::parse)
-        .unwrap_or(TransportExpect::Ok);
-    let checks = match &product.expect_checks_json {
-        Some(Value::Array(items)) => items
-            .iter()
-            .filter_map(|item| serde_json::from_value::<FieldCheck>(item.clone()).ok())
-            .collect(),
-        _ => Vec::new(),
+    let effective_client = custom_client.as_ref().unwrap_or(default_client);
+
+    let params = active_kv_pairs(&req.params);
+    let headers = active_kv_pairs(&req.headers);
+
+    let mazbri_mode = match req.protocol.as_str() {
+        PROTOCOL_HTTP => None,
+        PROTOCOL_MAZBRI => Some(prepare_mazbri_mode(
+            req,
+            target,
+            effective_client,
+            skew,
+            mazbri_tenants,
+        )?),
+        other => bail!("unsupported request protocol {other:?}"),
     };
-    Ok(PreparedProduct {
-        product_id: product.product_id.clone(),
+
+    Ok(PreparedRequest {
+        product_id_template: req.mazbri.product_id.clone(),
         method,
-        path: product.path.clone(),
-        query: flatten_pairs(product.query_json.as_ref()),
-        headers: flatten_pairs(product.headers_json.as_ref()),
-        body: product.body_json.as_ref().map(render_body_template),
-        body_is_json: product
-            .body_json
-            .as_ref()
-            .is_some_and(|value| !value.is_string()),
+        endpoint_template: req.endpoint.clone(),
+        params,
+        headers,
+        body: req.body.clone(),
+        auth: req.auth.clone(),
+        variables: req.variables.clone(),
         timeout,
         transport,
-        checks,
+        checks: req.assertions.checks.clone(),
+        custom_client,
+        mazbri_mode,
     })
 }
 
-pub(super) fn flatten_pairs(value: Option<&Value>) -> Vec<(String, String)> {
-    let Some(Value::Object(map)) = value else {
-        return Vec::new();
-    };
-    map.iter()
-        .filter_map(|(key, value)| {
-            let rendered = match value {
-                Value::String(s) => s.clone(),
-                Value::Null => return None,
-                other => other.to_string(),
-            };
-            Some((key.clone(), rendered))
-        })
-        .collect()
-}
+fn prepare_mazbri_mode(
+    req: &ExecutionRequest,
+    target: &ExecutionTarget,
+    effective_client: &Client,
+    skew: Duration,
+    mazbri_tenants: &mut HashMap<(String, String), Arc<MazbriTenant>>,
+) -> Result<PreparedMazbriMode> {
+    let sample_rt = RuntimeVars::for_index(0);
+    let raw_gw = non_empty_str(req.mazbri.gateway_base_url.as_deref())
+        .or_else(|| non_empty_str(target.gateway_base_url.as_deref()))
+        .or_else(|| req.variables.get("gateway_base_url").map(String::as_str))
+        .or_else(|| req.variables.get("baseUrl").map(String::as_str))
+        .with_context(|| format!("mazbri request '{}' has no gateway_base_url", req.name))?;
+    let gw_url = render_str(raw_gw, &req.variables, &sample_rt);
 
-fn render_body_template(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
+    match req.mazbri.tenant_source.trim() {
+        "inline" => {
+            let spec =
+                req.mazbri.inline_tenant.as_ref().with_context(|| {
+                    format!("mazbri request '{}' missing inline_tenant", req.name)
+                })?;
+            let prepared = MazbriTenant::new(effective_client, &gw_url, spec, skew)?;
+            Ok(PreparedMazbriMode::Inline {
+                tenant_name: spec.name.trim().to_string(),
+                tenant: Arc::new(prepared),
+            })
+        }
+        "environment" => {
+            if target.tenants.is_empty() {
+                bail!(
+                    "mazbri request '{}' needs at least one tenant in environment",
+                    req.name
+                );
+            }
+            let pinned = non_empty_owned(req.mazbri.tenant_name.as_deref());
+            if let Some(pin_name) = pinned.as_deref() {
+                let spec = target
+                    .tenants
+                    .iter()
+                    .find(|t| t.name.trim() == pin_name)
+                    .with_context(|| {
+                        format!("pinned mazbri tenant '{pin_name}' not found in environment")
+                    })?;
+                let key = (gw_url.clone(), pin_name.to_string());
+                if let std::collections::hash_map::Entry::Vacant(e) = mazbri_tenants.entry(key) {
+                    let built = MazbriTenant::new(effective_client, &gw_url, spec, skew)?;
+                    e.insert(Arc::new(built));
+                }
+            } else {
+                for spec in &target.tenants {
+                    let t_name = spec.name.trim().to_string();
+                    let key = (gw_url.clone(), t_name);
+                    if let std::collections::hash_map::Entry::Vacant(e) = mazbri_tenants.entry(key)
+                    {
+                        let built = MazbriTenant::new(effective_client, &gw_url, spec, skew)?;
+                        e.insert(Arc::new(built));
+                    }
+                }
+            }
+            Ok(PreparedMazbriMode::Environment {
+                gateway_base_url: gw_url,
+                pinned_tenant: pinned,
+            })
+        }
+        other => bail!("unsupported mazbri tenant_source {other:?}"),
     }
 }
 
-pub(super) fn apply_seq(template: &str, index: u64) -> String {
-    template.replace("{{seq}}", &index.to_string())
+pub(crate) fn active_kv_pairs(rows: &[KeyValueRow]) -> Vec<(String, String)> {
+    rows.iter()
+        .filter(|row| row.active && !row.key.trim().is_empty())
+        .map(|row| (row.key.trim().to_string(), row.value.clone()))
+        .collect()
 }
 
-fn urlencoding_lite(value: &str) -> String {
+pub(crate) fn urlencoding_lite(value: &str) -> String {
     let mut out = String::new();
     for ch in value.chars() {
         match ch {
@@ -288,7 +358,7 @@ fn urlencoding_lite(value: &str) -> String {
     out
 }
 
-pub(super) fn join_url(base: &str, path: &str) -> String {
+pub(crate) fn join_url(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     if path.starts_with("http://") || path.starts_with("https://") {
         return path.to_string();
@@ -300,6 +370,217 @@ pub(super) fn join_url(base: &str, path: &str) -> String {
         format!("{base}{path}")
     } else {
         format!("{base}/{path}")
+    }
+}
+
+/// Render URL, query string, headers, HTTP auth, and body for one HTTP execution.
+pub(crate) fn render_http_call(
+    base_url: Option<&str>,
+    req: &PreparedRequest,
+    runtime: &RuntimeVars,
+    tenant_api_key: Option<&str>,
+    request_id: Option<&str>,
+) -> RenderedHttpCall {
+    let rendered_ep = render_str(&req.endpoint_template, &req.variables, runtime);
+    let mut url = if rendered_ep.starts_with("http://") || rendered_ep.starts_with("https://") {
+        rendered_ep
+    } else {
+        let fallback_base = base_url
+            .or_else(|| req.variables.get("baseUrl").map(String::as_str))
+            .unwrap_or("");
+        let rendered_base = render_str(fallback_base, &req.variables, runtime);
+        join_url(&rendered_base, &rendered_ep)
+    };
+
+    let mut query_items: Vec<(String, String)> = req
+        .params
+        .iter()
+        .map(|(k, v)| {
+            (
+                render_str(k, &req.variables, runtime),
+                render_str(v, &req.variables, runtime),
+            )
+        })
+        .collect();
+
+    let mut headers: Vec<(String, String)> = req
+        .headers
+        .iter()
+        .map(|(k, v)| {
+            (
+                render_str(k, &req.variables, runtime),
+                render_str(v, &req.variables, runtime),
+            )
+        })
+        .collect();
+
+    let basic_auth = apply_http_auth(
+        &req.auth,
+        &req.variables,
+        runtime,
+        tenant_api_key,
+        &mut headers,
+        &mut query_items,
+    );
+
+    if let Some(rid) = request_id {
+        headers.push(("X-Request-Id".into(), rid.to_string()));
+    }
+
+    if !query_items.is_empty() {
+        let encoded = query_items
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding_lite(k), urlencoding_lite(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        if url.contains('?') {
+            url.push('&');
+        } else {
+            url.push('?');
+        }
+        url.push_str(&encoded);
+    }
+
+    let has_explicit_ct = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+
+    let (body_bytes, content_type, body_preview) = render_body(&req.body, &req.variables, runtime);
+    let effective_ct = if has_explicit_ct { None } else { content_type };
+
+    RenderedHttpCall {
+        url,
+        headers,
+        basic_auth,
+        body_bytes,
+        content_type: effective_ct,
+        body_preview,
+    }
+}
+
+fn apply_http_auth(
+    auth: &HttpAuthSpec,
+    variables: &BTreeMap<String, String>,
+    runtime: &RuntimeVars,
+    tenant_api_key: Option<&str>,
+    headers: &mut Vec<(String, String)>,
+    query_items: &mut Vec<(String, String)>,
+) -> Option<(String, String)> {
+    if !auth.auth_active {
+        if let Some(api_key) = tenant_api_key {
+            headers.push(("X-API-KEY".into(), api_key.to_string()));
+        }
+        return None;
+    }
+    match auth.auth_type.trim() {
+        "bearer" => {
+            if let Some(tok) = non_empty_str(auth.token.as_deref()) {
+                let rendered = render_str(tok, variables, runtime);
+                headers.push(("Authorization".into(), format!("Bearer {rendered}")));
+            }
+            None
+        }
+        "basic" => {
+            let user = render_str(auth.username.as_deref().unwrap_or(""), variables, runtime);
+            let pass = render_str(auth.password.as_deref().unwrap_or(""), variables, runtime);
+            Some((user, pass))
+        }
+        "api-key" => {
+            if let Some(k) = non_empty_str(auth.key.as_deref()) {
+                let rk = render_str(k, variables, runtime);
+                let rv = render_str(auth.value.as_deref().unwrap_or(""), variables, runtime);
+                if auth.add_to.as_deref() == Some("QUERY_PARAMS") {
+                    query_items.push((rk, rv));
+                } else {
+                    headers.push((rk, rv));
+                }
+            }
+            None
+        }
+        _ => {
+            if let Some(api_key) = tenant_api_key {
+                headers.push(("X-API-KEY".into(), api_key.to_string()));
+            }
+            None
+        }
+    }
+}
+
+fn render_body(
+    spec: &RequestBodySpec,
+    static_vars: &BTreeMap<String, String>,
+    runtime: &RuntimeVars,
+) -> (Option<Vec<u8>>, Option<String>, Option<String>) {
+    let ct = spec
+        .content_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"));
+
+    match ct {
+        None => {
+            if let Some(raw) = spec.body.as_deref().filter(|s| !s.is_empty()) {
+                let rendered = render_str(raw, static_vars, runtime);
+                (
+                    Some(rendered.clone().into_bytes()),
+                    Some("application/json".to_string()),
+                    Some(rendered),
+                )
+            } else {
+                (None, None, None)
+            }
+        }
+        Some("application/x-www-form-urlencoded") => {
+            let active_form = active_kv_pairs(&spec.form);
+            let encoded = if !active_form.is_empty() {
+                active_form
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "{}={}",
+                            urlencoding_lite(&render_str(k, static_vars, runtime)),
+                            urlencoding_lite(&render_str(v, static_vars, runtime))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&")
+            } else if let Some(raw) = spec.body.as_deref() {
+                render_str(raw, static_vars, runtime)
+            } else {
+                String::new()
+            };
+            (
+                Some(encoded.clone().into_bytes()),
+                Some("application/x-www-form-urlencoded".to_string()),
+                Some(encoded),
+            )
+        }
+        Some("multipart/form-data") => {
+            let boundary = format!("----xloadgen{}", runtime.uuid.replace('-', ""));
+            let mut buf = String::new();
+            for (k, v) in active_kv_pairs(&spec.form) {
+                let rk = render_str(&k, static_vars, runtime).replace('"', "%22");
+                let rv = render_str(&v, static_vars, runtime);
+                let _ = write!(
+                    buf,
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{rk}\"\r\n\r\n{rv}\r\n"
+                );
+            }
+            let _ = write!(buf, "--{boundary}--\r\n");
+            (
+                Some(buf.clone().into_bytes()),
+                Some(format!("multipart/form-data; boundary={boundary}")),
+                Some(buf),
+            )
+        }
+        Some(other_ct) => {
+            let rendered = render_str(spec.body.as_deref().unwrap_or(""), static_vars, runtime);
+            (
+                Some(rendered.clone().into_bytes()),
+                Some(other_ct.to_string()),
+                Some(rendered),
+            )
+        }
     }
 }
 
@@ -315,45 +596,78 @@ impl RequestExecutor for HttpExecutor {
 impl HttpExecutor {
     async fn execute_one(&self, ctx: &RequestCtx) -> ExecOutcome {
         let started = unix_now_ms();
-        let Some(product) = self.products.get(&ctx.product_id) else {
+        let lookup_key = if self.requests.contains_key(&ctx.request_key) {
+            &ctx.request_key
+        } else {
+            &ctx.product_id
+        };
+        let Some(req) = self.requests.get(lookup_key) else {
             return failed_outcome(
                 started,
                 started,
                 0,
                 None,
                 Some("config".into()),
-                Some(format!("unknown product_id {}", ctx.product_id)),
+                Some(format!("unknown request_key {}", ctx.request_key)),
                 None,
+                ctx.tenant_name.clone(),
             );
         };
-        let tenant = ctx
-            .tenant_name
-            .as_ref()
-            .and_then(|name| self.tenants.get(name));
+
         let request_id = request_id_for(self.include_request_id, ctx);
-        let api_key = match tenant {
-            Some(PreparedTenant::Mazbri(mazbri)) => {
-                return mazbri.execute(self, ctx, product, request_id).await;
-            }
-            Some(PreparedTenant::Http { api_key }) => api_key.as_deref(),
-            None if self.mazbri => {
-                return failed_outcome(
-                    started,
-                    started,
-                    0,
-                    request_id,
-                    Some("config".into()),
-                    Some("no mazbri tenant selected for this request".into()),
-                    None,
-                );
-            }
-            None => None,
-        };
-        let request = self.build_request(ctx, product);
-        let request = attach_identity(request, api_key, request_id.as_deref());
+        let client = req.custom_client.as_ref().unwrap_or(&self.client);
+
+        if let Some(mazbri_mode) = req.mazbri_mode.as_ref() {
+            return self
+                .execute_mazbri_mode(started, ctx, req, mazbri_mode, client, request_id)
+                .await;
+        }
+
+        let tenant_api_key = ctx
+            .tenant_name
+            .as_deref()
+            .and_then(|name| self.http_tenants.get(name))
+            .and_then(|opt| opt.as_deref());
+
+        let runtime = RuntimeVars::for_index(ctx.index);
+        let call = render_http_call(
+            self.base_url.as_deref(),
+            req,
+            &runtime,
+            tenant_api_key,
+            request_id.as_deref(),
+        );
+
+        let mut builder = client.request(req.method.clone(), &call.url);
+        if let Some(timeout) = req.timeout {
+            builder = builder.timeout(timeout);
+        }
+        if let Some((user, pass)) = call.basic_auth {
+            builder = builder.basic_auth(user, Some(pass));
+        }
+        for (k, v) in call.headers {
+            builder = builder.header(k, v);
+        }
+        if let Some(ct) = call.content_type {
+            builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
+        }
+        if let Some(bytes) = call.body_bytes {
+            builder = builder.body(bytes);
+        }
+
         let sent = Instant::now();
-        match request.send().await {
-            Ok(response) => classify_response(started, sent, request_id, product, response).await,
+        match builder.send().await {
+            Ok(response) => {
+                classify_response(
+                    started,
+                    sent,
+                    request_id,
+                    req,
+                    response,
+                    ctx.tenant_name.clone(),
+                )
+                .await
+            }
             Err(err) => failed_outcome(
                 started,
                 unix_now_ms(),
@@ -362,91 +676,108 @@ impl HttpExecutor {
                 Some("transport".into()),
                 Some(err.to_string()),
                 None,
+                ctx.tenant_name.clone(),
             ),
         }
     }
 
-    fn build_request(
+    async fn execute_mazbri_mode(
         &self,
+        started: i64,
         ctx: &RequestCtx,
-        product: &PreparedProduct,
-    ) -> reqwest::RequestBuilder {
-        let mut request = self.client.request(
-            product.method.clone(),
-            build_url(&self.base_url, product, ctx.index),
-        );
-        if let Some(timeout) = product.timeout {
-            request = request.timeout(timeout);
-        }
-        for (key, value) in &product.headers {
-            request = request.header(key, apply_seq(value, ctx.index));
-        }
-        if let Some(body) = product.body.as_ref() {
-            request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(apply_seq(body, ctx.index));
-        }
-        request
+        req: &PreparedRequest,
+        mazbri_mode: &PreparedMazbriMode,
+        client: &reqwest::Client,
+        request_id: Option<String>,
+    ) -> ExecOutcome {
+        let (actual_tenant_name, mazbri_tenant) = match mazbri_mode {
+            PreparedMazbriMode::Inline {
+                tenant_name,
+                tenant,
+            } => (tenant_name.clone(), Arc::clone(tenant)),
+            PreparedMazbriMode::Environment {
+                gateway_base_url,
+                pinned_tenant,
+            } => {
+                let chosen = pinned_tenant.as_deref().or(ctx.tenant_name.as_deref());
+                let Some(name) = chosen else {
+                    return failed_outcome(
+                        started,
+                        started,
+                        0,
+                        request_id,
+                        Some("config".into()),
+                        Some("no mazbri tenant selected for this request".into()),
+                        None,
+                        None,
+                    );
+                };
+                let key = (gateway_base_url.clone(), name.to_string());
+                let Some(found) = self.mazbri_tenants.get(&key) else {
+                    return failed_outcome(
+                        started,
+                        started,
+                        0,
+                        request_id,
+                        Some("config".into()),
+                        Some(format!("mazbri tenant '{name}' not prepared")),
+                        None,
+                        Some(name.to_string()),
+                    );
+                };
+                (name.to_string(), Arc::clone(found))
+            }
+        };
+        mazbri_tenant
+            .execute(client, ctx, req, request_id, Some(actual_tenant_name))
+            .await
     }
 }
 
 fn request_id_for(include: bool, ctx: &RequestCtx) -> Option<String> {
-    include.then(|| format!("{}-{}", ctx.product_id, ctx.index))
-}
-
-fn attach_identity(
-    mut request: reqwest::RequestBuilder,
-    api_key: Option<&str>,
-    request_id: Option<&str>,
-) -> reqwest::RequestBuilder {
-    if let Some(api_key) = api_key {
-        request = request.header("X-API-KEY", api_key);
-    }
-    if let Some(id) = request_id {
-        request = request.header("X-Request-Id", id);
-    }
-    request
-}
-
-fn build_url(base: &str, product: &PreparedProduct, index: u64) -> String {
-    let mut url = join_url(base, &product.path);
-    if product.query.is_empty() {
-        return url;
-    }
-    let query: String = product
-        .query
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                urlencoding_lite(key),
-                urlencoding_lite(&apply_seq(value, index))
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("&");
-    if url.contains('?') {
-        url.push('&');
-    } else {
-        url.push('?');
-    }
-    url.push_str(&query);
-    url
+    include.then(|| {
+        let slug: String = ctx
+            .product_id
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        format!("{slug}-{}", ctx.index)
+    })
 }
 
 async fn classify_response(
     started: i64,
     sent: Instant,
     request_id: Option<String>,
-    product: &PreparedProduct,
+    req: &PreparedRequest,
     response: reqwest::Response,
+    customer_name: Option<String>,
 ) -> ExecOutcome {
     let status = i64::from(response.status().as_u16());
     let transport_ok = response.status().is_success();
-    let bytes = response
-        .content_length()
-        .and_then(|n| i64::try_from(n).ok());
-    let body = response.json::<Value>().await.ok();
+    let raw_bytes = match response.bytes().await {
+        Ok(b) => b,
+        Err(err) => {
+            return failed_outcome(
+                started,
+                unix_now_ms(),
+                elapsed_us(sent),
+                request_id,
+                Some("transport".into()),
+                Some(err.to_string()),
+                Some(status),
+                customer_name,
+            );
+        }
+    };
+    let bytes = i64::try_from(raw_bytes.len()).ok();
+    let body = serde_json::from_slice::<Value>(&raw_bytes).ok();
     let mut outcome = ExecOutcome {
         start_unix_ms: started,
         end_unix_ms: unix_now_ms(),
@@ -460,17 +791,19 @@ async fn classify_response(
         response_bytes: bytes,
         request_id,
         body,
+        customer_name,
     };
     let judgement = judge(
         transport_ok,
         outcome.body.as_ref(),
-        product.transport,
-        &product.checks,
+        req.transport,
+        &req.checks,
     );
     apply_judge(&mut outcome, judgement);
     outcome
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn failed_outcome(
     start_unix_ms: i64,
     end_unix_ms: i64,
@@ -479,6 +812,7 @@ pub(super) fn failed_outcome(
     error_class: Option<String>,
     error: Option<String>,
     http_status: Option<i64>,
+    customer_name: Option<String>,
 ) -> ExecOutcome {
     ExecOutcome {
         start_unix_ms,
@@ -493,6 +827,7 @@ pub(super) fn failed_outcome(
         response_bytes: None,
         request_id,
         body: None,
+        customer_name,
     }
 }
 

@@ -3,7 +3,7 @@
   "info": {
     "title": "x-loadgen API",
     "version": "0.2.0",
-    "description": "HTTP API for the x-loadgen load-test daemon.\n\n## Authentication\n\nThe login token is the only long-lived credential. It never expires on its own and changes only on password change or `reset-passwd`.\n\n- Scripts: `Authorization: Bearer <token>` (the login token itself, not a session).\n- Browser: `POST /api/v1/auth/login` sets an HttpOnly cookie `x_loadgen_token` (SameSite=Lax, Path=/, no Secure, no Max-Age).\n- `--no-auth` / `X_LOADGEN_NO_AUTH=1` disables authentication (for local labs only).\n- Before the first password change, business endpoints return 403 `password_change_required`.\n\n## Errors\n\nUnless noted (the `/verdict` endpoint returns a Verdict body), errors use:\n\n```json\n{\n  \"error\": { \"code\": \"not_found\", \"message\": \"...\" }\n}\n```\n\nStable codes: `unauthorized` (401), `password_change_required` (403), `invalid_request` (400), `auth_disabled` (400), `not_found` (404), `conflict` (409), `wait_timeout` (409), `internal` (500).\n\n## Automation\n\nStart from a template (`template` id or name) with optional overrides and `assert`. Poll `/stats` or `/windows`, `PATCH /traffic` to adjust QPS, `POST /stop` to finish a loop run, then `GET /verdict` (use `curl -f`) and download `/report.json` or `/report.html`. Loop runs continue in the daemon if the client disconnects."
+    "description": "HTTP API for the Hoppscotch-style x-loadgen API debugging & load-testing platform (supporting both generic `http` and `mazbri` cryptographic protocols)."
   },
   "servers": [
     {
@@ -19,16 +19,19 @@
       "name": "auth"
     },
     {
-      "name": "targets"
+      "name": "collections"
     },
     {
-      "name": "tenants"
+      "name": "requests"
     },
     {
-      "name": "products"
+      "name": "environments"
     },
     {
-      "name": "templates"
+      "name": "load-profiles"
+    },
+    {
+      "name": "probe"
     },
     {
       "name": "runs"
@@ -297,11 +300,11 @@
         }
       }
     },
-    "/api/v1/targets": {
+    "/api/v1/collections": {
       "get": {
-        "summary": "List targets (secrets omitted)",
+        "summary": "List nested collection & request tree",
         "tags": [
-          "targets"
+          "collections"
         ],
         "responses": {
           "200": {
@@ -311,14 +314,14 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/TargetSummary"
+                    "$ref": "#/components/schemas/CollectionNode"
                   }
                 }
               }
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -328,7 +331,7 @@
             }
           },
           "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Password change required",
             "content": {
               "application/json": {
                 "schema": {
@@ -340,16 +343,16 @@
         }
       },
       "post": {
-        "summary": "Create a target, optionally with tenants and products",
+        "summary": "Create a root collection or nested folder",
         "tags": [
-          "targets"
+          "collections"
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TargetInput"
+                "$ref": "#/components/schemas/CollectionInput"
               }
             }
           }
@@ -360,13 +363,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TargetDetail"
+                  "$ref": "#/components/schemas/CollectionNode"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -376,7 +379,7 @@
             }
           },
           "401": {
-            "description": "Unauthorized (`unauthorized`)",
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -385,18 +388,8 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+          "404": {
+            "description": "Parent collection not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -408,11 +401,132 @@
         }
       }
     },
-    "/api/v1/targets/{id}": {
+    "/api/v1/collections/export": {
       "get": {
-        "summary": "Target detail (includes secrets)",
+        "summary": "Export collections JSON (secrets redacted unless include_secrets=true)",
         "tags": [
-          "targets"
+          "collections"
+        ],
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_secrets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collections/import": {
+      "post": {
+        "summary": "Import Hoppscotch REST Collection JSON or native x-loadgen bundle",
+        "tags": [
+          "collections"
+        ],
+        "parameters": [
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imported collections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionNode"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{id}": {
+      "get": {
+        "summary": "Get collection subtree",
+        "tags": [
+          "collections"
         ],
         "parameters": [
           {
@@ -430,33 +544,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TargetDetail"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+                  "$ref": "#/components/schemas/CollectionNode"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -468,9 +562,9 @@
         }
       },
       "put": {
-        "summary": "Replace a target",
+        "summary": "Update collection or folder",
         "tags": [
-          "targets"
+          "collections"
         ],
         "parameters": [
           {
@@ -487,7 +581,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TargetInput"
+                "$ref": "#/components/schemas/CollectionInput"
               }
             }
           }
@@ -498,33 +592,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TargetDetail"
+                  "type": "object"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -534,17 +608,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -556,9 +620,9 @@
         }
       },
       "delete": {
-        "summary": "Delete a target",
+        "summary": "Delete collection (cascades to nested folders and requests)",
         "tags": [
-          "targets"
+          "collections"
         ],
         "parameters": [
           {
@@ -574,38 +638,8 @@
           "204": {
             "description": "Deleted"
           },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -617,11 +651,491 @@
         }
       }
     },
-    "/api/v1/targets/{id}/tenants": {
-      "get": {
-        "summary": "List tenants of a target",
+    "/api/v1/requests": {
+      "post": {
+        "summary": "Create a saved request in a collection/folder",
         "tags": [
-          "tenants"
+          "requests"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/requests/{id}": {
+      "get": {
+        "summary": "Get saved request",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update saved request",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete saved request",
+        "tags": [
+          "requests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/environments": {
+      "get": {
+        "summary": "List environments (Global first)",
+        "tags": [
+          "environments"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an environment",
+        "tags": [
+          "environments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/environments/export": {
+      "get": {
+        "summary": "Export environments JSON (redacted by default)",
+        "tags": [
+          "environments"
+        ],
+        "parameters": [
+          {
+            "name": "environment_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_secrets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/environments/import": {
+      "post": {
+        "summary": "Import Hoppscotch Environment JSON or native x-loadgen bundle",
+        "tags": [
+          "environments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EnvironmentDetail"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}": {
+      "get": {
+        "summary": "Get environment detail including variables, TLS, and weighted tenant pool",
+        "tags": [
+          "environments"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update environment (supports Global id='global')",
+        "tags": [
+          "environments"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete non-global environment",
+        "tags": [
+          "environments"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Global environment cannot be deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/tenants": {
+      "get": {
+        "summary": "List tenants in an environment pool",
+        "tags": [
+          "environments"
         ],
         "parameters": [
           {
@@ -641,34 +1155,14 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Tenant"
+                    "$ref": "#/components/schemas/TenantSpec"
                   }
                 }
               }
             }
           },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Environment not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -680,11 +1174,10 @@
         }
       },
       "post": {
-        "summary": "Add a tenant",
+        "summary": "Add a tenant to an environment pool",
         "tags": [
-          "tenants"
+          "environments"
         ],
-        "description": "For `protocol=mazbri`, encryption and optional request-binding fields are validated against the client contract. For `protocol=http`, only plaintext (`encryption_mode=none`) is accepted.",
         "parameters": [
           {
             "name": "id",
@@ -700,7 +1193,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Tenant"
+                "$ref": "#/components/schemas/TenantSpec"
               }
             }
           }
@@ -711,33 +1204,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Tenant"
+                  "$ref": "#/components/schemas/TenantSpec"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Invalid tenant",
             "content": {
               "application/json": {
                 "schema": {
@@ -747,7 +1220,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Environment not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -757,7 +1230,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Duplicate tenant name",
             "content": {
               "application/json": {
                 "schema": {
@@ -769,11 +1242,11 @@
         }
       }
     },
-    "/api/v1/targets/{id}/tenants/{tid}": {
+    "/api/v1/environments/{id}/tenants/{tid}": {
       "get": {
-        "summary": "Tenant detail (includes secrets)",
+        "summary": "Get tenant from environment pool",
         "tags": [
-          "tenants"
+          "environments"
         ],
         "parameters": [
           {
@@ -799,33 +1272,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Tenant"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+                  "$ref": "#/components/schemas/TenantSpec"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -837,9 +1290,9 @@
         }
       },
       "put": {
-        "summary": "Replace a tenant",
+        "summary": "Update tenant in environment pool",
         "tags": [
-          "tenants"
+          "environments"
         ],
         "parameters": [
           {
@@ -864,7 +1317,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Tenant"
+                "$ref": "#/components/schemas/TenantSpec"
               }
             }
           }
@@ -875,33 +1328,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Tenant"
+                  "$ref": "#/components/schemas/TenantSpec"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Invalid tenant",
             "content": {
               "application/json": {
                 "schema": {
@@ -911,17 +1344,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -933,9 +1356,9 @@
         }
       },
       "delete": {
-        "summary": "Delete a tenant",
+        "summary": "Delete tenant from environment pool",
         "tags": [
-          "tenants"
+          "environments"
         ],
         "parameters": [
           {
@@ -959,28 +1382,8 @@
           "204": {
             "description": "Deleted"
           },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -992,13 +1395,12 @@
         }
       }
     },
-    "/api/v1/targets/{id}/tenants/{tid}/binding-keypair": {
+    "/api/v1/environments/{id}/tenants/{tid}/binding-keypair": {
       "post": {
-        "summary": "Generate a request-binding key pair",
+        "summary": "Generate and store asymmetric request-binding keypair on tenant",
         "tags": [
-          "tenants"
+          "environments"
         ],
-        "description": "The private key is stored on the tenant; the response returns only the public key (and kid/alg) for registration in management.",
         "parameters": [
           {
             "name": "id",
@@ -1023,10 +1425,15 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "alg"
+                ],
                 "properties": {
                   "alg": {
-                    "type": "string",
-                    "description": "Signing algorithm, e.g. ed25519, ecdsa-p256-sha256, sm2-sign, rsa-pkcs1v15-sign-sha256, hmac-sha256."
+                    "type": "string"
+                  },
+                  "kid": {
+                    "type": "string"
                   }
                 }
               }
@@ -1035,37 +1442,17 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Generated public key",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KeypairResponse"
+                  "type": "object"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Invalid algorithm or missing kid",
             "content": {
               "application/json": {
                 "schema": {
@@ -1075,7 +1462,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1087,21 +1474,11 @@
         }
       }
     },
-    "/api/v1/targets/{id}/products": {
+    "/api/v1/load-profiles": {
       "get": {
-        "summary": "List products of a target",
+        "summary": "List reusable load profiles",
         "tags": [
-          "products"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
+          "load-profiles"
         ],
         "responses": {
           "200": {
@@ -1111,38 +1488,8 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Product"
+                    "$ref": "#/components/schemas/LoadProfile"
                   }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -1150,26 +1497,16 @@
         }
       },
       "post": {
-        "summary": "Add a product",
+        "summary": "Create load profile",
         "tags": [
-          "products"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
+          "load-profiles"
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Product"
+                "$ref": "#/components/schemas/LoadProfileInput"
               }
             }
           }
@@ -1180,43 +1517,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Product"
+                  "$ref": "#/components/schemas/LoadProfile"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Invalid profile",
             "content": {
               "application/json": {
                 "schema": {
@@ -1226,7 +1533,7 @@
             }
           },
           "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Duplicate name",
             "content": {
               "application/json": {
                 "schema": {
@@ -1238,23 +1545,15 @@
         }
       }
     },
-    "/api/v1/targets/{id}/products/{pid}": {
+    "/api/v1/load-profiles/{id}": {
       "get": {
-        "summary": "Product detail",
+        "summary": "Get load profile",
         "tags": [
-          "products"
+          "load-profiles"
         ],
         "parameters": [
           {
             "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pid",
             "in": "path",
             "required": true,
             "schema": {
@@ -1268,33 +1567,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Product"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
+                  "$ref": "#/components/schemas/LoadProfile"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1306,21 +1585,13 @@
         }
       },
       "put": {
-        "summary": "Replace a product",
+        "summary": "Update load profile",
         "tags": [
-          "products"
+          "load-profiles"
         ],
         "parameters": [
           {
             "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pid",
             "in": "path",
             "required": true,
             "schema": {
@@ -1333,7 +1604,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Product"
+                "$ref": "#/components/schemas/LoadProfileInput"
               }
             }
           }
@@ -1344,33 +1615,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Product"
+                  "$ref": "#/components/schemas/LoadProfile"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+            "description": "Invalid profile",
             "content": {
               "application/json": {
                 "schema": {
@@ -1380,17 +1631,7 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1402,337 +1643,9 @@
         }
       },
       "delete": {
-        "summary": "Delete a product",
+        "summary": "Delete load profile",
         "tags": [
-          "products"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/templates": {
-      "get": {
-        "summary": "List templates",
-        "tags": [
-          "templates"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Template"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "summary": "Create a template",
-        "tags": [
-          "templates"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Template"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/templates/{id}": {
-      "get": {
-        "summary": "Template detail",
-        "tags": [
-          "templates"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Template"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "summary": "Replace a template",
-        "tags": [
-          "templates"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TemplateInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Template"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request (`invalid_request`, `auth_disabled`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found (`not_found`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete a template",
-        "tags": [
-          "templates"
+          "load-profiles"
         ],
         "parameters": [
           {
@@ -1748,8 +1661,8 @@
           "204": {
             "description": "Deleted"
           },
-          "401": {
-            "description": "Unauthorized (`unauthorized`)",
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1758,8 +1671,48 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden (`password_change_required`)",
+          "409": {
+            "description": "Referenced by active run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/probe": {
+      "post": {
+        "summary": "Execute interactive single-request Send (HTTP or Mazbri with wire debug)",
+        "tags": [
+          "probe"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Probe outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -1769,7 +1722,58 @@
             }
           },
           "404": {
-            "description": "Not found (`not_found`)",
+            "description": "Referenced entity not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crypto/binding-keypair": {
+      "post": {
+        "summary": "Stateless asymmetric request-binding keypair generator for inline tabs",
+        "tags": [
+          "probe"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "alg"
+                ],
+                "properties": {
+                  "alg": {
+                    "type": "string"
+                  },
+                  "kid": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated private & public key PEMs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid algorithm",
             "content": {
               "application/json": {
                 "schema": {
@@ -3072,209 +3076,6 @@
           }
         }
       },
-      "TargetSummary": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "protocol": {
-            "type": "string",
-            "enum": [
-              "http",
-              "mazbri"
-            ]
-          },
-          "gateway_base_url": {
-            "type": "string"
-          },
-          "insecure_skip_verify": {
-            "type": "boolean"
-          },
-          "note": {
-            "type": "string",
-            "nullable": true
-          },
-          "created_at": {
-            "type": "integer"
-          },
-          "updated_at": {
-            "type": "integer"
-          }
-        }
-      },
-      "TargetInput": {
-        "type": "object",
-        "required": [
-          "name",
-          "gateway_base_url"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "protocol": {
-            "type": "string",
-            "enum": [
-              "http",
-              "mazbri"
-            ]
-          },
-          "gateway_base_url": {
-            "type": "string"
-          },
-          "client_cert": {
-            "type": "string",
-            "nullable": true
-          },
-          "client_key": {
-            "type": "string",
-            "nullable": true
-          },
-          "ca_cert": {
-            "type": "string",
-            "nullable": true
-          },
-          "insecure_skip_verify": {
-            "type": "boolean"
-          },
-          "note": {
-            "type": "string",
-            "nullable": true
-          },
-          "tenants": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Tenant"
-            }
-          },
-          "products": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Product"
-            }
-          }
-        }
-      },
-      "TargetDetail": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/TargetSummary"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "client_cert": {
-                "type": "string",
-                "nullable": true
-              },
-              "client_key": {
-                "type": "string",
-                "nullable": true
-              },
-              "ca_cert": {
-                "type": "string",
-                "nullable": true
-              },
-              "tenants": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Tenant"
-                }
-              },
-              "products": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Product"
-                }
-              }
-            }
-          }
-        ]
-      },
-      "Tenant": {
-        "type": "object",
-        "required": [
-          "name",
-          "api_key",
-          "encryption_mode"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "weight": {
-            "type": "integer"
-          },
-          "api_key": {
-            "type": "string"
-          },
-          "encryption_mode": {
-            "type": "string",
-            "enum": [
-              "none",
-              "request",
-              "full"
-            ],
-            "description": "none, request (encrypt request only), or full (encrypt request and decrypt response)."
-          },
-          "tenant_id": {
-            "type": "string",
-            "nullable": true
-          },
-          "tenant_key_base64": {
-            "type": "string",
-            "nullable": true
-          },
-          "key_version": {
-            "type": "string",
-            "nullable": true
-          },
-          "suite": {
-            "type": "string",
-            "nullable": true,
-            "description": "Named suite, e.g. tenant-default-2026-11, gm-sm4-hmac-sm3, tenant-chacha20."
-          },
-          "data_alg": {
-            "type": "string",
-            "nullable": true
-          },
-          "mac_alg": {
-            "type": "string",
-            "nullable": true
-          },
-          "require_signature": {
-            "type": "boolean",
-            "nullable": true
-          },
-          "allow_insecure": {
-            "type": "boolean"
-          },
-          "binding_kid": {
-            "type": "string",
-            "nullable": true
-          },
-          "binding_alg": {
-            "type": "string",
-            "nullable": true
-          },
-          "binding_key": {
-            "type": "string",
-            "nullable": true,
-            "description": "Private key or HMAC secret; stored, never listed."
-          },
-          "binding_public_key": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
       "KeypairResponse": {
         "type": "object",
         "properties": {
@@ -3291,195 +3092,9 @@
           }
         }
       },
-      "Product": {
-        "type": "object",
-        "required": [
-          "name",
-          "product_id",
-          "path",
-          "method"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "product_id": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "method": {
-            "type": "string"
-          },
-          "weight": {
-            "type": "integer"
-          },
-          "qps_limit": {
-            "type": "integer",
-            "nullable": true
-          },
-          "timeout_secs": {
-            "type": "integer",
-            "nullable": true
-          },
-          "query_json": {},
-          "headers_json": {},
-          "body_json": {},
-          "expect_transport": {
-            "type": "string",
-            "nullable": true
-          },
-          "expect_checks_json": {}
-        }
-      },
-      "TemplateInput": {
-        "type": "object",
-        "required": [
-          "name",
-          "target_id",
-          "model",
-          "concurrency",
-          "timeout_secs"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "target_id": {
-            "type": "string"
-          },
-          "model": {
-            "type": "string",
-            "enum": [
-              "open_loop",
-              "closed_loop"
-            ]
-          },
-          "qps": {
-            "type": "integer",
-            "nullable": true
-          },
-          "concurrency": {
-            "type": "integer"
-          },
-          "requests": {
-            "type": "integer",
-            "nullable": true,
-            "description": "Exactly one of requests or duration_secs."
-          },
-          "duration_secs": {
-            "type": "integer",
-            "nullable": true
-          },
-          "warmup_secs": {
-            "type": "integer"
-          },
-          "ramp_secs": {
-            "type": "integer"
-          },
-          "timeout_secs": {
-            "type": "integer"
-          },
-          "connect_timeout_secs": {
-            "type": "integer"
-          },
-          "token_refresh_skew_secs": {
-            "type": "integer"
-          },
-          "include_request_id": {
-            "type": "boolean"
-          },
-          "processes": {
-            "type": "integer"
-          },
-          "qps_mode": {
-            "type": "string",
-            "enum": [
-              "total",
-              "per_process"
-            ]
-          },
-          "requests_mode": {
-            "type": "string",
-            "enum": [
-              "total",
-              "per_process"
-            ]
-          },
-          "loop_enabled": {
-            "type": "boolean"
-          },
-          "rounds": {
-            "type": "integer",
-            "nullable": true,
-            "description": "Null means an infinite loop."
-          },
-          "loop_interval_secs": {
-            "type": "integer"
-          },
-          "expected_reasons": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true
-          },
-          "detail_retain_days": {
-            "type": "integer",
-            "nullable": true
-          },
-          "detail_retain_rows": {
-            "type": "integer",
-            "nullable": true
-          },
-          "product_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true
-          },
-          "weight_overrides": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "nullable": true
-          },
-          "note": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "Template": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/TemplateInput"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "created_at": {
-                "type": "integer"
-              },
-              "updated_at": {
-                "type": "integer"
-              }
-            }
-          }
-        ]
-      },
       "AssertSpec": {
         "type": "object",
-        "description": "Optional SLA thresholds. Omitted fields are not checked. Comparisons are inclusive. Latency is milliseconds. max_error_rate is failure/samples (0–1). min_qps_ratio is achieved_qps/configured_qps, where achieved_qps is samples/elapsed_seconds over the wall-clock from started_at to ended_at (or now).",
+        "description": "Optional SLA thresholds. Omitted fields are not checked. Comparisons are inclusive. Latency is milliseconds. max_error_rate is failure/samples (0\u20131). min_qps_ratio is achieved_qps/configured_qps, where achieved_qps is samples/elapsed_seconds over the wall-clock from started_at to ended_at (or now).",
         "properties": {
           "p50_ms": {
             "type": "number"
@@ -3506,12 +3121,26 @@
       },
       "CreateRunRequest": {
         "type": "object",
-        "description": "Provide `template` (id or name) and/or `template_id` (id). Other fields override the saved template for this run only.",
         "properties": {
-          "template": {
+          "title": {
             "type": "string"
           },
-          "template_id": {
+          "request_id": {
+            "type": "string"
+          },
+          "collection_id": {
+            "type": "string"
+          },
+          "adhoc_request": {
+            "$ref": "#/components/schemas/RequestDraft"
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "load_profile": {
+            "type": "string"
+          },
+          "load_profile_id": {
             "type": "string"
           },
           "mode": {
@@ -3533,56 +3162,8 @@
           "duration_secs": {
             "type": "integer"
           },
-          "warmup_secs": {
-            "type": "integer"
-          },
-          "ramp_secs": {
-            "type": "integer"
-          },
-          "timeout_secs": {
-            "type": "integer"
-          },
-          "connect_timeout_secs": {
-            "type": "integer"
-          },
-          "token_refresh_skew_secs": {
-            "type": "integer"
-          },
-          "include_request_id": {
-            "type": "boolean"
-          },
           "processes": {
             "type": "integer"
-          },
-          "qps_mode": {
-            "type": "string"
-          },
-          "requests_mode": {
-            "type": "string"
-          },
-          "loop_enabled": {
-            "type": "boolean"
-          },
-          "rounds": {
-            "type": "integer"
-          },
-          "clear_rounds": {
-            "type": "boolean"
-          },
-          "loop_interval_secs": {
-            "type": "integer"
-          },
-          "product_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "weight_overrides": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer"
-            }
           },
           "assert": {
             "$ref": "#/components/schemas/AssertSpec"
@@ -3757,6 +3338,249 @@
                 }
               }
             }
+          }
+        }
+      },
+      "CollectionInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "parent_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "default_protocol": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mazbri"
+            ]
+          }
+        }
+      },
+      "CollectionNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedRequest"
+            }
+          }
+        }
+      },
+      "RequestDraft": {
+        "type": "object",
+        "properties": {
+          "collection_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mazbri"
+            ]
+          },
+          "method": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer"
+          }
+        }
+      },
+      "SavedRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RequestDraft"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "TenantSpec": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "encryption_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "request",
+              "full"
+            ]
+          }
+        }
+      },
+      "EnvironmentInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "gateway_base_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "EnvironmentDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EnvironmentInput"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "is_global": {
+                "type": "boolean"
+              },
+              "tenants": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TenantSpec"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "LoadProfileInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "qps": {
+            "type": "integer"
+          },
+          "concurrency": {
+            "type": "integer"
+          },
+          "requests": {
+            "type": "integer"
+          },
+          "duration_secs": {
+            "type": "integer"
+          },
+          "assert": {
+            "$ref": "#/components/schemas/AssertSpec"
+          }
+        }
+      },
+      "LoadProfile": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LoadProfileInput"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ProbeRequest": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/RequestDraft"
+          },
+          "environment_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ProbeResponse": {
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "string"
+          },
+          "transport_ok": {
+            "type": "boolean"
+          },
+          "passed_assertions": {
+            "type": "boolean"
+          },
+          "http_status": {
+            "type": "integer",
+            "nullable": true
+          },
+          "latency_us": {
+            "type": "integer"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "mazbri_wire": {
+            "type": "object",
+            "nullable": true
           }
         }
       }

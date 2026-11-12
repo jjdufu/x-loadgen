@@ -1,13 +1,15 @@
-//! Data directory, SQLite databases, and the bounded detail writer.
+//! Data directory, SQLite databases, Hoppscotch workspace stores, and the bounded detail writer.
 
+pub mod collections;
 mod dump;
+pub mod environments;
 pub mod error;
 pub mod janitor;
 mod paths;
+pub mod profiles;
 pub mod runs;
 mod schema;
-pub mod targets;
-pub mod templates;
+pub mod workspace;
 mod writer;
 
 #[cfg(test)]
@@ -17,7 +19,7 @@ pub use dump::{
 };
 pub use error::StoreError;
 pub use paths::DataPaths;
-pub use schema::USER_VERSION;
+pub use schema::{USER_VERSION, WORKER_USER_VERSION};
 pub use writer::{
     CheckpointUpdate, DEFAULT_BATCH_SIZE, DEFAULT_CAPACITY, DEFAULT_CHECKPOINT_INTERVAL,
     DEFAULT_FLUSH_INTERVAL, DetailWriter, Sample, WriterConfig, WriterHandle,
@@ -28,9 +30,9 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
 
-use crate::db::schema::{CENTRAL_SCHEMA_V1, WORKER_SCHEMA_V1};
+use crate::db::schema::{CENTRAL_SCHEMA_V2, DROP_LEGACY_V1_CATALOG, WORKER_SCHEMA_V1};
 
-/// Open (or create) the central database, apply PRAGMAs, and migrate.
+/// Open (or create) the central database, apply PRAGMAs, and migrate to v2.
 ///
 /// # Errors
 ///
@@ -43,8 +45,10 @@ pub fn open_central(paths: &DataPaths) -> Result<Connection> {
     let conn = Connection::open(&path)
         .with_context(|| format!("open central database {}", path.display()))?;
     apply_pragmas(&conn)?;
-    migrate(&conn, CENTRAL_SCHEMA_V1, "central")?;
+    migrate_central(&conn)?;
     drop_legacy_sessions(&conn)?;
+    let _ = environments::ensure_global_environment(&conn)
+        .map_err(|err| anyhow::anyhow!("ensure global environment: {err}"))?;
     Ok(conn)
 }
 
@@ -65,7 +69,7 @@ pub fn open_worker_connection(
     let conn = Connection::open(&path)
         .with_context(|| format!("open worker database {}", path.display()))?;
     apply_pragmas(&conn)?;
-    migrate(&conn, WORKER_SCHEMA_V1, "worker")?;
+    migrate_worker(&conn)?;
     ensure_worker_meta(&conn, run_id, worker_index)?;
     Ok(conn)
 }
@@ -151,30 +155,55 @@ pub fn unix_now_ms() -> Result<u64, SystemTimeError> {
     )
 }
 
-/// Older v1 databases had a `sessions` table. It is unused and is dropped
-/// in place without bumping `user_version`.
 fn drop_legacy_sessions(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP TABLE IF EXISTS sessions")
         .context("drop leftover sessions table")?;
     Ok(())
 }
 
-fn migrate(conn: &Connection, ddl: &str, label: &str) -> Result<()> {
+fn migrate_central(conn: &Connection) -> Result<()> {
     let version = user_version(conn)?;
     if version == 0 {
-        conn.execute_batch(ddl)
-            .with_context(|| format!("apply {label} schema v1"))?;
+        conn.execute_batch(CENTRAL_SCHEMA_V2)
+            .context("apply central schema v2")?;
         conn.pragma_update(None, "user_version", USER_VERSION)
-            .with_context(|| format!("set {label} user_version"))?;
+            .context("set central user_version")?;
+        return Ok(());
+    }
+    if version == 1 {
+        conn.execute_batch(DROP_LEGACY_V1_CATALOG)
+            .context("drop legacy v1 catalog tables")?;
+        conn.execute_batch(CENTRAL_SCHEMA_V2)
+            .context("apply central schema v2 upgrade")?;
+        conn.pragma_update(None, "user_version", USER_VERSION)
+            .context("set central user_version to 2")?;
         return Ok(());
     }
     if version == USER_VERSION {
         return Ok(());
     }
     if version > USER_VERSION {
-        bail!("{label} database user_version {version} is newer than {USER_VERSION}");
+        bail!("central database user_version {version} is newer than {USER_VERSION}");
     }
-    bail!("{label} database user_version {version} has no migration path")
+    bail!("central database user_version {version} has no migration path")
+}
+
+fn migrate_worker(conn: &Connection) -> Result<()> {
+    let version = user_version(conn)?;
+    if version == 0 {
+        conn.execute_batch(WORKER_SCHEMA_V1)
+            .context("apply worker schema v1")?;
+        conn.pragma_update(None, "user_version", WORKER_USER_VERSION)
+            .context("set worker user_version")?;
+        return Ok(());
+    }
+    if version == WORKER_USER_VERSION {
+        return Ok(());
+    }
+    if version > WORKER_USER_VERSION {
+        bail!("worker database user_version {version} is newer than {WORKER_USER_VERSION}");
+    }
+    bail!("worker database user_version {version} has no migration path")
 }
 
 fn user_version(conn: &Connection) -> Result<i32> {
@@ -211,8 +240,8 @@ mod tests {
 
     use super::dump::list_pending;
     use super::{
-        DataPaths, DetailWriter, Sample, WriterConfig, import_pending_dir, journal_mode,
-        open_central, open_worker_connection, synchronous, write_pending,
+        DataPaths, DetailWriter, Sample, USER_VERSION, WriterConfig, import_pending_dir,
+        journal_mode, open_central, open_worker_connection, synchronous, write_pending,
     };
 
     fn sample_count(conn: &Connection) -> i64 {
@@ -329,9 +358,6 @@ mod tests {
         let tmp = TempDir::new("held-handle");
         let paths = tmp.paths();
         let mut config = fast_config();
-        // A long flush interval used to leave close() blocked in recv_timeout
-        // for the whole interval, or forever if a WriterHandle kept the
-        // channel open.
         config.flush_interval = Duration::from_secs(30);
         config.checkpoint_interval = Duration::from_secs(30);
         let writer = DetailWriter::start(&paths, "run-held", 0, config).expect("start");
@@ -478,8 +504,8 @@ mod tests {
     }
 
     #[test]
-    fn leftover_sessions_table_is_dropped_without_bumping_user_version() {
-        let tmp = TempDir::new("legacy-sessions");
+    fn v1_database_upgrades_to_v2_keeping_auth_and_dropping_legacy_tables() {
+        let tmp = TempDir::new("legacy-v1-upgrade");
         let paths = tmp.paths();
         paths.ensure().expect("data dir");
         {
@@ -492,6 +518,7 @@ mod tests {
                     last_seen_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL
                 );
+                CREATE TABLE targets (id TEXT PRIMARY KEY, name TEXT NOT NULL);
                 CREATE TABLE auth_state (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     password_hash TEXT,
@@ -503,7 +530,7 @@ mod tests {
                 INSERT INTO sessions (id, token_hash, created_at, last_seen_at, expires_at)
                     VALUES ('s', 'h', 1, 1, 1);",
             )
-            .expect("seed leftover schema");
+            .expect("seed v1 schema");
             conn.pragma_update(None, "user_version", 1)
                 .expect("set user_version");
         }
@@ -511,15 +538,15 @@ mod tests {
         let version: i32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 1);
-        let sessions: i64 = conn
+        assert_eq!(version, USER_VERSION);
+        let legacy: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('sessions', 'targets')",
                 [],
                 |row| row.get(0),
             )
-            .expect("count sessions table");
-        assert_eq!(sessions, 0, "sessions table must be dropped");
+            .expect("count legacy tables");
+        assert_eq!(legacy, 0, "legacy v1 tables must be dropped");
         let hash: String = conn
             .query_row(
                 "SELECT password_hash FROM auth_state WHERE id = 1",

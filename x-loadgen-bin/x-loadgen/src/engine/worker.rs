@@ -17,10 +17,10 @@ use crate::db::{
 use crate::engine::cluster::{
     LiveSnapshot, apply_worker_split, histogram_to_b64, write_atomic_json,
 };
-use crate::engine::supervisor::RunSnapshot;
+use crate::engine::snapshot::RunSnapshot;
+use crate::engine::supervisor::build_plan_from_snapshot;
 use crate::engine::{
-    EngineConfig, EngineHandle, EngineModel, ExecutePlan, HttpExecutor, LiveTraffic, ProductChoice,
-    TenantChoice, Weighted,
+    EngineConfig, EngineHandle, EngineModel, ExecutePlan, HttpExecutor, LiveTraffic,
 };
 use crate::log;
 
@@ -97,7 +97,7 @@ fn prepare_worker(
         &snapshot.target,
         &snapshot.template,
     )?);
-    let plan = Arc::new(build_plan(&snapshot));
+    let plan = Arc::new(build_plan_from_snapshot(&snapshot));
     let timeout_us = secs_to_micros(snapshot.template.timeout_secs);
     let metrics = Arc::new(crate::engine::Metrics::new(timeout_us)?);
     if let Some(checkpoint) = load_checkpoint(paths, run_id, worker_index)? {
@@ -426,53 +426,6 @@ fn restore_checkpoint(metrics: &crate::engine::Metrics, checkpoint: &runs::Worke
         && !blob.is_empty()
     {
         let _ = metrics.restore_histogram(blob);
-    }
-}
-
-fn build_plan(snapshot: &RunSnapshot) -> ExecutePlan {
-    let products = snapshot
-        .target
-        .products
-        .iter()
-        .filter(|product| match snapshot.template.product_ids.as_ref() {
-            Some(ids) if !ids.is_empty() => ids.iter().any(|id| id == &product.id),
-            _ => true,
-        })
-        .map(|product| {
-            let weight = snapshot
-                .template
-                .weight_overrides
-                .as_ref()
-                .and_then(|map| map.get(&product.id).copied())
-                .unwrap_or(product.weight);
-            Weighted {
-                weight: as_u64(weight).max(1),
-                value: ProductChoice {
-                    product_id: product.product_id.clone(),
-                    product_name: Some(product.name.clone()),
-                },
-            }
-        })
-        .collect();
-    let tenants = snapshot
-        .target
-        .tenants
-        .iter()
-        .map(|tenant| Weighted {
-            weight: as_u64(tenant.weight).max(1),
-            value: TenantChoice {
-                name: tenant.name.clone(),
-            },
-        })
-        .collect();
-    ExecutePlan {
-        products,
-        tenants,
-        expected_reasons: snapshot
-            .template
-            .expected_reasons
-            .clone()
-            .unwrap_or_default(),
     }
 }
 

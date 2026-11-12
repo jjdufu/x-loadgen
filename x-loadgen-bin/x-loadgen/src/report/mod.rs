@@ -41,12 +41,16 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
         &serde_json::from_str::<Value>(&input.record.snapshot_json).unwrap_or(Value::Null),
     );
     let snapshot = redact_snapshot_json(&input.record.snapshot_json);
+    let title = snapshot.get("title").cloned().unwrap_or(Value::Null);
+    let source = snapshot.get("source").cloned().unwrap_or(Value::Null);
     let windows = list_windows(input.conn, &input.record.id)?;
     let timeline = list_timeline(input.conn, &input.record.id)?;
     let (counters, percentiles) = counters_and_percentiles(input, &windows)?;
     let timeseries = timeseries_points(input, &windows);
     let mut report = json!({
         "id": input.record.id,
+        "title": title,
+        "source": source,
         "template_id": input.record.template_id,
         "target_id": input.record.target_id,
         "mode": input.record.mode,
@@ -93,7 +97,7 @@ fn verdict_from_totals(record: &RunRecord, counters: &Value, percentiles: &Value
         .or_else(|| {
             snapshot
                 .as_ref()
-                .and_then(|s| s.template.qps)
+                .and_then(|s| s.template.effective_total_qps())
                 .and_then(|v| u64::try_from(v).ok())
         });
     let elapsed_ms = elapsed_ms(record);
@@ -133,7 +137,12 @@ fn json_opt_u64(value: &Value) -> Option<u64> {
 }
 
 fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Result<(Value, Value)> {
-    let from_windows = sum_windows(windows);
+    let worker_fallback = if windows.is_empty() && input.live_counters.is_none() {
+        Some(load_worker_checkpoint_totals(input.paths, &input.record.id))
+    } else {
+        None
+    };
+
     let counters = if let Some(live) = input.live_counters {
         json!({
             "samples": live.samples,
@@ -143,18 +152,74 @@ fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Resul
             "bytes": live.bytes,
             "dropped_details": live.dropped_details,
         })
+    } else if let Some((fallback_counters, _)) = worker_fallback.as_ref() {
+        fallback_counters.clone()
     } else {
-        from_windows
+        sum_windows(windows)
     };
+
     let percentiles = if let Some((p50, p95, p99, max)) = input.live_percentiles {
         json!({ "p50_us": p50, "p95_us": p95, "p99_us": p99, "max_us": max })
     } else {
-        let blobs = latest_checkpoint_blobs(input.conn, &input.record.id)?;
+        let mut blobs = latest_checkpoint_blobs(input.conn, &input.record.id)?;
+        if blobs.is_empty() {
+            if let Some((_, fb_blobs)) = worker_fallback {
+                blobs = fb_blobs;
+            } else {
+                let (_, fb_blobs) = load_worker_checkpoint_totals(input.paths, &input.record.id);
+                blobs = fb_blobs;
+            }
+        }
         let (p50, p95, p99, max) =
             merge_percentiles(&blobs, 60_000_000).unwrap_or((None, None, None, None));
-        json!({ "p50_us": p50, "p95_us": p95, "p99_us": p99, "max_us": max })
+        json!({ "p50_us": p50, "p95_us": p99_or(p95), "p99_us": p99, "max_us": max })
     };
     Ok((counters, percentiles))
+}
+
+const fn p99_or(v: Option<u64>) -> Option<u64> {
+    v
+}
+
+/// Sum latest checkpoints across worker SQLite shards (`wNN.sqlite`).
+#[must_use]
+pub fn load_worker_checkpoint_totals(paths: &DataPaths, run_id: &str) -> (Value, Vec<Vec<u8>>) {
+    let mut samples = 0_u64;
+    let mut success = 0_u64;
+    let mut failure = 0_u64;
+    let mut expected = 0_u64;
+    let mut bytes = 0_u64;
+    let mut dropped = 0_u64;
+    let mut blobs = Vec::new();
+    for idx in paths.worker_indexes(run_id) {
+        let Ok(Some(conn)) = open_existing_worker(paths, run_id, idx, true) else {
+            continue;
+        };
+        if let Ok(Some(cp)) = crate::db::runs::latest_worker_checkpoint(&conn) {
+            if let Ok(cnt) = serde_json::from_str::<CounterSnapshot>(&cp.counters_json) {
+                samples = samples.saturating_add(cnt.samples);
+                success = success.saturating_add(cnt.success);
+                failure = failure.saturating_add(cnt.failure);
+                expected = expected.saturating_add(cnt.expected);
+                bytes = bytes.saturating_add(cnt.bytes);
+                dropped = dropped.saturating_add(cnt.dropped_details);
+            }
+            if let Some(blob) = cp.histogram_blob.filter(|b| !b.is_empty()) {
+                blobs.push(blob);
+            }
+        }
+    }
+    (
+        json!({
+            "samples": samples,
+            "success": success,
+            "failure": failure,
+            "expected": expected,
+            "bytes": bytes,
+            "dropped_details": dropped,
+        }),
+        blobs,
+    )
 }
 
 fn sum_windows(windows: &[Value]) -> Value {

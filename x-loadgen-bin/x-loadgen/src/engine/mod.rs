@@ -3,12 +3,13 @@
 mod cluster;
 mod execute;
 mod limits;
-mod mazbri;
+pub(crate) mod mazbri;
 mod metrics;
 mod scheduler;
+pub mod snapshot;
 mod supervisor;
 mod token;
-mod transport;
+pub(crate) mod transport;
 mod windows;
 pub mod worker;
 
@@ -27,7 +28,11 @@ pub use metrics::{
     CounterSnapshot, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink, unix_now_ms,
 };
 pub use scheduler::{LiveTraffic, WindowPlan, run_window};
-pub use supervisor::{RunSnapshot, StopKind, Supervisor};
+pub use snapshot::{
+    ExecutionRequest, ExecutionTarget, RunSnapshot, RunSourceMeta, compile_run_snapshot,
+    compile_single_request_target,
+};
+pub use supervisor::{StopKind, Supervisor, build_plan_from_snapshot};
 pub use token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 pub use transport::{
     ExecOutcome, HttpExecutor, RequestCtx, RequestExecutor, Weighted, mix_request_seed,
@@ -189,8 +194,6 @@ impl EngineHandle {
 
 impl Drop for EngineHandle {
     fn drop(&mut self) {
-        // After `join` has been taken the window is finished; do not cancel a
-        // token that may be shared with later loop windows.
         if self.join.is_some() {
             self.cancel.cancel();
         }

@@ -14,21 +14,28 @@ use tokio::sync::oneshot;
 use tracing::info;
 
 use super::auth::{login, logout, me, password};
+use super::collections::{
+    create_collection, create_request, delete_collection, delete_request, export_collections,
+    get_collection, get_request, import_collections, list_collections, update_collection,
+    update_request,
+};
+use super::environments::{
+    create_environment, create_tenant, delete_environment, delete_tenant, export_environments,
+    generate_tenant_binding_keypair, get_environment, get_tenant, import_environments,
+    list_environments, list_tenants, update_environment, update_tenant,
+};
 use super::openapi::openapi;
+use super::probe::{generate_stateless_binding_keypair, probe_handler};
+use super::profiles::{
+    create_load_profile, delete_load_profile, get_load_profile, list_load_profiles,
+    update_load_profile,
+};
 use super::runs::{
     create_run, delete_run_handler, get_run, get_stats, get_timeline, get_timeseries, get_verdict,
     get_windows, list_runs, patch_traffic, resume_run, stop_run,
 };
 pub use super::state::AppState;
 pub(crate) use super::state::{authenticate, require_ready_auth};
-use super::targets::{
-    create_product, create_target, create_tenant, delete_product, delete_target, delete_tenant,
-    generate_binding_keypair, get_product, get_target, get_tenant, list_products, list_targets,
-    list_tenants, update_product, update_target, update_tenant,
-};
-use super::templates::{
-    create_template, delete_template, get_template, list_templates, update_template,
-};
 
 use super::error::ApiError;
 use crate::auth::{ensure_admin_passwd, load_auth_state, password_file_log_line};
@@ -45,40 +52,61 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/password", post(password))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/meta", get(meta))
-        .route("/api/v1/targets", get(list_targets).post(create_target))
         .route(
-            "/api/v1/targets/{id}",
-            get(get_target).put(update_target).delete(delete_target),
+            "/api/v1/collections",
+            get(list_collections).post(create_collection),
+        )
+        .route("/api/v1/collections/export", get(export_collections))
+        .route("/api/v1/collections/import", post(import_collections))
+        .route(
+            "/api/v1/collections/{id}",
+            get(get_collection)
+                .put(update_collection)
+                .delete(delete_collection),
+        )
+        .route("/api/v1/requests", post(create_request))
+        .route(
+            "/api/v1/requests/{id}",
+            get(get_request).put(update_request).delete(delete_request),
         )
         .route(
-            "/api/v1/targets/{id}/tenants",
+            "/api/v1/environments",
+            get(list_environments).post(create_environment),
+        )
+        .route("/api/v1/environments/export", get(export_environments))
+        .route("/api/v1/environments/import", post(import_environments))
+        .route(
+            "/api/v1/environments/{id}",
+            get(get_environment)
+                .put(update_environment)
+                .delete(delete_environment),
+        )
+        .route(
+            "/api/v1/environments/{id}/tenants",
             get(list_tenants).post(create_tenant),
         )
         .route(
-            "/api/v1/targets/{id}/tenants/{tid}",
+            "/api/v1/environments/{id}/tenants/{tid}",
             get(get_tenant).put(update_tenant).delete(delete_tenant),
         )
         .route(
-            "/api/v1/targets/{id}/tenants/{tid}/binding-keypair",
-            post(generate_binding_keypair),
+            "/api/v1/environments/{id}/tenants/{tid}/binding-keypair",
+            post(generate_tenant_binding_keypair),
         )
         .route(
-            "/api/v1/targets/{id}/products",
-            get(list_products).post(create_product),
+            "/api/v1/load-profiles",
+            get(list_load_profiles).post(create_load_profile),
         )
         .route(
-            "/api/v1/targets/{id}/products/{pid}",
-            get(get_product).put(update_product).delete(delete_product),
+            "/api/v1/load-profiles/{id}",
+            get(get_load_profile)
+                .put(update_load_profile)
+                .delete(delete_load_profile),
         )
+        .route("/api/v1/probe", post(probe_handler))
         .route(
-            "/api/v1/templates",
-            get(list_templates).post(create_template),
-        )
-        .route(
-            "/api/v1/templates/{id}",
-            get(get_template)
-                .put(update_template)
-                .delete(delete_template),
+            "/api/v1/crypto/binding-keypair",
+            post(generate_stateless_binding_keypair),
         )
         .route("/api/v1/runs", get(list_runs).post(create_run))
         .route("/api/v1/runs/{id}", get(get_run).delete(delete_run_handler))

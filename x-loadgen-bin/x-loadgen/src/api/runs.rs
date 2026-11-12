@@ -43,6 +43,10 @@ const MAX_WAIT_SECS: u64 = 600;
 #[derive(Debug, Serialize)]
 pub struct RunView {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Value>,
     pub template_id: String,
     pub target_id: String,
     pub mode: String,
@@ -220,33 +224,21 @@ pub async fn get_stats(
                 record.current_concurrency,
             )
         };
-    // After a run has stopped, prefer persisted window sums when live metrics are gone.
-    let mut samples = counters.samples;
-    let mut success = counters.success;
-    let mut failure = counters.failure;
-    let mut expected = counters.expected;
-    let mut bytes = counters.bytes;
-    let mut dropped = counters.dropped_details;
+    let (mut samples, mut success, mut failure, mut expected, mut bytes, mut dropped) = (
+        counters.samples,
+        counters.success,
+        counters.failure,
+        counters.expected,
+        counters.bytes,
+        counters.dropped_details,
+    );
+    let (mut p50, mut p95, mut p99, mut max) = percentiles;
     if state.supervisor.get(&id).is_none() {
-        let conn = state.lock_db()?;
-        if let Ok(windows) = list_windows(&conn, &id) {
-            samples = 0;
-            success = 0;
-            failure = 0;
-            expected = 0;
-            bytes = 0;
-            dropped = 0;
-            for window in windows {
-                samples += window["samples"].as_u64().unwrap_or(0);
-                success += window["success"].as_u64().unwrap_or(0);
-                failure += window["failure"].as_u64().unwrap_or(0);
-                expected += window["expected"].as_u64().unwrap_or(0);
-                bytes += window["bytes"].as_u64().unwrap_or(0);
-                dropped += window["dropped_details"].as_u64().unwrap_or(0);
-            }
-        }
+        let ((s, ok, fail, exp, b, d), (merged_p50, merged_p95, merged_p99, merged_max)) =
+            stopped_run_stats_fallback(&state, &id, percentiles)?;
+        (samples, success, failure, expected, bytes, dropped) = (s, ok, fail, exp, b, d);
+        (p50, p95, p99, max) = (merged_p50, merged_p95, merged_p99, merged_max);
     }
-    let (p50, p95, p99, max) = percentiles;
     Ok(Json(json!({
         "id": record.id,
         "status": record.status,
@@ -266,6 +258,49 @@ pub async fn get_stats(
         "max_us": max,
         "window_index": window_index,
     })))
+}
+
+type CounterTuple = (u64, u64, u64, u64, u64, u64);
+type PercentileTuple = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
+
+fn stopped_run_stats_fallback(
+    state: &AppState,
+    id: &str,
+    default_percentiles: PercentileTuple,
+) -> Result<(CounterTuple, PercentileTuple), ApiError> {
+    let conn = state.lock_db()?;
+    let windows = list_windows(&conn, id).unwrap_or_default();
+    let totals = if windows.is_empty() {
+        let (fb, _) = crate::report::load_worker_checkpoint_totals(&state.paths, id);
+        (
+            fb["samples"].as_u64().unwrap_or(0),
+            fb["success"].as_u64().unwrap_or(0),
+            fb["failure"].as_u64().unwrap_or(0),
+            fb["expected"].as_u64().unwrap_or(0),
+            fb["bytes"].as_u64().unwrap_or(0),
+            fb["dropped_details"].as_u64().unwrap_or(0),
+        )
+    } else {
+        let (mut samples, mut success, mut failure, mut expected, mut bytes, mut dropped) =
+            (0, 0, 0, 0, 0, 0);
+        for window in windows {
+            samples += window["samples"].as_u64().unwrap_or(0);
+            success += window["success"].as_u64().unwrap_or(0);
+            failure += window["failure"].as_u64().unwrap_or(0);
+            expected += window["expected"].as_u64().unwrap_or(0);
+            bytes += window["bytes"].as_u64().unwrap_or(0);
+            dropped += window["dropped_details"].as_u64().unwrap_or(0);
+        }
+        (samples, success, failure, expected, bytes, dropped)
+    };
+    let mut blobs = crate::db::runs::latest_checkpoint_blobs(&conn, id).unwrap_or_default();
+    if blobs.is_empty() {
+        let (_, fb_blobs) = crate::report::load_worker_checkpoint_totals(&state.paths, id);
+        blobs = fb_blobs;
+    }
+    let percentiles =
+        crate::engine::merge_percentiles(&blobs, 60_000_000).unwrap_or(default_percentiles);
+    Ok((totals, percentiles))
 }
 
 /// Second-level ring buffer for a live run (empty once the process has dropped it).
@@ -428,8 +463,17 @@ fn view_from_record(
     snapshot: Option<Value>,
     verdict: Option<Verdict>,
 ) -> RunView {
+    let parsed_meta = serde_json::from_str::<Value>(&record.snapshot_json).ok();
+    let title = parsed_meta
+        .as_ref()
+        .and_then(|v| v.get("title"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let source = parsed_meta.and_then(|v| v.get("source").cloned());
     RunView {
         id: record.id.clone(),
+        title,
+        source,
         template_id: record.template_id.clone(),
         target_id: record.target_id.clone(),
         mode: record.mode.clone(),
