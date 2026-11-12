@@ -265,6 +265,52 @@ async fn histogram_and_ring_stay_fixed_size_after_many_samples() {
     assert_ne!(blob.len(), 0);
 }
 
+#[test]
+fn run_histogram_survives_window_reset_and_restores_from_blob() {
+    let metrics = Metrics::new(1_000_000).expect("metrics");
+    let sink = NullSink;
+    for i in 0..20 {
+        let sample = Sample {
+            seq: None,
+            start_unix_ms: 1_700_000_000_000 + i,
+            end_unix_ms: 1_700_000_000_001 + i,
+            latency_us: 200 + i,
+            product_id: "P1".into(),
+            product_name: None,
+            request_index: Some(i),
+            http_status: Some(200),
+            success: true,
+            expected: false,
+            reason: None,
+            error_class: None,
+            request_id: None,
+            error: None,
+            response_bytes: None,
+            customer_name: None,
+        };
+        metrics.record(sample, OutcomeClass::Success, false, &sink);
+    }
+    let run_pct = metrics.percentiles_us();
+    assert_eq!(run_pct, metrics.window_percentiles_us());
+    assert!(run_pct.2.is_some(), "p99 should be present");
+    metrics.reset_window_histogram();
+    assert_eq!(
+        metrics.window_percentiles_us(),
+        (None, None, None, None),
+        "window histogram is cleared"
+    );
+    assert_eq!(
+        metrics.percentiles_us(),
+        run_pct,
+        "run-wide histogram survives the window reset"
+    );
+    let blob = metrics.histogram_blob().expect("blob");
+    let restored = Metrics::new(1_000_000).expect("restored");
+    restored.restore_histogram(&blob).expect("restore");
+    assert_eq!(restored.percentiles_us(), run_pct);
+    assert_eq!(restored.window_percentiles_us(), (None, None, None, None));
+}
+
 #[tokio::test]
 async fn dropped_details_increment_when_try_send_fails() {
     let metrics = Metrics::new(1_000_000).expect("metrics");

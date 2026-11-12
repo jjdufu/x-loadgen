@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod openapi;
 pub mod report;
 pub mod runs;
 pub mod server;
@@ -10,6 +11,8 @@ pub mod static_files;
 pub mod targets;
 pub mod templates;
 
+#[cfg(test)]
+mod automation_tests;
 #[cfg(test)]
 mod catalog_tests;
 #[cfg(test)]

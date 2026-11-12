@@ -50,7 +50,10 @@ pub struct Metrics {
     dropped_details: AtomicU64,
     in_flight: AtomicU64,
     peak_in_flight: AtomicU64,
+    /// Current window only; reset at each window boundary.
     histogram: Mutex<Histogram<u64>>,
+    /// Entire run; never reset except when restoring a checkpoint on resume.
+    total: Mutex<Histogram<u64>>,
     ring: Mutex<Vec<RingSlot>>,
 }
 
@@ -77,6 +80,7 @@ impl Metrics {
         let highest = highest_trackable_us.max(2);
         let histogram =
             Histogram::new_with_bounds(1, highest, 3).context("create latency histogram")?;
+        let total = Histogram::new_with_bounds(1, highest, 3).context("create run histogram")?;
         Ok(Self {
             samples: AtomicU64::new(0),
             success: AtomicU64::new(0),
@@ -87,6 +91,7 @@ impl Metrics {
             in_flight: AtomicU64::new(0),
             peak_in_flight: AtomicU64::new(0),
             histogram: Mutex::new(histogram),
+            total: Mutex::new(total),
             ring: Mutex::new(vec![RingSlot::default(); RING_CAPACITY]),
         })
     }
@@ -109,11 +114,20 @@ impl Metrics {
                 }
             }
             if let Ok(us) = u64::try_from(sample.latency_us.max(0)) {
-                let mut hist = self
-                    .histogram
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let _ = hist.record(us);
+                {
+                    let mut hist = self
+                        .histogram
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let _ = hist.record(us);
+                }
+                {
+                    let mut total = self
+                        .total
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let _ = total.record(us);
+                }
             }
             if let Some(bytes) = sample.response_bytes
                 && let Ok(bytes) = u64::try_from(bytes.max(0))
@@ -178,14 +192,15 @@ impl Metrics {
             .len()
     }
 
-    /// Serialize the current-window histogram (V2 encoding).
+    /// Serialize the run-wide histogram (V2 encoding), used in checkpoints
+    /// and reports.
     ///
     /// # Errors
     ///
     /// Returns an error if serialization fails.
     pub fn histogram_blob(&self) -> Result<Vec<u8>> {
         let hist = self
-            .histogram
+            .total
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut out = Vec::new();
@@ -195,7 +210,9 @@ impl Metrics {
         Ok(out)
     }
 
-    /// Replace the in-memory histogram with a deserialized checkpoint blob.
+    /// Replace the run-wide histogram with a deserialized checkpoint blob.
+    /// The current-window histogram is left untouched so a resumed window
+    /// starts clean.
     ///
     /// # Errors
     ///
@@ -205,7 +222,7 @@ impl Metrics {
             .deserialize(&mut Cursor::new(blob))
             .context("restore histogram")?;
         *self
-            .histogram
+            .total
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = restored;
         Ok(())
@@ -222,26 +239,20 @@ impl Metrics {
             .store(snapshot.dropped_details, Ordering::Relaxed);
     }
 
-    /// Percentiles of the current-window histogram, in microseconds.
+    /// Percentiles of the run-wide histogram, in microseconds.
     #[must_use]
     pub fn percentiles_us(&self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-        let hist = self
-            .histogram
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if hist.is_empty() {
-            return (None, None, None, None);
-        }
-        (
-            Some(hist.value_at_quantile(0.50)),
-            Some(hist.value_at_quantile(0.95)),
-            Some(hist.value_at_quantile(0.99)),
-            Some(hist.max()),
-        )
+        percentiles_of(&self.total)
+    }
+
+    /// Percentiles of the current window only, in microseconds.
+    #[must_use]
+    pub fn window_percentiles_us(&self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+        percentiles_of(&self.histogram)
     }
 
     /// Reset the current-window histogram (used at a loop window boundary).
-    /// Counters are left untouched.
+    /// The run-wide histogram and counters are left untouched.
     pub fn reset_window_histogram(&self) {
         let mut hist = self
             .histogram
@@ -306,6 +317,24 @@ impl SampleSink for crate::db::WriterHandle {
     fn try_send(&self, sample: Sample) -> bool {
         crate::db::WriterHandle::try_send(self, sample)
     }
+}
+
+/// Percentiles of a locked histogram, or all-`None` when it is empty.
+fn percentiles_of(
+    hist: &Mutex<Histogram<u64>>,
+) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+    let hist = hist
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if hist.is_empty() {
+        return (None, None, None, None);
+    }
+    (
+        Some(hist.value_at_quantile(0.50)),
+        Some(hist.value_at_quantile(0.95)),
+        Some(hist.value_at_quantile(0.99)),
+        Some(hist.max()),
+    )
 }
 
 /// Current Unix time in milliseconds, or `0` if the clock is before the epoch.

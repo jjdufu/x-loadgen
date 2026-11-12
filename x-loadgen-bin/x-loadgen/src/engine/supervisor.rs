@@ -60,6 +60,10 @@ pub enum StopKind {
 pub struct RunSnapshot {
     pub target: TargetDetail,
     pub template: Template,
+    /// Assertion thresholds frozen at start. Absent on runs created before
+    /// this field existed, and when the caller did not supply an `assert`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assert: Option<crate::run_assert::AssertSpec>,
 }
 
 /// In-memory handle for a run the supervisor is currently driving.
@@ -220,14 +224,25 @@ impl Supervisor {
     /// are not a conflict.
     pub fn start_new(
         &self,
-        template_id: &str,
-        mode: Option<&str>,
+        request: &crate::db::runs::CreateRunRequest,
     ) -> Result<RunRecord, StoreError> {
         let (record, snapshot) = {
             let conn = self.lock_db();
-            let template = templates::get_template(&conn, template_id)?;
+            let key = request.template_key()?;
+            let mut template = templates::get_template_by_id_or_name(&conn, key)?;
+            request.apply_to(&mut template)?;
+            templates::validate_effective(&conn, &template, self.max_qps, self.max_concurrency)?;
+            let assert = request.assert_spec();
+            if let Some(spec) = &assert {
+                spec.validate()?;
+                if spec.min_qps_ratio.is_some() && template.qps.is_none() {
+                    return Err(StoreError::invalid(
+                        "min_qps_ratio requires a configured qps",
+                    ));
+                }
+            }
             let target = targets::get_target(&conn, &template.target_id)?;
-            let mode = resolve_mode(mode, template.loop_enabled)?;
+            let mode = resolve_mode(request.mode.as_deref(), template.loop_enabled)?;
             let qps = opt_u64(template.qps);
             let concurrency = as_u64(template.concurrency).max(1);
             limits::check_caps(
@@ -236,7 +251,12 @@ impl Supervisor {
                 self.max_qps,
                 self.max_concurrency,
             )?;
-            let snapshot = RunSnapshot { target, template };
+            let template_id = template.id.clone();
+            let snapshot = RunSnapshot {
+                target,
+                template,
+                assert,
+            };
             let snapshot_json = serde_json::to_string(&snapshot)?;
             let qps_i = i64::try_from(qps).ok();
             let concurrency_i = i64::try_from(concurrency).unwrap_or(i64::MAX);
@@ -244,7 +264,7 @@ impl Supervisor {
             let record = insert_run(
                 &conn,
                 &NewRun {
-                    template_id,
+                    template_id: &template_id,
                     target_id: &snapshot.target.id,
                     mode,
                     processes,

@@ -1,22 +1,42 @@
 //! HTTP handlers for load-test runs.
 
+use std::time::Duration;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::error::ApiError;
+use super::report::load_verdict;
 use super::server::{AppState, require_ready_auth};
 use crate::db::runs::{CreateRunRequest, TrafficPatch, delete_run, list_timeline, list_windows};
 use crate::engine::RING_CAPACITY;
 use crate::engine::StopKind;
+use crate::run_assert::{Verdict, VerdictResult, status_is_running};
 
 /// Query string for `GET /api/v1/runs`.
 #[derive(Debug, Deserialize)]
 pub struct ListRunsQuery {
     pub status: Option<String>,
 }
+
+/// Query string for `POST /api/v1/runs`.
+#[derive(Debug, Deserialize, Default)]
+pub struct CreateRunQuery {
+    /// When true, the request waits until the run leaves `running`/`stopping`
+    /// or `timeout` seconds elapse.
+    #[serde(default)]
+    pub wait: bool,
+    /// Wait timeout in seconds (default 60, maximum 600).
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+const DEFAULT_WAIT_SECS: u64 = 60;
+const MAX_WAIT_SECS: u64 = 600;
 
 /// Public run representation. List responses omit the snapshot; detail includes
 /// a redacted copy.
@@ -37,6 +57,8 @@ pub struct RunView {
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<Verdict>,
 }
 
 /// List runs, optionally filtered by `status`.
@@ -53,7 +75,7 @@ pub async fn list_runs(
     let rows = state.supervisor.list(query.status.as_deref())?;
     Ok(Json(
         rows.into_iter()
-            .map(|row| view_from_record(&row, None))
+            .map(|row| view_from_record(&row, None, None))
             .collect(),
     ))
 }
@@ -66,13 +88,70 @@ pub async fn list_runs(
 pub async fn create_run(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<CreateRunQuery>,
     Json(body): Json<CreateRunRequest>,
-) -> Result<(StatusCode, Json<RunView>), ApiError> {
+) -> Result<Response, ApiError> {
     require_ready_auth(&state, &headers)?;
-    let record = state
-        .supervisor
-        .start_new(&body.template_id, body.mode.as_deref())?;
-    Ok((StatusCode::CREATED, Json(view_from_record(&record, None))))
+    let record = state.supervisor.start_new(&body)?;
+    if !query.wait {
+        let view = view_with_verdict(&state, &record, None)?;
+        return Ok((StatusCode::CREATED, Json(view)).into_response());
+    }
+    wait_for_run(&state, &record.id, query.timeout).await
+}
+
+async fn wait_for_run(
+    state: &AppState,
+    id: &str,
+    timeout: Option<u64>,
+) -> Result<Response, ApiError> {
+    let secs = timeout.unwrap_or(DEFAULT_WAIT_SECS).clamp(1, MAX_WAIT_SECS);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let current = state.supervisor.get_run(id)?;
+        if !status_is_running(&current.status) {
+            let view = view_with_verdict(state, &current, None)?;
+            return Ok((StatusCode::CREATED, Json(view)).into_response());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let view = view_with_verdict(state, &current, None)?;
+            let body = json!({
+                "error": {
+                    "code": "wait_timeout",
+                    "message": format!(
+                        "run {id} is still {} after waiting {secs} seconds",
+                        current.status
+                    )
+                },
+                "run": view,
+            });
+            return Ok((StatusCode::CONFLICT, Json(body)).into_response());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Script-friendly verdict: 200 pass/none, 422 fail, 409 still running.
+///
+/// The body is always a [`Verdict`]. `curl -f` exits non-zero on 422 and 409.
+///
+/// # Errors
+///
+/// Returns an authentication or not-found error.
+pub async fn get_verdict(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    require_ready_auth(&state, &headers)?;
+    let record = state.supervisor.get_run(&id)?;
+    let verdict = load_verdict(&state, &record)?;
+    let status = match verdict.result {
+        VerdictResult::Pass | VerdictResult::None => StatusCode::OK,
+        VerdictResult::Fail => StatusCode::UNPROCESSABLE_ENTITY,
+        VerdictResult::Pending => StatusCode::CONFLICT,
+    };
+    Ok((status, Json(verdict)).into_response())
 }
 
 /// Run detail with a redacted snapshot.
@@ -88,7 +167,7 @@ pub async fn get_run(
     require_ready_auth(&state, &headers)?;
     let record = state.supervisor.get_run(&id)?;
     let snapshot = redact_snapshot(&record.snapshot_json);
-    Ok(Json(view_from_record(&record, Some(snapshot))))
+    Ok(Json(view_with_verdict(&state, &record, Some(snapshot))?))
 }
 
 /// Live or last-known counters and configured traffic.
@@ -273,7 +352,7 @@ pub async fn stop_run(
 ) -> Result<Json<RunView>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let record = state.supervisor.request_stop(&id, StopKind::User)?;
-    Ok(Json(view_from_record(&record, None)))
+    Ok(Json(view_from_record(&record, None, None)))
 }
 
 /// Resume a `stopped` or `interrupted` run. `finished` / `failed` return 409.
@@ -288,7 +367,7 @@ pub async fn resume_run(
 ) -> Result<Json<RunView>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let record = state.supervisor.resume(&id)?;
-    Ok(Json(view_from_record(&record, None)))
+    Ok(Json(view_from_record(&record, None, None)))
 }
 
 /// Change configured QPS and/or concurrency of a running task.
@@ -306,7 +385,7 @@ pub async fn patch_traffic(
     let record = state
         .supervisor
         .patch_traffic(&id, body.qps, body.concurrency)?;
-    Ok(Json(view_from_record(&record, None)))
+    Ok(Json(view_from_record(&record, None, None)))
 }
 
 /// Delete a finished (or otherwise non-running) run and its directory.
@@ -335,7 +414,20 @@ pub async fn delete_run_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn view_from_record(record: &crate::db::runs::RunRecord, snapshot: Option<Value>) -> RunView {
+fn view_with_verdict(
+    state: &AppState,
+    record: &crate::db::runs::RunRecord,
+    snapshot: Option<Value>,
+) -> Result<RunView, ApiError> {
+    let verdict = load_verdict(state, record)?;
+    Ok(view_from_record(record, snapshot, Some(verdict)))
+}
+
+fn view_from_record(
+    record: &crate::db::runs::RunRecord,
+    snapshot: Option<Value>,
+    verdict: Option<Verdict>,
+) -> RunView {
     RunView {
         id: record.id.clone(),
         template_id: record.template_id.clone(),
@@ -351,6 +443,7 @@ fn view_from_record(record: &crate::db::runs::RunRecord, snapshot: Option<Value>
         error: record.error.clone(),
         created_at: record.created_at,
         snapshot,
+        verdict,
     }
 }
 

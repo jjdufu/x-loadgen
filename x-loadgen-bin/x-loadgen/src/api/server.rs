@@ -14,9 +14,10 @@ use tokio::sync::oneshot;
 use tracing::info;
 
 use super::auth::{login, logout, me, password};
+use super::openapi::openapi;
 use super::runs::{
-    create_run, delete_run_handler, get_run, get_stats, get_timeline, get_timeseries, get_windows,
-    list_runs, patch_traffic, resume_run, stop_run,
+    create_run, delete_run_handler, get_run, get_stats, get_timeline, get_timeseries, get_verdict,
+    get_windows, list_runs, patch_traffic, resume_run, stop_run,
 };
 pub use super::state::AppState;
 pub(crate) use super::state::{authenticate, require_ready_auth};
@@ -38,6 +39,7 @@ use crate::db::{DataPaths, open_central};
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/api/v1/openapi.json", get(openapi))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/password", post(password))
@@ -84,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/runs/{id}/timeseries", get(get_timeseries))
         .route("/api/v1/runs/{id}/timeline", get(get_timeline))
         .route("/api/v1/runs/{id}/windows", get(get_windows))
+        .route("/api/v1/runs/{id}/verdict", get(get_verdict))
         .route("/api/v1/runs/{id}/stop", post(stop_run))
         .route("/api/v1/runs/{id}/resume", post(resume_run))
         .route("/api/v1/runs/{id}/traffic", patch(patch_traffic))

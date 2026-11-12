@@ -11,10 +11,14 @@ use serde_json::{Value, json};
 use crate::db::DataPaths;
 use crate::db::open_existing_worker;
 use crate::db::runs::{RunRecord, latest_checkpoint_blobs, list_timeline, list_windows};
+use crate::engine::RunSnapshot;
 use crate::engine::{
     CounterSnapshot, HistogramPercentiles, RING_CAPACITY, RingSlot, merge_percentiles,
 };
 use crate::report::redact::{apply_secrets, collect_secrets, redact_snapshot_json, scrub_text};
+use crate::run_assert::{
+    ActualMetrics, ActualParts, AssertSpec, Verdict, evaluate, status_is_running,
+};
 
 /// Inputs needed to assemble a report without loading sample rows.
 pub struct ReportInput<'a> {
@@ -64,7 +68,68 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
         "snapshot": snapshot,
     });
     apply_secrets(&mut report, &secrets);
+    let verdict = verdict_from_totals(input.record, &counters, &percentiles);
+    report["verdict"] = serde_json::to_value(&verdict)?;
     Ok(report)
+}
+
+/// Evaluate the run's frozen `assert` against current counters and percentiles.
+///
+/// # Errors
+///
+/// Returns an error if window or histogram data cannot be read.
+pub fn compute_verdict(input: &ReportInput<'_>) -> Result<Verdict> {
+    let windows = list_windows(input.conn, &input.record.id)?;
+    let (counters, percentiles) = counters_and_percentiles(input, &windows)?;
+    Ok(verdict_from_totals(input.record, &counters, &percentiles))
+}
+
+fn verdict_from_totals(record: &RunRecord, counters: &Value, percentiles: &Value) -> Verdict {
+    let snapshot = serde_json::from_str::<RunSnapshot>(&record.snapshot_json).ok();
+    let spec: Option<AssertSpec> = snapshot.as_ref().and_then(|s| s.assert.clone());
+    let configured = record
+        .current_qps
+        .and_then(|v| u64::try_from(v).ok())
+        .or_else(|| {
+            snapshot
+                .as_ref()
+                .and_then(|s| s.template.qps)
+                .and_then(|v| u64::try_from(v).ok())
+        });
+    let elapsed_ms = elapsed_ms(record);
+    let actual = ActualMetrics::from_parts(&ActualParts {
+        samples: json_u64(&counters["samples"]),
+        success: json_u64(&counters["success"]),
+        failure: json_u64(&counters["failure"]),
+        p50_us: json_opt_u64(&percentiles["p50_us"]),
+        p95_us: json_opt_u64(&percentiles["p95_us"]),
+        p99_us: json_opt_u64(&percentiles["p99_us"]),
+        max_us: json_opt_u64(&percentiles["max_us"]),
+        configured_qps: configured,
+        elapsed_ms,
+    });
+    evaluate(spec.as_ref(), &actual, status_is_running(&record.status))
+}
+
+fn elapsed_ms(record: &RunRecord) -> Option<i64> {
+    let start = record.started_at?;
+    let end = record
+        .ended_at
+        .unwrap_or_else(|| i64::try_from(crate::db::unix_now_ms().unwrap_or(0)).unwrap_or(0));
+    Some(end.saturating_sub(start).max(0))
+}
+
+fn json_u64(value: &Value) -> u64 {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+        .unwrap_or(0)
+}
+
+fn json_opt_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
 }
 
 fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Result<(Value, Value)> {

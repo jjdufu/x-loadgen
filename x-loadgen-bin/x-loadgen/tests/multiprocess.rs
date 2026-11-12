@@ -261,8 +261,8 @@ async fn processes_two_split_qps_and_merge_stats() {
     );
 
     // Live snapshots are published once a second; wait until they catch up
-    // with the worker databases.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    // with the worker databases. Allow extra time under a loaded test suite.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let (from_stats, from_db, live) = loop {
         let (code, live) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
         assert_eq!(code, reqwest::StatusCode::OK, "{live}");

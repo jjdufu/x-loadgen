@@ -14,4 +14,5 @@ pub mod http;
 pub mod log;
 pub mod num;
 pub mod report;
+pub mod run_assert;
 pub mod signal;

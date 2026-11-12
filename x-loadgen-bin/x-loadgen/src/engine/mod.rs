@@ -27,7 +27,7 @@ pub use metrics::{
     CounterSnapshot, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink, unix_now_ms,
 };
 pub use scheduler::{LiveTraffic, WindowPlan, run_window};
-pub use supervisor::{StopKind, Supervisor};
+pub use supervisor::{RunSnapshot, StopKind, Supervisor};
 pub use token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 pub use transport::{
     ExecOutcome, HttpExecutor, RequestCtx, RequestExecutor, Weighted, mix_request_seed,

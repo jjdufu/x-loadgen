@@ -10,6 +10,10 @@
       </div>
     </div>
     <p>状态：{{ run?.status }} · 模式：{{ run?.mode }} · 进程：{{ run?.processes }}</p>
+    <p v-if="run?.verdict" class="verdict-line" :class="run.verdict.result">
+      判定：{{ run.verdict.result }}
+      <span v-if="failedChecks.length">（未通过：{{ failedChecks }}）</span>
+    </p>
     <div class="card-grid">
       <div v-for="card in cards" :key="card.label" class="stat-card">
         <div class="label">{{ card.label }}</div>
@@ -72,6 +76,10 @@ const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 let source: EventSource | null = null;
 let pollTimer: number | null = null;
+
+const failedChecks = computed(() =>
+  (run.value?.verdict?.failed ?? []).map((c) => c.check).join(", "),
+);
 
 const canStop = computed(() => run.value?.status === "running" || run.value?.status === "stopping");
 const canResume = computed(() => run.value?.status === "stopped" || run.value?.status === "interrupted");
@@ -181,6 +189,15 @@ onUnmounted(() => {
 <style scoped>
 .muted {
   color: #6b7280;
+}
+.verdict-line.pass {
+  color: #067d37;
+}
+.verdict-line.fail {
+  color: #b42318;
+}
+.verdict-line.pending {
+  color: #b54708;
 }
 h3 {
   margin: 20px 0 8px;

@@ -1,0 +1,3773 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "x-loadgen API",
+    "version": "0.2.0",
+    "description": "HTTP API for the x-loadgen load-test daemon.\n\n## Authentication\n\nThe login token is the only long-lived credential. It never expires on its own and changes only on password change or `reset-passwd`.\n\n- Scripts: `Authorization: Bearer <token>` (the login token itself, not a session).\n- Browser: `POST /api/v1/auth/login` sets an HttpOnly cookie `x_loadgen_token` (SameSite=Lax, Path=/, no Secure, no Max-Age).\n- `--no-auth` / `X_LOADGEN_NO_AUTH=1` disables authentication (for local labs only).\n- Before the first password change, business endpoints return 403 `password_change_required`.\n\n## Errors\n\nUnless noted (the `/verdict` endpoint returns a Verdict body), errors use:\n\n```json\n{\n  \"error\": { \"code\": \"not_found\", \"message\": \"...\" }\n}\n```\n\nStable codes: `unauthorized` (401), `password_change_required` (403), `invalid_request` (400), `auth_disabled` (400), `not_found` (404), `conflict` (409), `wait_timeout` (409), `internal` (500).\n\n## Automation\n\nStart from a template (`template` id or name) with optional overrides and `assert`. Poll `/stats` or `/windows`, `PATCH /traffic` to adjust QPS, `POST /stop` to finish a loop run, then `GET /verdict` (use `curl -f`) and download `/report.json` or `/report.html`. Loop runs continue in the daemon if the client disconnects."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The process that serves this document."
+    }
+  ],
+  "tags": [
+    {
+      "name": "meta"
+    },
+    {
+      "name": "auth"
+    },
+    {
+      "name": "targets"
+    },
+    {
+      "name": "tenants"
+    },
+    {
+      "name": "products"
+    },
+    {
+      "name": "templates"
+    },
+    {
+      "name": "runs"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness and version",
+        "tags": [
+          "meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "summary": "OpenAPI 3 document for this API",
+        "tags": [
+          "meta"
+        ],
+        "description": "Unauthenticated. Returns this document.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3 JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "Verify the login token and set the auth cookie",
+        "tags": [
+          "auth"
+        ],
+        "description": "The login token is the long-lived credential. It is echoed in the response and set as an HttpOnly cookie (`x_loadgen_token`, SameSite=Lax, Path=/, no Secure, no Max-Age). The token never expires on its own. Scripts may skip login and send `Authorization: Bearer <token>` directly.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "summary": "Clear the auth cookie",
+        "tags": [
+          "auth"
+        ],
+        "description": "Clears the cookie. The login token itself stays valid.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password": {
+      "post": {
+        "summary": "Change the login token",
+        "tags": [
+          "auth"
+        ],
+        "description": "Requires the current token (cookie or Bearer) and `old_token`. The new token must be at least 24 characters of printable ASCII, without whitespace, quotes, semicolons, commas or backslashes, and must differ from the old token. On success the cookie is replaced and the old token is rejected immediately. `admin.passwd` is deleted after the first change.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error (`internal`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "summary": "Current authentication state",
+        "tags": [
+          "auth"
+        ],
+        "description": "With `--no-auth`, returns `auth_required: false` without a token. Otherwise requires a valid login token.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meta": {
+      "get": {
+        "summary": "Version, caps, and running traffic totals",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetaResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets": {
+      "get": {
+        "summary": "List targets (secrets omitted)",
+        "tags": [
+          "targets"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TargetSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a target, optionally with tenants and products",
+        "tags": [
+          "targets"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}": {
+      "get": {
+        "summary": "Target detail (includes secrets)",
+        "tags": [
+          "targets"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace a target",
+        "tags": [
+          "targets"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a target",
+        "tags": [
+          "targets"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/tenants": {
+      "get": {
+        "summary": "List tenants of a target",
+        "tags": [
+          "tenants"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tenant"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a tenant",
+        "tags": [
+          "tenants"
+        ],
+        "description": "For `protocol=mazbri`, encryption and optional request-binding fields are validated against the client contract. For `protocol=http`, only plaintext (`encryption_mode=none`) is accepted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tenant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/tenants/{tid}": {
+      "get": {
+        "summary": "Tenant detail (includes secrets)",
+        "tags": [
+          "tenants"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace a tenant",
+        "tags": [
+          "tenants"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tenant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a tenant",
+        "tags": [
+          "tenants"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/tenants/{tid}/binding-keypair": {
+      "post": {
+        "summary": "Generate a request-binding key pair",
+        "tags": [
+          "tenants"
+        ],
+        "description": "The private key is stored on the tenant; the response returns only the public key (and kid/alg) for registration in management.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "alg": {
+                    "type": "string",
+                    "description": "Signing algorithm, e.g. ed25519, ecdsa-p256-sha256, sm2-sign, rsa-pkcs1v15-sign-sha256, hmac-sha256."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeypairResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/products": {
+      "get": {
+        "summary": "List products of a target",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Product"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a product",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Product"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/products/{pid}": {
+      "get": {
+        "summary": "Product detail",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace a product",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Product"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a product",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "summary": "List templates",
+        "tags": [
+          "templates"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Template"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a template",
+        "tags": [
+          "templates"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/{id}": {
+      "get": {
+        "summary": "Template detail",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a template",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "summary": "List runs",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "description": "Filter, e.g. running, finished, stopped."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start a run from a saved template",
+        "tags": [
+          "runs"
+        ],
+        "description": "Identify the template with `template` (id or unique name) and/or `template_id` (id). Optional fields override the saved template for this run only. Optional `assert` is frozen in the snapshot and evaluated at the end (and on demand while running). Query `wait=true` holds the request until the run finishes or `timeout` seconds (default 60, max 600) elapse. A timeout returns 409 with `error.code=wait_timeout` and the current `run`. Loop runs continue in the daemon regardless of the client connection.",
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created (and finished, if wait=true completed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}": {
+      "get": {
+        "summary": "Run detail with a redacted snapshot and verdict",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a non-running run and its directory",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/stats": {
+      "get": {
+        "summary": "Live or last-known counters and percentiles",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/timeseries": {
+      "get": {
+        "summary": "Second-level ring buffer (empty after the process drops it)",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/timeline": {
+      "get": {
+        "summary": "Timeline events",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/windows": {
+      "get": {
+        "summary": "Window summaries",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "windows": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/verdict": {
+      "get": {
+        "summary": "Script-friendly assertion verdict",
+        "tags": [
+          "runs"
+        ],
+        "description": "Body is always a Verdict. HTTP status is chosen so `curl -f` yields a usable exit code: 200 for `pass` or `none` (no assert), 422 for `fail`, 409 for `pending` (still running or stopping). Loop runs do not finish on their own; stop them first, then call this endpoint.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "pass or none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Verdict"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "fail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Verdict"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "pending (still running)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Verdict"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/stop": {
+      "post": {
+        "summary": "Request a graceful stop",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/resume": {
+      "post": {
+        "summary": "Resume a stopped or interrupted run",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/traffic": {
+      "patch": {
+        "summary": "Adjust live QPS and/or concurrency",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrafficPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (`invalid_request`, `auth_disabled`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (`conflict`, `wait_timeout`, `run_in_progress`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/events": {
+      "get": {
+        "summary": "Server-sent events with a stats snapshot once a second",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/report": {
+      "get": {
+        "summary": "Redacted report JSON (includes verdict)",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/report.json": {
+      "get": {
+        "summary": "Download the report as report.json",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/report.html": {
+      "get": {
+        "summary": "Download the HTML report",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "attachment",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/samples": {
+      "get": {
+        "summary": "Paginated sample rows",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "product_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "success",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (`unauthorized`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (`password_change_required`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The login token. `Authorization: Bearer <token>`."
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "x_loadgen_token",
+        "description": "Set by POST /api/v1/auth/login."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable code.",
+                "enum": [
+                  "unauthorized",
+                  "password_change_required",
+                  "invalid_request",
+                  "auth_disabled",
+                  "not_found",
+                  "conflict",
+                  "wait_timeout",
+                  "internal"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          },
+          "run": {
+            "description": "Present on `wait_timeout`.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunView"
+              }
+            ]
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": [
+          "token",
+          "must_change_password"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The same login token that was submitted."
+          },
+          "must_change_password": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PasswordRequest": {
+        "type": "object",
+        "required": [
+          "old_token",
+          "new_token"
+        ],
+        "properties": {
+          "old_token": {
+            "type": "string"
+          },
+          "new_token": {
+            "type": "string",
+            "minLength": 24
+          }
+        }
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "auth_required": {
+            "type": "boolean"
+          },
+          "must_change_password": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MetaResponse": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "auth_required": {
+            "type": "boolean"
+          },
+          "max_qps": {
+            "type": "integer",
+            "nullable": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "nullable": true
+          },
+          "running_qps": {
+            "type": "integer"
+          },
+          "running_concurrency": {
+            "type": "integer"
+          }
+        }
+      },
+      "TargetSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mazbri"
+            ]
+          },
+          "gateway_base_url": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "TargetInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "gateway_base_url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mazbri"
+            ]
+          },
+          "gateway_base_url": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "ca_cert": {
+            "type": "string",
+            "nullable": true
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tenant"
+            }
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            }
+          }
+        }
+      },
+      "TargetDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TargetSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "client_cert": {
+                "type": "string",
+                "nullable": true
+              },
+              "client_key": {
+                "type": "string",
+                "nullable": true
+              },
+              "ca_cert": {
+                "type": "string",
+                "nullable": true
+              },
+              "tenants": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              },
+              "products": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Tenant": {
+        "type": "object",
+        "required": [
+          "name",
+          "api_key",
+          "encryption_mode"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "encryption_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "request",
+              "full"
+            ],
+            "description": "none, request (encrypt request only), or full (encrypt request and decrypt response)."
+          },
+          "tenant_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenant_key_base64": {
+            "type": "string",
+            "nullable": true
+          },
+          "key_version": {
+            "type": "string",
+            "nullable": true
+          },
+          "suite": {
+            "type": "string",
+            "nullable": true,
+            "description": "Named suite, e.g. tenant-default-2026-11, gm-sm4-hmac-sm3, tenant-chacha20."
+          },
+          "data_alg": {
+            "type": "string",
+            "nullable": true
+          },
+          "mac_alg": {
+            "type": "string",
+            "nullable": true
+          },
+          "require_signature": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "allow_insecure": {
+            "type": "boolean"
+          },
+          "binding_kid": {
+            "type": "string",
+            "nullable": true
+          },
+          "binding_alg": {
+            "type": "string",
+            "nullable": true
+          },
+          "binding_key": {
+            "type": "string",
+            "nullable": true,
+            "description": "Private key or HMAC secret; stored, never listed."
+          },
+          "binding_public_key": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "KeypairResponse": {
+        "type": "object",
+        "properties": {
+          "binding_kid": {
+            "type": "string",
+            "nullable": true
+          },
+          "binding_alg": {
+            "type": "string",
+            "nullable": true
+          },
+          "public_key_pem": {
+            "type": "string"
+          }
+        }
+      },
+      "Product": {
+        "type": "object",
+        "required": [
+          "name",
+          "product_id",
+          "path",
+          "method"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "qps_limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "query_json": {},
+          "headers_json": {},
+          "body_json": {},
+          "expect_transport": {
+            "type": "string",
+            "nullable": true
+          },
+          "expect_checks_json": {}
+        }
+      },
+      "TemplateInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "target_id",
+          "model",
+          "concurrency",
+          "timeout_secs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "open_loop",
+              "closed_loop"
+            ]
+          },
+          "qps": {
+            "type": "integer",
+            "nullable": true
+          },
+          "concurrency": {
+            "type": "integer"
+          },
+          "requests": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Exactly one of requests or duration_secs."
+          },
+          "duration_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "warmup_secs": {
+            "type": "integer"
+          },
+          "ramp_secs": {
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "type": "integer"
+          },
+          "connect_timeout_secs": {
+            "type": "integer"
+          },
+          "token_refresh_skew_secs": {
+            "type": "integer"
+          },
+          "include_request_id": {
+            "type": "boolean"
+          },
+          "processes": {
+            "type": "integer"
+          },
+          "qps_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ]
+          },
+          "requests_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ]
+          },
+          "loop_enabled": {
+            "type": "boolean"
+          },
+          "rounds": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Null means an infinite loop."
+          },
+          "loop_interval_secs": {
+            "type": "integer"
+          },
+          "expected_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "detail_retain_days": {
+            "type": "integer",
+            "nullable": true
+          },
+          "detail_retain_rows": {
+            "type": "integer",
+            "nullable": true
+          },
+          "product_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "weight_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Template": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TemplateInput"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "integer"
+              },
+              "updated_at": {
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      },
+      "AssertSpec": {
+        "type": "object",
+        "description": "Optional SLA thresholds. Omitted fields are not checked. Comparisons are inclusive. Latency is milliseconds. max_error_rate is failure/samples (0–1). min_qps_ratio is achieved_qps/configured_qps, where achieved_qps is samples/elapsed_seconds over the wall-clock from started_at to ended_at (or now).",
+        "properties": {
+          "p50_ms": {
+            "type": "number"
+          },
+          "p95_ms": {
+            "type": "number"
+          },
+          "p99_ms": {
+            "type": "number"
+          },
+          "max_ms": {
+            "type": "number"
+          },
+          "max_error_rate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "min_qps_ratio": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "CreateRunRequest": {
+        "type": "object",
+        "description": "Provide `template` (id or name) and/or `template_id` (id). Other fields override the saved template for this run only.",
+        "properties": {
+          "template": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "once",
+              "loop"
+            ]
+          },
+          "qps": {
+            "type": "integer"
+          },
+          "concurrency": {
+            "type": "integer"
+          },
+          "requests": {
+            "type": "integer"
+          },
+          "duration_secs": {
+            "type": "integer"
+          },
+          "warmup_secs": {
+            "type": "integer"
+          },
+          "ramp_secs": {
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "type": "integer"
+          },
+          "connect_timeout_secs": {
+            "type": "integer"
+          },
+          "token_refresh_skew_secs": {
+            "type": "integer"
+          },
+          "include_request_id": {
+            "type": "boolean"
+          },
+          "processes": {
+            "type": "integer"
+          },
+          "qps_mode": {
+            "type": "string"
+          },
+          "requests_mode": {
+            "type": "string"
+          },
+          "loop_enabled": {
+            "type": "boolean"
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "clear_rounds": {
+            "type": "boolean"
+          },
+          "loop_interval_secs": {
+            "type": "integer"
+          },
+          "product_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "weight_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "assert": {
+            "$ref": "#/components/schemas/AssertSpec"
+          }
+        }
+      },
+      "TrafficPatch": {
+        "type": "object",
+        "properties": {
+          "qps": {
+            "type": "integer"
+          },
+          "concurrency": {
+            "type": "integer"
+          }
+        }
+      },
+      "RunView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "ended_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "current_qps": {
+            "type": "integer",
+            "nullable": true
+          },
+          "current_concurrency": {
+            "type": "integer",
+            "nullable": true
+          },
+          "processes": {
+            "type": "integer"
+          },
+          "interrupt_ranges": {
+            "type": "array",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "snapshot": {
+            "type": "object"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        }
+      },
+      "RunStats": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "current_qps": {
+            "type": "integer",
+            "nullable": true
+          },
+          "current_concurrency": {
+            "type": "integer",
+            "nullable": true
+          },
+          "samples": {
+            "type": "integer"
+          },
+          "success": {
+            "type": "integer"
+          },
+          "failure": {
+            "type": "integer"
+          },
+          "expected": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "dropped_details": {
+            "type": "integer"
+          },
+          "in_flight": {
+            "type": "integer"
+          },
+          "peak_in_flight": {
+            "type": "integer"
+          },
+          "p50_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "p95_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "p99_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "max_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "window_index": {
+            "type": "integer",
+            "nullable": true
+          }
+        }
+      },
+      "Verdict": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "pending",
+              "none"
+            ]
+          },
+          "assert": {
+            "$ref": "#/components/schemas/AssertSpec"
+          },
+          "actual": {
+            "type": "object"
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "check": {
+                  "type": "string"
+                },
+                "wanted": {
+                  "type": "number"
+                },
+                "actual": {
+                  "type": "number",
+                  "nullable": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "cookieAuth": []
+    }
+  ]
+}

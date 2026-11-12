@@ -480,11 +480,175 @@ fn run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
 }
 
 /// Body for `POST /api/v1/runs`.
-#[derive(Debug, Deserialize)]
+///
+/// Identify the template with `template` (id or name) and/or `template_id`
+/// (id, as used by the Web UI). Optional fields override the saved template
+/// for this run only; the stored template is left unchanged.
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct CreateRunRequest {
-    pub template_id: String,
+    /// Template id (Web UI and older clients).
+    #[serde(default)]
+    pub template_id: Option<String>,
+    /// Template id or unique name.
+    #[serde(default)]
+    pub template: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub qps: Option<i64>,
+    #[serde(default)]
+    pub concurrency: Option<i64>,
+    #[serde(default)]
+    pub requests: Option<i64>,
+    #[serde(default)]
+    pub duration_secs: Option<i64>,
+    #[serde(default)]
+    pub warmup_secs: Option<i64>,
+    #[serde(default)]
+    pub ramp_secs: Option<i64>,
+    #[serde(default)]
+    pub timeout_secs: Option<i64>,
+    #[serde(default)]
+    pub connect_timeout_secs: Option<i64>,
+    #[serde(default)]
+    pub token_refresh_skew_secs: Option<i64>,
+    #[serde(default)]
+    pub include_request_id: Option<bool>,
+    #[serde(default)]
+    pub processes: Option<i64>,
+    #[serde(default)]
+    pub qps_mode: Option<String>,
+    #[serde(default)]
+    pub requests_mode: Option<String>,
+    #[serde(default)]
+    pub loop_enabled: Option<bool>,
+    #[serde(default)]
+    pub rounds: Option<i64>,
+    /// Explicitly clear `rounds` (infinite loop) when set to `true`.
+    #[serde(default)]
+    pub clear_rounds: Option<bool>,
+    #[serde(default)]
+    pub loop_interval_secs: Option<i64>,
+    #[serde(default)]
+    pub product_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub weight_overrides: Option<std::collections::HashMap<String, i64>>,
+    #[serde(default)]
+    pub assert: Option<crate::run_assert::AssertSpec>,
+}
+
+impl CreateRunRequest {
+    /// Resolve the template lookup key (`template` preferred, else `template_id`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error when neither field is provided.
+    pub fn template_key(&self) -> Result<&str, StoreError> {
+        let named = self
+            .template
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let by_id = self
+            .template_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        match (named, by_id) {
+            (Some(key), _) | (None, Some(key)) => Ok(key),
+            (None, None) => Err(StoreError::invalid("template or template_id is required")),
+        }
+    }
+
+    /// Apply optional overrides onto a copy of the saved template.
+    ///
+    /// Setting `requests` clears `duration_secs`, and the other way around,
+    /// so the "exactly one of the two" template rule still holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error when both `requests` and `duration_secs` are
+    /// set, or when `clear_rounds` is combined with a `rounds` value.
+    pub fn apply_to(
+        &self,
+        template: &mut crate::db::templates::Template,
+    ) -> Result<(), StoreError> {
+        if self.requests.is_some() && self.duration_secs.is_some() {
+            return Err(StoreError::invalid(
+                "cannot override both requests and duration_secs",
+            ));
+        }
+        if self.clear_rounds == Some(true) && self.rounds.is_some() {
+            return Err(StoreError::invalid(
+                "cannot set both rounds and clear_rounds",
+            ));
+        }
+        if let Some(v) = self.qps {
+            template.qps = Some(v);
+        }
+        if let Some(v) = self.concurrency {
+            template.concurrency = v;
+        }
+        if let Some(v) = self.requests {
+            template.requests = Some(v);
+            template.duration_secs = None;
+        }
+        if let Some(v) = self.duration_secs {
+            template.duration_secs = Some(v);
+            template.requests = None;
+        }
+        if let Some(v) = self.warmup_secs {
+            template.warmup_secs = v;
+        }
+        if let Some(v) = self.ramp_secs {
+            template.ramp_secs = v;
+        }
+        if let Some(v) = self.timeout_secs {
+            template.timeout_secs = v;
+        }
+        if let Some(v) = self.connect_timeout_secs {
+            template.connect_timeout_secs = v;
+        }
+        if let Some(v) = self.token_refresh_skew_secs {
+            template.token_refresh_skew_secs = v;
+        }
+        if let Some(v) = self.include_request_id {
+            template.include_request_id = v;
+        }
+        if let Some(v) = self.processes {
+            template.processes = v;
+        }
+        if let Some(v) = self.qps_mode.clone() {
+            template.qps_mode = v;
+        }
+        if let Some(v) = self.requests_mode.clone() {
+            template.requests_mode = v;
+        }
+        if let Some(v) = self.loop_enabled {
+            template.loop_enabled = v;
+        }
+        if self.clear_rounds == Some(true) {
+            template.rounds = None;
+        } else if let Some(v) = self.rounds {
+            template.rounds = Some(v);
+        }
+        if let Some(v) = self.loop_interval_secs {
+            template.loop_interval_secs = v;
+        }
+        if let Some(v) = self.product_ids.clone() {
+            template.product_ids = Some(v);
+        }
+        if let Some(v) = self.weight_overrides.clone() {
+            template.weight_overrides = Some(v);
+        }
+        Ok(())
+    }
+
+    /// Assertion thresholds to freeze in the run snapshot, if any.
+    #[must_use]
+    pub fn assert_spec(&self) -> Option<crate::run_assert::AssertSpec> {
+        self.assert.as_ref().filter(|s| !s.is_empty()).cloned()
+    }
 }
 
 /// Body for `PATCH /api/v1/runs/:id/traffic`.

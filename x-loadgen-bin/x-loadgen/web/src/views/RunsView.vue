@@ -18,6 +18,27 @@
       <el-form-item>
         <el-button type="primary" :loading="starting" native-type="submit">启动</el-button>
       </el-form-item>
+      <div class="assert-row">
+        <span class="assert-hint">可选断言（结束后判定）</span>
+        <el-form-item label="p50 ms">
+          <el-input-number v-model="assertP50" :min="0.001" :controls="false" :precision="3" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="p95 ms">
+          <el-input-number v-model="assertP95" :min="0.001" :controls="false" :precision="3" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="p99 ms">
+          <el-input-number v-model="assertP99" :min="0.001" :controls="false" :precision="3" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="max ms">
+          <el-input-number v-model="assertMax" :min="0.001" :controls="false" :precision="3" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="最大错误率">
+          <el-input-number v-model="assertErrorRate" :min="0" :max="1" :step="0.01" :controls="false" :precision="4" placeholder="0–1" />
+        </el-form-item>
+        <el-form-item label="最低 QPS 比">
+          <el-input-number v-model="assertQpsRatio" :min="0.001" :controls="false" :precision="3" placeholder="可选" />
+        </el-form-item>
+      </div>
     </el-form>
     <el-table :data="rows" stripe>
       <el-table-column prop="id" label="ID" min-width="180" />
@@ -43,7 +64,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "../api/http";
-import type { RunView, Template } from "../api/types";
+import type { AssertSpec, RunView, Template } from "../api/types";
 
 const router = useRouter();
 const templates = ref<Template[]>([]);
@@ -51,6 +72,23 @@ const rows = ref<RunView[]>([]);
 const templateId = ref("");
 const mode = ref("once");
 const starting = ref(false);
+const assertP50 = ref<number | undefined>(undefined);
+const assertP95 = ref<number | undefined>(undefined);
+const assertP99 = ref<number | undefined>(undefined);
+const assertMax = ref<number | undefined>(undefined);
+const assertErrorRate = ref<number | undefined>(undefined);
+const assertQpsRatio = ref<number | undefined>(undefined);
+
+function buildAssert(): AssertSpec | undefined {
+  const spec: AssertSpec = {};
+  if (assertP50.value != null) spec.p50_ms = assertP50.value;
+  if (assertP95.value != null) spec.p95_ms = assertP95.value;
+  if (assertP99.value != null) spec.p99_ms = assertP99.value;
+  if (assertMax.value != null) spec.max_ms = assertMax.value;
+  if (assertErrorRate.value != null) spec.max_error_rate = assertErrorRate.value;
+  if (assertQpsRatio.value != null) spec.min_qps_ratio = assertQpsRatio.value;
+  return Object.keys(spec).length > 0 ? spec : undefined;
+}
 
 async function load(): Promise<void> {
   const [tpl, runs] = await Promise.all([
@@ -88,10 +126,13 @@ async function startRun(): Promise<void> {
         return;
       }
     }
-    const { data } = await http.post<RunView>("/api/v1/runs", {
+    const body: { template_id: string; mode: string; assert?: AssertSpec } = {
       template_id: templateId.value,
       mode: mode.value,
-    });
+    };
+    const assertSpec = buildAssert();
+    if (assertSpec) body.assert = assertSpec;
+    const { data } = await http.post<RunView>("/api/v1/runs", body);
     ElMessage.success("任务已启动");
     await router.push({ name: "run-detail", params: { id: data.id } });
   } finally {
@@ -125,5 +166,18 @@ onMounted(() => {
   padding: 12px 16px 0;
   border-radius: 8px;
   margin-bottom: 16px;
+}
+.assert-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  padding-bottom: 8px;
+}
+.assert-hint {
+  color: #6b7280;
+  font-size: 12px;
+  margin-right: 12px;
+  margin-bottom: 18px;
 }
 </style>

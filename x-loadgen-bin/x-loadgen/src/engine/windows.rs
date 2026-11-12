@@ -29,7 +29,7 @@ pub fn write_window(
     record: &WindowRecord<'_>,
     metrics: &Metrics,
 ) -> Result<(), StoreError> {
-    let (p50, p95, p99, max) = metrics.percentiles_us();
+    let (p50, p95, p99, max) = metrics.window_percentiles_us();
     conn.execute(
         "INSERT INTO run_windows (
             run_id, window_index, started_at, ended_at, samples, success, failure,

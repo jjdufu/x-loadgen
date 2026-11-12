@@ -10,6 +10,10 @@
     </div>
     <template v-if="report">
       <p>状态：{{ report.status }} · 模式：{{ report.mode }} · 进程：{{ report.processes }}</p>
+      <p v-if="report.verdict" class="verdict-line" :class="report.verdict.result">
+        判定：{{ report.verdict.result }}
+        <span v-if="failedChecks.length">（未通过：{{ failedChecks }}）</span>
+      </p>
       <div class="card-grid">
         <div class="stat-card">
           <div class="label">样本</div>
@@ -62,6 +66,9 @@ const route = useRoute();
 const router = useRouter();
 const id = computed(() => String(route.params.id));
 const report = ref<ReportPayload | null>(null);
+const failedChecks = computed(() =>
+  (report.value?.verdict?.failed ?? []).map((c) => c.check).join(", "),
+);
 
 async function load(): Promise<void> {
   const { data } = await http.get<ReportPayload>(`/api/v1/runs/${id.value}/report`);
@@ -97,5 +104,14 @@ onMounted(() => {
 <style scoped>
 .muted {
   color: #6b7280;
+}
+.verdict-line.pass {
+  color: #067d37;
+}
+.verdict-line.fail {
+  color: #b42318;
+}
+.verdict-line.pending {
+  color: #b54708;
 }
 </style>

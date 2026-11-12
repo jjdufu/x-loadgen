@@ -140,6 +140,78 @@ pub fn get_template(conn: &Connection, id: &str) -> Result<Template, StoreError>
     .ok_or_else(|| StoreError::not_found(format!("template {id} not found")))
 }
 
+/// Load a template by its unique name.
+///
+/// # Errors
+///
+/// Returns not-found when the name is unknown.
+pub fn get_template_by_name(conn: &Connection, name: &str) -> Result<Template, StoreError> {
+    conn.query_row(
+        "SELECT * FROM templates WHERE name = ?1",
+        params![name],
+        template_from_row,
+    )
+    .optional()?
+    .ok_or_else(|| StoreError::not_found(format!("template '{name}' not found")))
+}
+
+/// Load a template by id, falling back to a unique name lookup.
+///
+/// # Errors
+///
+/// Returns not-found when neither the id nor the name matches.
+pub fn get_template_by_id_or_name(conn: &Connection, key: &str) -> Result<Template, StoreError> {
+    match get_template(conn, key) {
+        Ok(template) => Ok(template),
+        Err(StoreError::NotFound(_)) => get_template_by_name(conn, key),
+        Err(err) => Err(err),
+    }
+}
+
+/// Re-validate a template after in-memory overrides have been applied.
+///
+/// # Errors
+///
+/// Returns a validation, not-found (missing target), or storage error.
+pub fn validate_effective(
+    conn: &Connection,
+    template: &Template,
+    max_qps: Option<u64>,
+    max_concurrency: Option<u64>,
+) -> Result<(), StoreError> {
+    validate_template(conn, &template_to_input(template), max_qps, max_concurrency)
+}
+
+fn template_to_input(template: &Template) -> TemplateInput {
+    TemplateInput {
+        name: template.name.clone(),
+        target_id: template.target_id.clone(),
+        model: template.model.clone(),
+        qps: template.qps,
+        concurrency: template.concurrency,
+        requests: template.requests,
+        duration_secs: template.duration_secs,
+        warmup_secs: template.warmup_secs,
+        ramp_secs: template.ramp_secs,
+        timeout_secs: template.timeout_secs,
+        connect_timeout_secs: template.connect_timeout_secs,
+        token_refresh_skew_secs: template.token_refresh_skew_secs,
+        include_request_id: template.include_request_id,
+        processes: template.processes,
+        qps_mode: template.qps_mode.clone(),
+        requests_mode: template.requests_mode.clone(),
+        loop_enabled: template.loop_enabled,
+        rounds: template.rounds,
+        loop_interval_secs: template.loop_interval_secs,
+        expected_reasons: template.expected_reasons.clone(),
+        detail_retain_days: template.detail_retain_days,
+        detail_retain_rows: template.detail_retain_rows,
+        product_ids: template.product_ids.clone(),
+        weight_overrides: template.weight_overrides.clone(),
+        note: template.note.clone(),
+    }
+}
+
 /// Insert a template after validation (including optional global caps).
 ///
 /// # Errors

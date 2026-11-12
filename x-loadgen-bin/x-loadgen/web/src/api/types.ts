@@ -108,6 +108,42 @@ export interface Template {
   updated_at: number;
 }
 
+
+export interface AssertSpec {
+  p50_ms?: number | null;
+  p95_ms?: number | null;
+  p99_ms?: number | null;
+  max_ms?: number | null;
+  max_error_rate?: number | null;
+  min_qps_ratio?: number | null;
+}
+
+export interface FailedCheck {
+  check: string;
+  wanted: number;
+  actual?: number | null;
+}
+
+export interface ActualMetrics {
+  samples: number;
+  success: number;
+  failure: number;
+  p50_ms?: number | null;
+  p95_ms?: number | null;
+  p99_ms?: number | null;
+  max_ms?: number | null;
+  error_rate?: number | null;
+  achieved_qps?: number | null;
+  qps_ratio?: number | null;
+}
+
+export interface Verdict {
+  result: "pass" | "fail" | "pending" | "none";
+  assert?: AssertSpec;
+  actual?: ActualMetrics;
+  failed?: FailedCheck[];
+}
+
 export interface RunView {
   id: string;
   template_id: string;
@@ -123,6 +159,7 @@ export interface RunView {
   error: string | null;
   created_at: number;
   snapshot?: unknown;
+  verdict?: Verdict | null;
 }
 
 export interface RunStats {
@@ -228,4 +265,5 @@ export interface ReportPayload {
   timeline: TimelineEvent[];
   timeseries: TimePoint[];
   snapshot?: unknown;
+  verdict?: Verdict | null;
 }

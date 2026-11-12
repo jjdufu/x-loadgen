@@ -14,7 +14,11 @@ use serde_json::{Value, json};
 
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
-use crate::report::{ReportInput, SamplesQuery, build_report, html, query_samples};
+use crate::db::runs::RunRecord;
+use crate::report::{
+    ReportInput, SamplesQuery, build_report, compute_verdict, html, query_samples,
+};
+use crate::run_assert::Verdict;
 
 /// JSON report (inline).
 ///
@@ -114,14 +118,7 @@ pub async fn get_events(
 
 fn load_report(state: &AppState, id: &str) -> Result<Value, ApiError> {
     let record = state.supervisor.get_run(id)?;
-    let (live_counters, live_percentiles, live_ring) = match state.supervisor.get(&record.id) {
-        Some(task) => (
-            Some(task.metrics.counters()),
-            Some(task.metrics.percentiles_us()),
-            Some(task.metrics.ring_snapshot()),
-        ),
-        None => (None, None, None),
-    };
+    let (live_counters, live_percentiles, live_ring) = live_inputs(state, &record);
     let conn = state.lock_db()?;
     let input = ReportInput {
         paths: &state.paths,
@@ -132,6 +129,43 @@ fn load_report(state: &AppState, id: &str) -> Result<Value, ApiError> {
         live_ring,
     };
     Ok(build_report(&input)?)
+}
+
+/// Evaluate assertions for a known run record.
+///
+/// # Errors
+///
+/// Returns a storage error when window or histogram data cannot be read.
+pub(crate) fn load_verdict(state: &AppState, record: &RunRecord) -> Result<Verdict, ApiError> {
+    let (live_counters, live_percentiles, live_ring) = live_inputs(state, record);
+    let conn = state.lock_db()?;
+    let input = ReportInput {
+        paths: &state.paths,
+        conn: &conn,
+        record,
+        live_counters,
+        live_percentiles,
+        live_ring,
+    };
+    Ok(compute_verdict(&input)?)
+}
+
+fn live_inputs(
+    state: &AppState,
+    record: &RunRecord,
+) -> (
+    Option<crate::engine::CounterSnapshot>,
+    Option<crate::engine::HistogramPercentiles>,
+    Option<Vec<crate::engine::RingSlot>>,
+) {
+    match state.supervisor.get(&record.id) {
+        Some(task) => (
+            Some(task.metrics.counters()),
+            Some(task.metrics.percentiles_us()),
+            Some(task.metrics.ring_snapshot()),
+        ),
+        None => (None, None, None),
+    }
 }
 
 fn download_body(body: Vec<u8>, content_type: &'static str, filename: &str) -> Response {
