@@ -9,17 +9,17 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["Mazbri Team"]
 license = "MIT"
 
 [workspace.dependencies]
-x-loadgen-crypto = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-crypto" }
-x-loadgen-core = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-core" }
-x-loadgen-sdk = { version = "0.1.0", path = "x-loadgen-libs/x-loadgen-sdk" }
-x-loadgen-mockgw = { version = "0.1.0", path = "x-loadgen-bin/x-loadgen-mockgw" }
+x-loadgen-crypto = { version = "0.2.0", path = "x-loadgen-libs/x-loadgen-crypto" }
+x-loadgen-core = { version = "0.2.0", path = "x-loadgen-libs/x-loadgen-core" }
+x-loadgen-sdk = { version = "0.2.0", path = "x-loadgen-libs/x-loadgen-sdk" }
+x-loadgen-mockgw = { version = "0.2.0", path = "x-loadgen-bin/x-loadgen-mockgw" }
 
 anyhow = "1.0"
 base64 = "0.22"

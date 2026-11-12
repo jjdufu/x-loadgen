@@ -75,7 +75,7 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 | `STACK` | `mazbri` | 容器、工程、网络名前缀 |
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `X_LOADGEN_IMAGE` | `dex2all/x-loadgen` | 镜像仓库名。本地构建或离线导入时改为 `x-loadgen` |
-| `X_LOADGEN_VERSION` | `0.1.0` | 镜像标签，发版时自动更新为最新版本 |
+| `X_LOADGEN_VERSION` | `0.2.0` | 镜像标签，发版时自动更新为最新版本 |
 | `X_LOADGEN_BIND` | `0.0.0.0` | 宿主机发布地址。`0.0.0.0` 局域网可访问；`127.0.0.1` 只开本机 |
 | `X_LOADGEN_PORT` | `8757` | 宿主机端口，映射到容器内 8757 |
 | `X_LOADGEN_ACCESS_HOST` | 空 | 打印访问地址用的主机名或 IP，空为自动探测 |
