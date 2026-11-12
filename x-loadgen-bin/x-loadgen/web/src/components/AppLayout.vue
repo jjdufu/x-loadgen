@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue";
+import { onBeforeUnmount, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import AppFooter from "./app/AppFooter.vue";
 import AppHeader from "./app/AppHeader.vue";
@@ -29,6 +29,7 @@ import EnvironmentModal from "./modals/EnvironmentModal.vue";
 import ImportCurlModal from "./modals/ImportCurlModal.vue";
 import LoadRunnerModal from "./modals/LoadRunnerModal.vue";
 import SaveRequestModal from "./modals/SaveRequestModal.vue";
+import { canProgrammaticallyFocus, isPageVisible } from "../modules/activity";
 import {
   matchShortcut,
   recordingShortcutId,
@@ -49,6 +50,7 @@ const route = useRoute();
 let metaTimer: number | null = null;
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
+  if (!canProgrammaticallyFocus()) return;
   if (recordingShortcutId.value !== null) return;
   if (document.querySelector('[role="dialog"]')) return;
   if (route.name !== "workspace") return;
@@ -76,11 +78,19 @@ function handleGlobalKeydown(e: KeyboardEvent): void {
   }
 }
 
+watch(isPageVisible, (visible) => {
+  if (visible) {
+    void refreshMeta();
+  }
+});
+
 onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
   await bootstrapWorkspace();
   metaTimer = window.setInterval(() => {
-    void refreshMeta();
+    if (isPageVisible.value) {
+      void refreshMeta();
+    }
   }, 4000);
 });
 

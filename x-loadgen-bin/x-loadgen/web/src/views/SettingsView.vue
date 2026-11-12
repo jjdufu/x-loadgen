@@ -19,7 +19,7 @@
             <!-- Light Preview -->
             <button
               type="button"
-              class="group rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
                 effectiveTheme === 'light'
                   ? 'border-foreground bg-accent/35'
@@ -27,7 +27,7 @@
               "
               @click="setThemeMode('light')"
             >
-              <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white p-3 space-y-2 shadow-2xs">
+              <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white p-3 space-y-2 shadow-sm">
                 <div class="flex items-center justify-between">
                   <div class="h-2 w-12 rounded bg-zinc-900" />
                   <div class="h-3.5 w-9 rounded bg-zinc-900" />
@@ -53,7 +53,7 @@
             <!-- Black Preview -->
             <button
               type="button"
-              class="group rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
                 effectiveTheme === 'black'
                   ? 'border-foreground bg-accent/35'
@@ -61,7 +61,7 @@
               "
               @click="setThemeMode('black')"
             >
-              <div class="overflow-hidden rounded-lg border border-zinc-800 bg-[#09090b] p-3 space-y-2 shadow-2xs">
+              <div class="overflow-hidden rounded-lg border border-zinc-800 bg-[#09090b] p-3 space-y-2 shadow-sm">
                 <div class="flex items-center justify-between">
                   <div class="h-2 w-12 rounded bg-zinc-100" />
                   <div class="h-3.5 w-9 rounded bg-zinc-100" />
@@ -185,7 +185,7 @@
             <div class="flex items-center gap-1.5">
               <button
                 type="button"
-                class="inline-flex h-8 min-w-[128px] items-center justify-center rounded-md border px-3 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex h-8 min-w-[128px] cursor-pointer items-center justify-center rounded-md border px-3 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :class="
                   recordingShortcutId === item.id
                     ? 'border-foreground bg-accent text-foreground font-semibold'
@@ -241,47 +241,50 @@
               免密模式运行。生产或公网部署请移除该启动参数以启用口令保护。
             </div>
 
-            <form v-else class="space-y-4" @submit.prevent="changePwd">
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <form v-else class="space-y-4" autocomplete="off" @submit.prevent="changePwd">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div class="space-y-1.5">
-                  <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-                    当前口令
-                  </label>
+                  <div class="flex h-5 items-center justify-between gap-2">
+                    <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                      当前口令
+                    </label>
+                  </div>
                   <UiInput
                     v-model="oldToken"
                     type="password"
                     mono
-                    autocomplete="current-password"
+                    autocomplete="off"
                     placeholder="输入当前口令"
                   />
                 </div>
 
                 <div class="space-y-1.5">
-                  <div class="flex items-center justify-between gap-2">
+                  <div class="flex h-5 items-center justify-between gap-2">
                     <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
                       新口令（至少 24 位）
                     </label>
-                    <UiButton
-                      variant="ghost"
-                      size="xs"
+                    <button
+                      type="button"
+                      class="inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                       @click="generateStrongPassword"
                     >
                       <Dices class="h-3 w-3" />
                       <span>随机生成</span>
-                    </UiButton>
+                    </button>
                   </div>
                   <div class="flex items-center gap-1.5">
                     <UiInput
                       v-model="newToken"
                       :type="showNew ? 'text' : 'password'"
                       mono
-                      autocomplete="new-password"
+                      autocomplete="off"
                       placeholder="至少 24 位可打印 ASCII"
                       class="flex-1"
                     />
                     <UiButton
                       variant="outline"
                       size="icon"
+                      aria-label="切换新口令显示"
                       @click="showNew = !showNew"
                     >
                       <EyeOff v-if="showNew" class="h-4 w-4" />
@@ -294,8 +297,8 @@
               <div class="flex justify-end">
                 <UiButton
                   variant="default"
+                  type="submit"
                   :loading="saving"
-                  @click="changePwd"
                 >
                   更新口令
                 </UiButton>
@@ -324,6 +327,7 @@ import { api } from "../api/workspace";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiInput from "../components/ui/UiInput.vue";
+import { canProgrammaticallyFocus } from "../modules/activity";
 import {
   SHORTCUT_DEFINITIONS,
   captureBindingFromEvent,
@@ -369,6 +373,7 @@ function handleResetShortcuts(): void {
 }
 
 function handleRecorderKeydown(e: KeyboardEvent): void {
+  if (!canProgrammaticallyFocus()) return;
   const targetId = recordingShortcutId.value;
   if (!targetId) return;
 

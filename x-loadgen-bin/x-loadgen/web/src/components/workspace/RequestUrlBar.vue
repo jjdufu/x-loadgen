@@ -10,7 +10,7 @@
     >
       <button
         type="button"
-        class="inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
         :class="
           draft.protocol === 'http'
             ? 'bg-background text-foreground shadow-sm'
@@ -23,7 +23,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
         :class="
           draft.protocol === 'mazbri'
             ? 'bg-background text-foreground shadow-sm'
@@ -40,26 +40,16 @@
     <div
       class="flex h-9 min-w-[220px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-1 focus-within:ring-ring"
     >
-      <div class="relative flex h-full items-center border-r border-border bg-muted/35">
-        <select
-          :value="draft.method"
-          aria-label="HTTP 方法"
-          class="h-full cursor-pointer appearance-none bg-transparent pl-3 pr-7 font-mono text-xs font-semibold focus:outline-none"
-          :class="methodColorClass(draft.method)"
-          @change="draft.method = ($event.target as HTMLSelectElement).value"
-        >
-          <option
-            v-for="m in HTTP_METHODS"
-            :key="m"
-            :value="m"
-          >
-            {{ m }}
-          </option>
-        </select>
-        <ChevronDown
-          class="pointer-events-none absolute right-2 h-3 w-3 text-muted-foreground"
-        />
-      </div>
+      <UiSelect
+        :model-value="draft.method"
+        :options="methodOptions"
+        aria-label="HTTP 方法"
+        mono
+        wrapper-class="h-full shrink-0 border-r border-border bg-muted/35"
+        class="h-full min-w-[92px] rounded-none border-0 bg-transparent pl-3 pr-2 text-xs font-semibold shadow-none hover:bg-accent/50 focus-visible:ring-0"
+        content-class="min-w-[116px]"
+        @update:model-value="(val) => (draft.method = val)"
+      />
 
       <span
         v-if="draft.protocol === 'mazbri'"
@@ -148,7 +138,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import {
-  ChevronDown,
   Copy,
   CopyPlus,
   Globe,
@@ -174,8 +163,16 @@ import {
 import UiButton from "../ui/UiButton.vue";
 import UiDropdown from "../ui/UiDropdown.vue";
 import UiDropdownItem from "../ui/UiDropdownItem.vue";
+import UiSelect, { type SelectOptionItem } from "../ui/UiSelect.vue";
 
 const draft = computed(() => activeTab.value.draft);
+
+const methodOptions: SelectOptionItem[] = HTTP_METHODS.map((m) => ({
+  value: m,
+  label: m,
+  class: `font-semibold ${methodColorClass(m)}`,
+  triggerClass: `font-semibold ${methodColorClass(m)}`,
+}));
 
 function openSaveAs(): void {
   saveModalForceNew.value = true;

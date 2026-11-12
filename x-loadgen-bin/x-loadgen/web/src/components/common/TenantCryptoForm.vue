@@ -67,7 +67,7 @@
             v-for="m in encryptionModes"
             :key="m.value"
             type="button"
-            class="h-full rounded px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded px-2.5 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               tenant.encryption_mode === m.value
                 ? 'bg-background text-foreground shadow-sm'
@@ -175,18 +175,18 @@
         </div>
 
         <div class="space-y-1.5">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex h-5 items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
               对称主密钥 (Base64) *
             </label>
-            <UiButton
-              variant="ghost"
-              size="xs"
+            <button
+              type="button"
+              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               @click="fillRandomBase64Key('tenant_key_base64', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
               <span>随机生成</span>
-            </UiButton>
+            </button>
           </div>
           <div class="flex items-center gap-1.5">
             <UiInput
@@ -279,18 +279,18 @@
 
       <template v-if="tenant.binding_alg">
         <div v-if="!asymmetricBinding" class="space-y-1.5">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex h-5 items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
               对称签名密钥 (Base64) *
             </label>
-            <UiButton
-              variant="ghost"
-              size="xs"
+            <button
+              type="button"
+              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               @click="fillRandomBase64Key('binding_key', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
               <span>随机生成</span>
-            </UiButton>
+            </button>
           </div>
           <div class="flex items-center gap-1.5">
             <UiInput
@@ -314,9 +314,11 @@
 
         <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
-            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              私钥 PEM *
-            </label>
+            <div class="flex h-5 items-center justify-between gap-2">
+              <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                私钥 PEM *
+              </label>
+            </div>
             <UiTextarea
               :model-value="tenant.binding_key ?? ''"
               :rows="5"
@@ -327,19 +329,19 @@
           </div>
 
           <div class="space-y-1.5">
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex h-5 items-center justify-between gap-2">
               <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
                 公钥 PEM
               </label>
-              <UiButton
+              <button
                 v-if="tenant.binding_public_key"
-                variant="ghost"
-                size="xs"
+                type="button"
+                class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 @click="copyPublicKey"
               >
                 <Copy class="h-3.5 w-3.5" />
                 <span>复制公钥</span>
-              </UiButton>
+              </button>
             </div>
             <UiTextarea
               :model-value="tenant.binding_public_key ?? ''"
@@ -377,6 +379,7 @@ import {
   isAsymmetricBindingAlg,
 } from "../../helpers/format";
 import { toast } from "../../modules/toast";
+import { copyText } from "../../utils/clipboard";
 import UiButton from "../ui/UiButton.vue";
 import UiInput from "../ui/UiInput.vue";
 import UiSelect from "../ui/UiSelect.vue";
@@ -506,10 +509,10 @@ async function generateKeypair(): Promise<void> {
 
 async function copyPublicKey(): Promise<void> {
   if (!tenant.value.binding_public_key) return;
-  try {
-    await navigator.clipboard.writeText(tenant.value.binding_public_key);
+  const ok = await copyText(tenant.value.binding_public_key);
+  if (ok) {
     toast.success("公钥 PEM 已复制");
-  } catch {
+  } else {
     toast.error("复制失败");
   }
 }

@@ -12,6 +12,8 @@
             props.class,
           )
         "
+        @open-auto-focus="guardAutoFocusEvent"
+        @close-auto-focus="guardAutoFocusEvent"
       >
         <div
           class="flex items-start justify-between gap-4 border-b border-border px-6 py-4 shrink-0"
@@ -29,7 +31,7 @@
           </div>
           <DialogClose
             type="button"
-            class="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            class="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             aria-label="关闭弹窗"
           >
             <X class="h-4 w-4" />
@@ -67,6 +69,7 @@ import {
 } from "reka-ui";
 import { X } from "lucide-vue-next";
 import { cn } from "../../lib/utils";
+import { guardAutoFocusEvent } from "../../modules/activity";
 
 const props = withDefaults(
   defineProps<{

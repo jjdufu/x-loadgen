@@ -39,7 +39,7 @@
           v-for="tab in modalTabs"
           :key="tab.id"
           type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+          class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
           :class="
             activeSubTab === tab.id
               ? 'bg-background text-foreground shadow-sm'
@@ -50,7 +50,7 @@
           <span>{{ tab.label }}</span>
           <span
             v-if="tab.count"
-            class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+            class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground tabular-nums"
           >
             {{ tab.count }}
           </span>

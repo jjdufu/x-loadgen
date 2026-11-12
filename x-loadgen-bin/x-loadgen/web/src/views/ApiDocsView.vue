@@ -4,18 +4,18 @@
     <aside
       class="hidden lg:flex w-72 shrink-0 flex-col border-r border-border bg-surface/50 select-none"
     >
-      <div class="space-y-2.5 border-b border-border p-3.5">
+      <div class="space-y-2.5 border-b border-border p-3">
         <UiSearchInput
           v-model="searchQuery"
           placeholder="搜索路径、接口名称..."
         />
 
-        <div class="flex flex-wrap items-center gap-1">
+        <div class="flex flex-nowrap items-center gap-1">
           <button
             v-for="m in methodFilters"
             :key="m.value"
             type="button"
-            class="rounded px-2 py-0.5 font-mono text-[10px] font-semibold transition-colors"
+            class="inline-flex h-6 flex-auto cursor-pointer items-center justify-center rounded px-1.5 font-mono text-[10px] font-semibold whitespace-nowrap transition-colors"
             :class="
               activeMethodFilter === m.value
                 ? 'bg-primary text-primary-foreground'
@@ -32,12 +32,12 @@
         <div v-for="group in filteredGroups" :key="group.tag" class="space-y-1">
           <button
             type="button"
-            class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground hover:bg-accent/60"
+            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors hover:bg-accent/60"
             @click="scrollToAnchor(`tag-${group.tag}`)"
           >
             <span class="truncate">{{ group.title }}</span>
             <span
-              class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground tabular-nums"
+              class="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-muted px-1.5 font-mono text-[10px] text-muted-foreground tabular-nums"
             >
               {{ group.operations.length }}
             </span>
@@ -48,11 +48,11 @@
               v-for="op in group.operations"
               :key="op.id"
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/60"
+              class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/60"
               :class="
-                expandedIds.has(op.id)
-                  ? 'bg-accent/50 text-foreground font-medium'
-                  : 'text-muted-foreground'
+                activeOpId === op.id
+                  ? 'bg-accent text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground'
               "
               @click="focusOperation(op.id)"
             >
@@ -163,16 +163,16 @@
           :key="group.tag"
           class="space-y-3 scroll-mt-6"
         >
-          <div class="flex items-baseline justify-between border-b border-border pb-2">
-            <div>
+          <div class="flex items-end justify-between gap-4 border-b border-border pb-2.5">
+            <div class="min-w-0 space-y-0.5">
               <h2 class="text-base font-semibold tracking-tight text-foreground">
                 {{ group.title }}
               </h2>
-              <p class="text-xs text-muted-foreground mt-0.5">
+              <p class="text-xs text-muted-foreground">
                 {{ group.subtitle }}
               </p>
             </div>
-            <span class="font-mono text-xs text-muted-foreground">
+            <span class="shrink-0 font-mono text-xs text-muted-foreground">
               #{{ group.tag }}
             </span>
           </div>
@@ -185,14 +185,14 @@
               :key="op.id"
               class="overflow-hidden rounded-lg border border-border bg-card transition-colors scroll-mt-6"
             >
-              <!-- Card Header Row -->
+              <!-- Card Header Row: uniform h-6 controls -->
               <div
                 class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-accent/35 transition-colors"
                 @click="toggleExpand(op.id)"
               >
                 <div class="flex min-w-0 flex-1 items-center gap-3">
                   <span
-                    class="inline-flex w-16 shrink-0 items-center justify-center rounded border px-2 py-0.5 font-mono text-xs font-semibold"
+                    class="inline-flex h-6 w-16 shrink-0 items-center justify-center rounded border px-2 font-mono text-xs font-semibold"
                     :class="methodBadgeClass(op.method)"
                   >
                     {{ op.method }}
@@ -207,28 +207,35 @@
                   </span>
                 </div>
 
-                <div class="flex shrink-0 items-center gap-2" @click.stop>
-                  <UiBadge :variant="op.public ? 'muted' : 'outline'" class="hidden md:inline-flex">
-                    <Unlock v-if="op.public" class="h-3 w-3" />
-                    <Lock v-else class="h-3 w-3" />
+                <div class="flex shrink-0 items-center gap-2">
+                  <span
+                    class="hidden h-6 items-center gap-1 rounded-md border px-2 text-[11px] font-medium whitespace-nowrap md:inline-flex"
+                    :class="
+                      op.public
+                        ? 'border-transparent bg-muted text-muted-foreground'
+                        : 'border-border bg-background text-foreground'
+                    "
+                  >
+                    <Unlock v-if="op.public" class="h-3 w-3 shrink-0" />
+                    <Lock v-else class="h-3 w-3 shrink-0" />
                     <span>{{ op.public ? "公开免鉴权" : "需口令鉴权" }}</span>
-                  </UiBadge>
+                  </span>
 
-                  <UiButton
-                    variant="outline"
-                    size="xs"
+                  <button
+                    type="button"
                     title="载入工作台调试"
-                    @click="openInStudio(op)"
+                    class="inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-input bg-background px-2.5 text-xs font-medium whitespace-nowrap text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    @click.stop="openInStudio(op)"
                   >
                     <span>调试</span>
                     <ArrowUpRight class="h-3 w-3" />
-                  </UiButton>
+                  </button>
 
                   <button
                     type="button"
                     aria-label="展开或折叠接口详情"
-                    class="rounded p-1 text-muted-foreground hover:text-foreground"
-                    @click="toggleExpand(op.id)"
+                    class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    @click.stop="toggleExpand(op.id)"
                   >
                     <ChevronDown
                       class="h-4 w-4 transition-transform"
@@ -257,38 +264,55 @@
 
                 <!-- Path & Query Parameters -->
                 <div v-if="op.parameters.length > 0" class="space-y-2">
-                  <div class="text-xs font-semibold tracking-wide text-muted-foreground">
-                    请求参数
+                  <div class="flex h-6 items-center justify-between gap-2">
+                    <span class="text-xs font-semibold tracking-wide text-muted-foreground">
+                      请求参数
+                    </span>
                   </div>
-                  <div class="overflow-x-auto rounded-lg border border-border">
-                    <table class="w-full border-collapse text-left">
+                  <div class="overflow-x-auto rounded-lg border border-border bg-card">
+                    <table class="w-full min-w-[520px] table-fixed border-collapse text-left">
+                      <colgroup>
+                        <col class="w-[22%]" />
+                        <col class="w-[12%]" />
+                        <col class="w-[20%]" />
+                        <col class="w-[12%]" />
+                        <col class="w-[34%]" />
+                      </colgroup>
                       <thead>
                         <tr class="border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
-                          <th class="px-3 py-2 font-medium">参数名</th>
-                          <th class="px-3 py-2 font-medium">位置</th>
-                          <th class="px-3 py-2 font-medium">类型</th>
-                          <th class="px-3 py-2 font-medium">必填</th>
-                          <th class="px-3 py-2 font-medium">说明</th>
+                          <th class="px-3 py-2 align-middle font-medium">参数名</th>
+                          <th class="px-3 py-2 align-middle font-medium">位置</th>
+                          <th class="px-3 py-2 align-middle font-medium">类型</th>
+                          <th class="px-3 py-2 align-middle font-medium">必填</th>
+                          <th class="px-3 py-2 align-middle font-medium">说明</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-border">
                         <tr v-for="p in op.parameters" :key="`${p.in}-${p.name}`">
-                          <td class="px-3 py-2 font-mono font-medium text-foreground">
+                          <td class="px-3 py-2.5 align-middle font-mono font-medium text-foreground break-all">
                             {{ p.name }}
                           </td>
-                          <td class="px-3 py-2 font-mono text-muted-foreground">
+                          <td class="px-3 py-2.5 align-middle font-mono text-muted-foreground">
                             {{ p.in }}
                           </td>
-                          <td class="px-3 py-2 font-mono text-muted-foreground">
+                          <td class="px-3 py-2.5 align-middle font-mono text-muted-foreground break-all">
                             {{ p.typeLabel }}
                           </td>
-                          <td class="px-3 py-2">
-                            <UiBadge v-if="p.required" variant="default" class="text-[10px]">
+                          <td class="px-3 py-2.5 align-middle">
+                            <span
+                              v-if="p.required"
+                              class="inline-flex h-5 items-center rounded bg-primary px-1.5 text-[10px] font-medium text-primary-foreground"
+                            >
                               必填
-                            </UiBadge>
-                            <span v-else class="text-muted-foreground">可选</span>
+                            </span>
+                            <span
+                              v-else
+                              class="inline-flex h-5 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+                            >
+                              可选
+                            </span>
                           </td>
-                          <td class="px-3 py-2 text-muted-foreground">
+                          <td class="px-3 py-2.5 align-middle leading-5 text-muted-foreground">
                             {{ p.description || "-" }}
                           </td>
                         </tr>
@@ -298,15 +322,18 @@
                 </div>
 
                 <!-- Request Body Schema & Sample -->
-                <div v-if="op.requestBody" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div class="space-y-2">
-                    <div class="flex items-center justify-between">
-                      <span class="text-xs font-semibold tracking-wide text-muted-foreground">
+                <div v-if="op.requestBody" class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+                  <div class="space-y-2 min-w-0">
+                    <div class="flex h-6 items-center justify-between gap-2">
+                      <span class="truncate text-xs font-semibold tracking-wide text-muted-foreground">
                         请求体结构（{{ op.requestBody.schemaName || op.requestBody.contentType }}）
                       </span>
-                      <UiBadge v-if="op.requestBody.required" variant="outline">
+                      <span
+                        v-if="op.requestBody.required"
+                        class="inline-flex h-5 shrink-0 items-center rounded border border-border bg-background px-1.5 text-[10px] font-medium text-foreground"
+                      >
                         必填
-                      </UiBadge>
+                      </span>
                     </div>
 
                     <div
@@ -316,18 +343,18 @@
                       <div
                         v-for="f in op.requestBody.fields"
                         :key="f.name"
-                        class="px-3 py-2 space-y-0.5"
+                        class="px-3 py-2.5 space-y-1"
                       >
-                        <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-baseline justify-between gap-2">
                           <span class="font-mono font-medium text-foreground">
                             {{ f.name }}
                             <span v-if="f.required" class="text-rose-500">*</span>
                           </span>
-                          <span class="font-mono text-[11px] text-muted-foreground">
+                          <span class="shrink-0 font-mono text-[11px] text-muted-foreground">
                             {{ f.type }}
                           </span>
                         </div>
-                        <div v-if="f.description" class="text-[11px] text-muted-foreground">
+                        <div v-if="f.description" class="text-[11px] leading-relaxed text-muted-foreground">
                           {{ f.description }}
                         </div>
                       </div>
@@ -340,19 +367,19 @@
                     </div>
                   </div>
 
-                  <div class="space-y-2">
-                    <div class="flex items-center justify-between">
+                  <div class="space-y-2 min-w-0">
+                    <div class="flex h-6 items-center justify-between gap-2">
                       <span class="text-xs font-semibold tracking-wide text-muted-foreground">
                         请求 JSON 示例
                       </span>
-                      <UiButton
-                        variant="ghost"
-                        size="xs"
-                        @click="copyText(op.requestBody.sampleJson, '请求示例已复制')"
+                      <button
+                        type="button"
+                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        @click="handleCopy(op.requestBody.sampleJson, '请求示例已复制')"
                       >
                         <Copy class="h-3 w-3" />
                         <span>复制</span>
-                      </UiButton>
+                      </button>
                     </div>
                     <pre
                       class="max-h-64 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap break-all"
@@ -361,29 +388,31 @@
                 </div>
 
                 <!-- Responses + cURL Example -->
-                <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div class="space-y-2">
-                    <div class="text-xs font-semibold tracking-wide text-muted-foreground">
-                      响应状态
+                <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+                  <div class="space-y-2 min-w-0">
+                    <div class="flex h-6 items-center justify-between gap-2">
+                      <span class="text-xs font-semibold tracking-wide text-muted-foreground">
+                        响应状态
+                      </span>
                     </div>
                     <div class="divide-y divide-border rounded-lg border border-border bg-card">
                       <div
                         v-for="r in op.responses"
                         :key="r.code"
-                        class="flex items-start justify-between gap-3 px-3 py-2"
+                        class="flex items-start justify-between gap-3 px-3 py-2.5"
                       >
-                        <div class="flex items-center gap-2">
+                        <div class="flex min-w-0 flex-1 items-start gap-2.5">
                           <span
-                            class="inline-flex rounded border px-1.5 py-0.2 font-mono text-[11px] font-semibold tabular-nums"
+                            class="inline-flex h-5 w-11 shrink-0 items-center justify-center rounded border font-mono text-[11px] font-semibold tabular-nums"
                             :class="httpCodeBadge(r.code)"
                           >
                             {{ r.code }}
                           </span>
-                          <span class="text-foreground">{{ r.description }}</span>
+                          <span class="leading-5 text-foreground">{{ r.description }}</span>
                         </div>
                         <span
                           v-if="r.schemaLabel"
-                          class="shrink-0 font-mono text-[11px] text-muted-foreground"
+                          class="shrink-0 font-mono text-[11px] leading-5 text-muted-foreground"
                         >
                           {{ r.schemaLabel }}
                         </span>
@@ -391,19 +420,19 @@
                     </div>
                   </div>
 
-                  <div class="space-y-2">
-                    <div class="flex items-center justify-between">
+                  <div class="space-y-2 min-w-0">
+                    <div class="flex h-6 items-center justify-between gap-2">
                       <span class="text-xs font-semibold tracking-wide text-muted-foreground">
                         cURL 调用示例
                       </span>
-                      <UiButton
-                        variant="ghost"
-                        size="xs"
-                        @click="copyText(op.curlSnippet, 'cURL 命令已复制')"
+                      <button
+                        type="button"
+                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        @click="handleCopy(op.curlSnippet, 'cURL 命令已复制')"
                       >
                         <Copy class="h-3 w-3" />
                         <span>复制 cURL</span>
-                      </UiButton>
+                      </button>
                     </div>
                     <pre
                       class="max-h-52 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap break-all"
@@ -440,6 +469,7 @@ import {
 } from "../helpers/format";
 import { toast } from "../modules/toast";
 import { openDraftInNewTab } from "../stores/workspace";
+import { copyText as writeClipboard } from "../utils/clipboard";
 import UiBadge from "../components/ui/UiBadge.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
@@ -590,6 +620,7 @@ const loading = ref(true);
 const loadError = ref("");
 const searchQuery = ref("");
 const activeMethodFilter = ref<string>("ALL");
+const activeOpId = ref<string>("");
 const expandedIds = reactive(new Set<string>());
 
 const originUrl = computed(() =>
@@ -742,6 +773,7 @@ const allOperations = computed<ParsedOperation[]>(() => {
       }));
 
       let requestBody: ParsedOperation["requestBody"] = null;
+      let rawSampleValue: unknown = undefined;
       const contentMap = op.requestBody?.content;
       if (contentMap) {
         const ct =
@@ -750,6 +782,7 @@ const allOperations = computed<ParsedOperation[]>(() => {
         if (ct && contentMap[ct]) {
           const rawSchema = contentMap[ct]?.schema;
           const sample = buildSampleValue(rawSchema, schemas);
+          rawSampleValue = sample;
           requestBody = {
             required: Boolean(op.requestBody?.required),
             contentType: ct,
@@ -781,7 +814,10 @@ const allOperations = computed<ParsedOperation[]>(() => {
       }
       if (requestBody) {
         curlLines.push(`  -H 'Content-Type: ${requestBody.contentType}'`);
-        const compactJson = requestBody.sampleJson.replace(/\s+/g, " ");
+        const compactJson = JSON.stringify(rawSampleValue ?? {}).replace(
+          /'/g,
+          "'\\''",
+        );
         curlLines.push(`  -d '${compactJson}'`);
       }
 
@@ -885,6 +921,7 @@ function scrollToAnchor(domId: string): void {
 }
 
 function focusOperation(opId: string): void {
+  activeOpId.value = opId;
   expandedIds.add(opId);
   scrollToAnchor(opId);
 }
@@ -914,11 +951,11 @@ function openInStudio(op: ParsedOperation): void {
   void router.push({ name: "workspace" });
 }
 
-async function copyText(text: string, msg: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
+async function handleCopy(text: string, msg: string): Promise<void> {
+  const ok = await writeClipboard(text);
+  if (ok) {
     toast.success(msg);
-  } catch {
+  } else {
     toast.error("复制失败");
   }
 }
@@ -944,7 +981,8 @@ async function fetchSpec(): Promise<void> {
     const { data } = await http.get<RawOpenApiDoc>("/api/v1/openapi.json");
     spec.value = data;
     expandedIds.clear();
-    // Expand the first two operations so the page immediately showcases rich Shadcn schema details
+    activeOpId.value = "";
+    // Expand the first two operations in the main content area without marking left nav items as selected
     for (const op of allOperations.value.slice(0, 2)) {
       expandedIds.add(op.id);
     }

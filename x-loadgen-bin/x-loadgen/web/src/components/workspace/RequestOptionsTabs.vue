@@ -11,7 +11,7 @@
         type="button"
         role="tab"
         :aria-selected="activeTab.requestSubTab === tab.id"
-        class="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+        class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
         :class="
           activeTab.requestSubTab === tab.id
             ? 'text-foreground'
@@ -22,7 +22,7 @@
         <span>{{ tab.label }}</span>
         <span
           v-if="tab.count"
-          class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+          class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground tabular-nums"
         >
           {{ tab.count }}
         </span>
@@ -280,7 +280,7 @@
               <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
                 <button
                   type="button"
-                  class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+                  class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
                   :class="
                     draft.mazbri.tenant_source === 'environment'
                       ? 'bg-background text-foreground shadow-sm'
@@ -292,7 +292,7 @@
                 </button>
                 <button
                   type="button"
-                  class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+                  class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
                   :class="
                     draft.mazbri.tenant_source === 'inline'
                       ? 'bg-background text-foreground shadow-sm'
@@ -405,14 +405,17 @@
               />
             </div>
             <div class="w-44 shrink-0">
-              <select
-                :value="chk.eq === undefined ? 'exists' : 'eq'"
-                class="h-9 w-full cursor-pointer bg-transparent px-2.5 text-xs text-foreground focus:outline-none"
-                @change="toggleCheckOp(idx, ($event.target as HTMLSelectElement).value)"
+              <UiSelect
+                :model-value="chk.eq === undefined ? 'exists' : 'eq'"
+                size="sm"
+                aria-label="断言操作符"
+                wrapper-class="w-full"
+                class="h-9 rounded-none border-0 bg-transparent px-2.5 text-xs shadow-none hover:bg-accent/50 focus-visible:ring-0"
+                @update:model-value="(val) => toggleCheckOp(idx, val)"
               >
-                <option value="exists" class="bg-background">存在且非 null</option>
-                <option value="eq" class="bg-background">等于 JSON 值 (==)</option>
-              </select>
+                <option value="exists">存在且非 null</option>
+                <option value="eq">等于 JSON 值 (==)</option>
+              </UiSelect>
             </div>
             <div class="flex-1 min-w-0">
               <input
@@ -431,7 +434,7 @@
               <button
                 type="button"
                 aria-label="删除断言"
-                class="rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                class="cursor-pointer rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
                 @click="draft.assertions.checks.splice(idx, 1)"
               >
                 <Trash2 class="h-3.5 w-3.5" />

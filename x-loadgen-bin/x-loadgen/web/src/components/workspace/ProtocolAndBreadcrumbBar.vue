@@ -35,17 +35,16 @@
     <!-- Subtle Collection Weight Pill -->
     <div class="hidden sm:flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
       <span class="whitespace-nowrap">集合权重</span>
-      <input
-        :value="draft.weight"
+      <UiInput
+        :model-value="draft.weight"
         type="number"
         min="1"
+        size="sm"
+        mono
         aria-label="集合权重"
-        class="h-7 w-14 rounded-md border border-input bg-background px-2 text-right font-mono text-xs text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-        @input="
-          draft.weight = Math.max(
-            1,
-            Number(($event.target as HTMLInputElement).value) || 1,
-          )
+        class="h-7 w-16 px-2 text-right text-xs tabular-nums"
+        @update:model-value="
+          (v) => (draft.weight = Math.max(1, Number(v) || 1))
         "
       />
     </div>
@@ -61,6 +60,7 @@ import {
   findCollectionBreadcrumb,
   isTabDirty,
 } from "../../stores/workspace";
+import UiInput from "../ui/UiInput.vue";
 
 const draft = computed(() => activeTab.value.draft);
 const dirty = computed(() => isTabDirty(activeTab.value));

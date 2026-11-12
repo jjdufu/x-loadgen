@@ -15,7 +15,7 @@
             ? 'h-9 gap-2.5 px-3 justify-start'
             : 'h-9 w-10 mx-auto justify-center',
           isActive(item.name)
-            ? 'bg-accent text-accent-foreground font-medium shadow-2xs'
+            ? 'bg-accent text-accent-foreground font-medium shadow-sm'
             : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
         ]"
       >

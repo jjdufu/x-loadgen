@@ -172,6 +172,7 @@ import {
 } from "lucide-vue-next";
 import type { CollectionNode, SavedRequest } from "../../api/types";
 import { methodColorClass } from "../../helpers/format";
+import { canProgrammaticallyFocus } from "../../modules/activity";
 import {
   activeTab,
   openCollectionLoadRunner,
@@ -214,8 +215,10 @@ function startRename(): void {
   renameDraft.value = props.node.name;
   renaming.value = true;
   void nextTick(() => {
-    renameInputEl.value?.focus();
-    renameInputEl.value?.select();
+    if (canProgrammaticallyFocus()) {
+      renameInputEl.value?.focus();
+      renameInputEl.value?.select();
+    }
   });
 }
 

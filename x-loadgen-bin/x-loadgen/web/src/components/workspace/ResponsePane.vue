@@ -148,7 +148,7 @@
           type="button"
           role="tab"
           :aria-selected="activeTab.responseSubTab === tab.id"
-          class="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+          class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
           :class="
             activeTab.responseSubTab === tab.id
               ? 'text-foreground'
@@ -159,7 +159,7 @@
           <span>{{ tab.label }}</span>
           <span
             v-if="tab.count"
-            class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+            class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground tabular-nums"
           >
             {{ tab.count }}
           </span>
@@ -397,6 +397,7 @@ import {
   statusCategoryClass,
 } from "../../helpers/format";
 import { toast } from "../../modules/toast";
+import { copyText } from "../../utils/clipboard";
 import {
   activeTab,
   responsePaneOpen,
@@ -474,10 +475,10 @@ function formatMaybeJson(raw: string): string {
 
 async function copyResponse(): Promise<void> {
   if (!resp.value) return;
-  try {
-    await navigator.clipboard.writeText(prettyBodyText.value);
+  const ok = await copyText(prettyBodyText.value);
+  if (ok) {
     toast.success("响应内容已复制");
-  } catch {
+  } else {
     toast.error("复制失败");
   }
 }

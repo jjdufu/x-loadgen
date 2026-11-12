@@ -37,40 +37,42 @@
         </p>
       </div>
 
-      <form class="space-y-4" @submit.prevent="submit">
+      <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            当前口令
-          </label>
+          <div class="flex h-5 items-center justify-between gap-2">
+            <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+              当前口令
+            </label>
+          </div>
           <UiInput
             v-model="oldToken"
             type="password"
             mono
-            autocomplete="current-password"
+            autocomplete="off"
             placeholder="输入初始口令"
           />
         </div>
 
         <div class="space-y-1.5">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex h-5 items-center justify-between gap-2">
             <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
               新口令
             </label>
-            <UiButton
-              variant="ghost"
-              size="xs"
+            <button
+              type="button"
+              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               @click="generateStrongPassword"
             >
               <Dices class="h-3.5 w-3.5" />
               <span>随机生成</span>
-            </UiButton>
+            </button>
           </div>
           <div class="flex items-center gap-1.5">
             <UiInput
               v-model="newToken"
               :type="showNew ? 'text' : 'password'"
               mono
-              autocomplete="new-password"
+              autocomplete="off"
               placeholder="输入至少 24 位新口令"
               class="flex-1"
             />

@@ -55,6 +55,7 @@ import { tags } from "@lezer/highlight";
 import { Copy, WandSparkles } from "lucide-vue-next";
 import { effectiveTheme, type ThemeMode } from "../../modules/theme";
 import { toast } from "../../modules/toast";
+import { copyText } from "../../utils/clipboard";
 import UiButton from "../ui/UiButton.vue";
 
 const props = withDefaults(
@@ -241,10 +242,10 @@ function prettifyJson(): void {
 }
 
 async function copyContent(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(props.modelValue ?? "");
+  const ok = await copyText(props.modelValue ?? "");
+  if (ok) {
     toast.success("已复制到剪贴板");
-  } catch {
+  } else {
     toast.error("复制失败");
   }
 }

@@ -173,7 +173,7 @@
             type="button"
             role="tab"
             :aria-selected="activeDetailTab === tab.id"
-            class="relative inline-flex h-full items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+            class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
             :class="
               activeDetailTab === tab.id
                 ? 'text-foreground'
@@ -184,7 +184,7 @@
             <span>{{ tab.label }}</span>
             <span
               v-if="tab.count"
-              class="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-foreground tabular-nums"
+              class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground tabular-nums"
             >
               {{ tab.count }}
             </span>
@@ -443,6 +443,7 @@ import {
   formatTimeMs,
   formatVerdictResult,
 } from "../helpers/format";
+import { isPageVisible } from "../modules/activity";
 import { effectiveTheme } from "../modules/theme";
 import { toast } from "../modules/toast";
 
@@ -473,6 +474,7 @@ const activeDetailTab = ref<"samples" | "verdict" | "windows" | "timeline" | "sn
 
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
+let chartResizeObserver: ResizeObserver | null = null;
 let sse: EventSource | null = null;
 let pollTimer: number | null = null;
 let initializedInputs = false;
@@ -667,11 +669,29 @@ watch(effectiveTheme, () => {
   renderChart(lastSeries.value);
 });
 
+watch(isPageVisible, (visible) => {
+  if (visible) {
+    void refreshAll();
+  }
+});
+
+function stopLiveStream(): void {
+  sse?.close();
+  sse = null;
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
 function startLiveStream(): void {
+  stopLiveStream();
   try {
     sse = new EventSource(`/api/v1/runs/${id.value}/events`);
     sse.addEventListener("stats", () => {
-      void refreshAll();
+      if (isPageVisible.value) {
+        void refreshAll();
+      }
     });
     sse.onerror = () => {
       sse?.close();
@@ -686,9 +706,18 @@ function startLiveStream(): void {
 function startFallbackPoll(): void {
   if (pollTimer !== null) return;
   pollTimer = window.setInterval(() => {
-    void refreshAll();
+    if (isPageVisible.value) {
+      void refreshAll();
+    }
   }, 1200);
 }
+
+watch(id, async () => {
+  initializedInputs = false;
+  lastSeries.value = [];
+  await Promise.all([refreshAll(), loadSamples(true)]);
+  startLiveStream();
+});
 
 async function handleStop(): Promise<void> {
   await api.stopRun(id.value);
@@ -729,18 +758,21 @@ function handleResize(): void {
 
 onMounted(async () => {
   window.addEventListener("resize", handleResize);
+  if (chartEl.value && typeof ResizeObserver !== "undefined") {
+    chartResizeObserver = new ResizeObserver(() => {
+      chart?.resize();
+    });
+    chartResizeObserver.observe(chartEl.value);
+  }
   await Promise.all([refreshAll(), loadSamples(true)]);
   startLiveStream();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleResize);
-  sse?.close();
-  sse = null;
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  chartResizeObserver?.disconnect();
+  chartResizeObserver = null;
+  stopLiveStream();
   chart?.dispose();
   chart = null;
 });

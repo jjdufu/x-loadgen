@@ -1,5 +1,5 @@
 <template>
-  <aside class="flex h-full overflow-hidden bg-background select-none">
+  <aside class="flex min-h-0 flex-1 overflow-hidden bg-background select-none">
     <!-- Secondary Icon Rail -->
     <div
       class="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border bg-surface/60 py-2"
@@ -10,7 +10,7 @@
         type="button"
         :title="sec.label"
         :aria-label="sec.label"
-        class="flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+        class="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors"
         :class="
           rightSidebarSection === sec.id
             ? 'bg-accent text-accent-foreground'

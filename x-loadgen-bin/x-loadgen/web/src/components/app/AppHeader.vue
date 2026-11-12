@@ -3,33 +3,28 @@
     class="z-20 flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4 select-none"
   >
     <!-- Minimalist Mark & Unified Breadcrumb -->
-    <div class="flex items-center gap-2.5 min-w-0">
-      <button
-        type="button"
-        title="工作台"
+    <div class="flex min-w-0 items-center gap-2.5">
+      <RouterLink
+        :to="{ name: 'workspace' }"
+        title="返回工作台"
         aria-label="返回工作台"
-        class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold tracking-tighter text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        @click="router.push({ name: 'workspace' })"
+        class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold tracking-tighter text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         XL
-      </button>
+      </RouterLink>
 
-      <span class="text-border select-none">/</span>
+      <span class="cursor-default text-border select-none">/</span>
 
       <template v-if="route.name === 'run-detail'">
-        <button
-          type="button"
-          class="truncate text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-          @click="router.push({ name: 'runs' })"
-        >
+        <span class="cursor-default truncate text-sm font-medium text-muted-foreground select-none">
           压测任务
-        </button>
-        <span class="text-border select-none">/</span>
-        <span class="truncate text-sm font-medium text-foreground">
+        </span>
+        <span class="cursor-default text-border select-none">/</span>
+        <span class="cursor-default truncate text-sm font-medium text-foreground select-none">
           任务详情
         </span>
       </template>
-      <span v-else class="truncate text-sm font-medium text-foreground">
+      <span v-else class="cursor-default truncate text-sm font-medium text-foreground select-none">
         {{ sectionTitle }}
       </span>
     </div>

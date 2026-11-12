@@ -125,12 +125,17 @@
             </div>
             <div class="ml-3 flex shrink-0 items-center gap-2">
               <span class="text-xs text-muted-foreground whitespace-nowrap">权重</span>
-              <input
-                v-model.number="item.weight"
+              <UiInput
+                :model-value="item.weight"
                 type="number"
                 min="1"
+                size="sm"
+                mono
                 :disabled="!item.enabled"
-                class="h-8 w-20 rounded-md border border-input bg-background px-2.5 text-right font-mono text-xs text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                class="w-20 text-right text-xs tabular-nums"
+                @update:model-value="
+                  (v) => (item.weight = Math.max(1, Number(v) || 1))
+                "
               />
             </div>
           </div>
@@ -197,6 +202,7 @@ import LoadConfigForm from "../common/LoadConfigForm.vue";
 import UiBadge from "../ui/UiBadge.vue";
 import UiButton from "../ui/UiButton.vue";
 import UiDialog from "../ui/UiDialog.vue";
+import UiInput from "../ui/UiInput.vue";
 import UiSelect from "../ui/UiSelect.vue";
 
 interface SelectableRequestRow {

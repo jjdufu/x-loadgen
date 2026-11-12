@@ -13,6 +13,7 @@
             props.class,
           )
         "
+        @close-auto-focus="guardAutoFocusEvent"
       >
         <slot />
       </DropdownMenuContent>
@@ -28,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "reka-ui";
 import { cn } from "../../lib/utils";
+import { guardAutoFocusEvent } from "../../modules/activity";
 
 const props = withDefaults(
   defineProps<{

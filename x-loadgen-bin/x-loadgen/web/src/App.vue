@@ -5,7 +5,7 @@
   <!-- Shadcn / Sonner-inspired Swiss Minimalist Toast Stack -->
   <div
     class="fixed bottom-10 right-4 z-[10000] flex flex-col gap-2.5 w-full max-w-[360px] pointer-events-none"
-    aria-live="polite"
+    :aria-live="isWindowFocused ? 'polite' : 'off'"
   >
     <TransitionGroup
       enter-active-class="transition duration-150 ease-out"
@@ -31,7 +31,7 @@
         </span>
         <button
           type="button"
-          class="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          class="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
           aria-label="关闭通知"
           @click="dismissToast(item.id)"
         >
@@ -45,6 +45,7 @@
 <script setup lang="ts">
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-vue-next";
 import UiConfirmDialog from "./components/ui/UiConfirmDialog.vue";
+import { isWindowFocused } from "./modules/activity";
 import {
   activeToasts,
   dismissToast,

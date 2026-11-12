@@ -9,7 +9,7 @@
             v-for="f in filters"
             :key="f.value"
             type="button"
-            class="h-7 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-7 cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               statusFilter === f.value
                 ? 'bg-background text-foreground shadow-sm'
@@ -149,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Activity, Globe, RefreshCw, Square, Trash2 } from "lucide-vue-next";
 import { api } from "../api/workspace";
@@ -163,6 +163,7 @@ import {
   formatRunStatus,
   formatTimeMs,
 } from "../helpers/format";
+import { isPageVisible } from "../modules/activity";
 import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
 
@@ -237,10 +238,18 @@ async function removeRun(id: string): Promise<void> {
   await loadRuns();
 }
 
+watch(isPageVisible, (visible) => {
+  if (visible) {
+    void loadRuns();
+  }
+});
+
 onMounted(() => {
   void loadRuns();
   pollTimer = window.setInterval(() => {
-    void loadRuns();
+    if (isPageVisible.value) {
+      void loadRuns();
+    }
   }, 2500);
 });
 

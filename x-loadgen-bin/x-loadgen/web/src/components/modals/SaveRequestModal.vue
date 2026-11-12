@@ -8,9 +8,11 @@
   >
     <div class="space-y-4">
       <div class="space-y-1.5">
-        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          请求名称 *
-        </label>
+        <div class="flex h-5 items-center justify-between gap-2">
+          <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            请求名称 *
+          </label>
+        </div>
         <UiInput
           v-model="requestName"
           placeholder="例如 查询订单详情"
@@ -18,19 +20,19 @@
       </div>
 
       <div class="space-y-1.5">
-        <div class="flex items-center justify-between gap-2">
+        <div class="flex h-5 items-center justify-between gap-2">
           <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
             所属集合 *
           </label>
-          <UiButton
+          <button
             v-if="folderOptions.length > 0"
-            variant="ghost"
-            size="xs"
+            type="button"
+            class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             @click="creatingFolder = !creatingFolder"
           >
             <FolderPlus class="h-3.5 w-3.5" />
             <span>{{ creatingFolder ? "选择已有集合" : "新建集合" }}</span>
-          </UiButton>
+          </button>
         </div>
 
         <UiInput
@@ -46,9 +48,11 @@
       </div>
 
       <div class="space-y-1.5">
-        <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-          默认压测权重
-        </label>
+        <div class="flex h-5 items-center justify-between gap-2">
+          <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            默认压测权重
+          </label>
+        </div>
         <UiInput
           :model-value="weight"
           type="number"

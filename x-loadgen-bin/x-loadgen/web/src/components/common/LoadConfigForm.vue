@@ -51,7 +51,7 @@
         <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
           <button
             type="button"
-            class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               budgetKind === 'duration'
                 ? 'bg-background text-foreground shadow-sm'
@@ -63,7 +63,7 @@
           </button>
           <button
             type="button"
-            class="h-full rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
             :class="
               budgetKind === 'requests'
                 ? 'bg-background text-foreground shadow-sm'
