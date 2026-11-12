@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1](https://github.com/jjdufu/x-loadgen/compare/v0.4.0...v0.4.1) (2026-11-12)
+
+### Features
+
+* **settings,runs:** 新增系统快捷键管理中心并为压测任务与负载预设接入共用搜索框 ([34d0ed7](https://github.com/jjdufu/x-loadgen/commit/34d0ed7a489612c9b38a1a0cd347baa3ec58864c))
+* **workspace:** 收敛单新建请求按钮、默认隐藏响应栏并补齐集合重命名与纯中文文案 ([afd28fd](https://github.com/jjdufu/x-loadgen/commit/afd28fd910901172d2292bd4eac230d641725bf8))
+* **shell:** 精简顶栏与侧栏导航并统一路由标题及紧凑页脚动态状态 ([4a58d63](https://github.com/jjdufu/x-loadgen/commit/4a58d63ff919feb64a7339ad6a76d9c053204cea))
+
+### Bug Fixes
+
+* **report,openapi:** 修复离线报告时间戳与卡片布局并汉化内置接口文档与发版同步 ([acac81c](https://github.com/jjdufu/x-loadgen/commit/acac81c5cd11076fc1e958ece2487b71ea6344b4))
+* **ui:** 修复纯黑模式原生表单色差并封装共用搜索框与确认弹窗组件 ([47c7e97](https://github.com/jjdufu/x-loadgen/commit/47c7e97b0ff807d660dc9ced2a44ec81cc25620f))
+
 ## [0.4.0](https://github.com/jjdufu/x-loadgen/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 ### ⚠ BREAKING CHANGES
