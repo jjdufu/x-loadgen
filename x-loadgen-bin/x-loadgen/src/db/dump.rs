@@ -32,15 +32,13 @@ pub fn write_pending(
     samples: &[Sample],
 ) -> Result<PathBuf> {
     paths.ensure_run(run_id)?;
-    let path = unique_pending_path(paths, run_id, worker_index)?;
     let body = serde_json::to_vec(samples).context("serialize pending samples")?;
     let mut bytes = Vec::with_capacity(8 + body.len());
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_le_bytes());
     bytes.extend_from_slice(&worker_index.to_le_bytes());
     bytes.extend_from_slice(&body);
-    let mut file = fs::File::create(&path)
-        .with_context(|| format!("create pending dump {}", path.display()))?;
+    let (path, mut file) = open_new_pending_file(paths, run_id, worker_index)?;
     file.write_all(&bytes)
         .with_context(|| format!("write pending dump {}", path.display()))?;
     file.sync_all()
@@ -48,17 +46,25 @@ pub fn write_pending(
     Ok(path)
 }
 
-/// Load a dump file into `conn` and delete the file on success.
+/// Load a dump file into `conn` inside a transaction and delete the file on success.
+///
+/// Uses `INSERT OR IGNORE` so partially-committed batches from a crash never
+/// wedge resume on duplicate `seq` primary keys.
 ///
 /// # Errors
 ///
 /// Returns an error if the file is malformed, has the wrong worker index, or
-/// a row cannot be inserted. The file is left in place on failure.
+/// the transaction cannot commit. The file is left in place on failure.
 pub fn import_pending_file(conn: &Connection, path: &Path, worker_index: u32) -> Result<usize> {
     let bytes = fs::read(path).with_context(|| format!("read pending dump {}", path.display()))?;
     let samples = parse_pending(&bytes, worker_index)
         .with_context(|| format!("parse pending dump {}", path.display()))?;
-    insert_samples(conn, &samples)?;
+    let tx = conn
+        .unchecked_transaction()
+        .with_context(|| format!("begin pending import {}", path.display()))?;
+    insert_samples(&tx, &samples)?;
+    tx.commit()
+        .with_context(|| format!("commit pending import {}", path.display()))?;
     fs::remove_file(path).with_context(|| format!("delete pending dump {}", path.display()))?;
     Ok(samples.len())
 }
@@ -148,7 +154,7 @@ pub fn parse_pending(bytes: &[u8], worker_index: u32) -> Result<Vec<Sample>> {
 pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()> {
     let mut stmt = conn
         .prepare(
-            "INSERT INTO samples (
+            "INSERT OR IGNORE INTO samples (
                 seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                 request_index, http_status, success, expected, reason, error_class,
                 request_id, error, response_bytes, customer_name
@@ -179,15 +185,31 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
     Ok(())
 }
 
-fn unique_pending_path(paths: &DataPaths, run_id: &str, worker_index: u32) -> Result<PathBuf> {
+fn open_new_pending_file(
+    paths: &DataPaths,
+    run_id: &str,
+    worker_index: u32,
+) -> Result<(PathBuf, fs::File)> {
     let mut unix_ms = super::unix_now_ms()?;
     loop {
         let path = paths.pending_dump(run_id, worker_index, unix_ms);
-        if !path.exists() {
-            return Ok(path);
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
         }
-        unix_ms = unix_ms
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("pending dump timestamp overflow"))?;
+        match opts.open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                unix_ms = unix_ms
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("pending dump timestamp overflow"))?;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("create pending dump {}", path.display()));
+            }
+        }
     }
 }

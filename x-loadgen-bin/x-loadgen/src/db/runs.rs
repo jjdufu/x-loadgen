@@ -16,6 +16,15 @@ pub const STATUS_STOPPED: &str = "stopped";
 pub const STATUS_INTERRUPTED: &str = "interrupted";
 pub const STATUS_FINISHED: &str = "finished";
 pub const STATUS_FAILED: &str = "failed";
+/// Every valid `runs.status` value.
+pub const ALL_STATUSES: [&str; 6] = [
+    STATUS_RUNNING,
+    STATUS_STOPPING,
+    STATUS_STOPPED,
+    STATUS_INTERRUPTED,
+    STATUS_FINISHED,
+    STATUS_FAILED,
+];
 
 /// A row of the `runs` table plus optional parsed snapshot.
 #[derive(Debug, Clone, Serialize)]
@@ -117,33 +126,28 @@ pub fn get_run(conn: &Connection, id: &str) -> Result<RunRecord, StoreError> {
     .ok_or_else(|| StoreError::not_found(format!("run {id} not found")))
 }
 
-/// List runs, optionally filtered by status.
+/// List runs whose status is in `statuses` (all runs when empty), newest first.
 ///
 /// # Errors
 ///
 /// Returns a storage error if the query fails.
-pub fn list_runs(conn: &Connection, status: Option<&str>) -> Result<Vec<RunRecord>, StoreError> {
-    if let Some(status) = status {
-        let mut stmt = conn.prepare(
-            "SELECT id, template_id, target_id, mode, status, started_at, ended_at,
-                    current_qps, current_concurrency, processes, snapshot_json,
-                    interrupt_ranges_json, error, created_at
-             FROM runs WHERE status = ?1 ORDER BY created_at DESC",
-        )?;
-        let rows = stmt.query_map(params![status], run_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
+pub fn list_runs(conn: &Connection, statuses: &[&str]) -> Result<Vec<RunRecord>, StoreError> {
+    let filter = if statuses.is_empty() {
+        String::new()
     } else {
-        let mut stmt = conn.prepare(
-            "SELECT id, template_id, target_id, mode, status, started_at, ended_at,
-                    current_qps, current_concurrency, processes, snapshot_json,
-                    interrupt_ranges_json, error, created_at
-             FROM runs ORDER BY created_at DESC",
-        )?;
-        let rows = stmt.query_map([], run_from_row)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from)
-    }
+        let marks = vec!["?"; statuses.len()].join(", ");
+        format!("WHERE status IN ({marks})")
+    };
+    let sql = format!(
+        "SELECT id, template_id, target_id, mode, status, started_at, ended_at,
+                current_qps, current_concurrency, processes, snapshot_json,
+                interrupt_ranges_json, error, created_at
+         FROM runs {filter} ORDER BY created_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(statuses), run_from_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StoreError::from)
 }
 
 /// Configured traffic of every run currently `running` or `stopping`.
@@ -286,7 +290,7 @@ pub fn list_timeline(conn: &Connection, run_id: &str) -> Result<Vec<TimelineEven
 pub fn list_windows(conn: &Connection, run_id: &str) -> Result<Vec<Value>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT window_index, started_at, ended_at, samples, success, failure, expected,
-                dropped_details, p50_us, p95_us, p99_us, max_us, bytes
+                dropped_details, p50_us, p95_us, p99_us, max_us, bytes, missed_sends, completed
          FROM run_windows WHERE run_id = ?1 ORDER BY window_index",
     )?;
     let rows = stmt.query_map(params![run_id], |row| {
@@ -304,6 +308,8 @@ pub fn list_windows(conn: &Connection, run_id: &str) -> Result<Vec<Value>, Store
             "p99_us": row.get::<_, Option<i64>>(10)?,
             "max_us": row.get::<_, Option<i64>>(11)?,
             "bytes": row.get::<_, i64>(12)?,
+            "missed_sends": row.get::<_, i64>(13)?,
+            "completed": row.get::<_, i64>(14)? != 0,
         }))
     })?;
     rows.collect::<Result<Vec<_>, _>>()
@@ -341,17 +347,19 @@ pub fn append_interrupt_range(
 ///
 /// Returns conflict when the run is still running or stopping, or a storage error.
 pub fn delete_run(conn: &Connection, id: &str) -> Result<(), StoreError> {
-    let run = get_run(conn, id)?;
+    let tx = conn.unchecked_transaction()?;
+    let run = get_run(&tx, id)?;
     if run.status == STATUS_RUNNING || run.status == STATUS_STOPPING {
         return Err(StoreError::conflict(
             "the run is still running; stop it before deleting",
         ));
     }
-    conn.execute("DELETE FROM run_windows WHERE run_id = ?1", params![id])?;
-    conn.execute("DELETE FROM run_checkpoints WHERE run_id = ?1", params![id])?;
-    conn.execute("DELETE FROM run_timeline WHERE run_id = ?1", params![id])?;
-    conn.execute("DELETE FROM run_control WHERE run_id = ?1", params![id])?;
-    conn.execute("DELETE FROM runs WHERE id = ?1", params![id])?;
+    tx.execute("DELETE FROM run_windows WHERE run_id = ?1", params![id])?;
+    tx.execute("DELETE FROM run_checkpoints WHERE run_id = ?1", params![id])?;
+    tx.execute("DELETE FROM run_timeline WHERE run_id = ?1", params![id])?;
+    tx.execute("DELETE FROM run_control WHERE run_id = ?1", params![id])?;
+    tx.execute("DELETE FROM runs WHERE id = ?1", params![id])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -361,10 +369,9 @@ pub fn delete_run(conn: &Connection, id: &str) -> Result<(), StoreError> {
 ///
 /// Returns a storage error if a row cannot be updated.
 pub fn mark_stale_runs_interrupted(conn: &Connection) -> Result<Vec<String>, StoreError> {
-    let stale = list_runs(conn, Some(STATUS_RUNNING))?;
-    let stopping = list_runs(conn, Some(STATUS_STOPPING))?;
+    let stale = list_runs(conn, &[STATUS_RUNNING, STATUS_STOPPING])?;
     let mut ids = Vec::new();
-    for run in stale.into_iter().chain(stopping) {
+    for run in stale {
         set_status(
             conn,
             &run.id,
@@ -414,6 +421,7 @@ pub struct WorkerCheckpoint {
     pub window_index: Option<i64>,
     pub counters_json: String,
     pub histogram_blob: Option<Vec<u8>>,
+    pub timeseries_json: Option<String>,
 }
 
 /// Latest checkpoint row from a worker database, if any.
@@ -424,7 +432,7 @@ pub struct WorkerCheckpoint {
 pub fn latest_worker_checkpoint(conn: &Connection) -> Result<Option<WorkerCheckpoint>, StoreError> {
     let row = conn
         .query_row(
-            "SELECT ts, window_index, counters_json, histogram_blob
+            "SELECT ts, window_index, counters_json, histogram_blob, timeseries_json
              FROM worker_checkpoints ORDER BY ts DESC LIMIT 1",
             [],
             |row| {
@@ -433,6 +441,7 @@ pub fn latest_worker_checkpoint(conn: &Connection) -> Result<Option<WorkerCheckp
                     window_index: row.get(1)?,
                     counters_json: row.get(2)?,
                     histogram_blob: row.get(3)?,
+                    timeseries_json: row.get(4)?,
                 })
             },
         )
@@ -747,13 +756,9 @@ pub fn latest_checkpoint_blobs(
     run_id: &str,
 ) -> Result<Vec<Vec<u8>>, StoreError> {
     let mut stmt = conn.prepare(
-        "SELECT histogram_blob FROM run_checkpoints AS c
-         WHERE run_id = ?1
-           AND ts = (
-             SELECT MAX(ts) FROM run_checkpoints
-             WHERE run_id = c.run_id AND worker_index = c.worker_index
-           )
-           AND histogram_blob IS NOT NULL",
+        "SELECT histogram_blob FROM run_checkpoints
+         WHERE run_id = ?1 AND histogram_blob IS NOT NULL
+         ORDER BY worker_index ASC",
     )?;
     let rows = stmt.query_map(params![run_id], |row| row.get::<_, Vec<u8>>(0))?;
     let mut blobs = Vec::new();
@@ -761,4 +766,26 @@ pub fn latest_checkpoint_blobs(
         blobs.push(row?);
     }
     Ok(blobs)
+}
+
+/// Latest serialized timeseries JSON for each worker of a run, from `run_checkpoints`.
+///
+/// # Errors
+///
+/// Returns a storage error if the query fails.
+pub fn latest_checkpoint_timeseries(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT timeseries_json FROM run_checkpoints
+         WHERE run_id = ?1 AND timeseries_json IS NOT NULL
+         ORDER BY worker_index ASC",
+    )?;
+    let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
+    let mut series = Vec::new();
+    for row in rows {
+        series.push(row?);
+    }
+    Ok(series)
 }

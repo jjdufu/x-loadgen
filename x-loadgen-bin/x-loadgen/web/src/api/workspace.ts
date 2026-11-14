@@ -1,4 +1,4 @@
-import { http } from "./http";
+import { http, type RequestOptions } from "./http";
 import type {
   CollectionInput,
   CollectionNode,
@@ -17,6 +17,8 @@ import type {
   RequestDraft,
   RunStats,
   RunView,
+  SampleCursor,
+  SampleFilters,
   SampleRow,
   SavedRequest,
   TenantSpec,
@@ -38,7 +40,8 @@ export const api = {
     http
       .post<void>("/api/v1/auth/password", { old_token, new_token })
       .then((r) => r.data),
-  meta: () => http.get<MetaResponse>("/api/v1/meta").then((r) => r.data),
+  meta: (opts?: RequestOptions) =>
+    http.get<MetaResponse>("/api/v1/meta", { ...opts }).then((r) => r.data),
 
   // Collections & Requests
   listCollections: () =>
@@ -168,14 +171,15 @@ export const api = {
     http.delete<void>(`/api/v1/load-profiles/${id}`).then((r) => r.data),
 
   // Runs
-  listRuns: (status?: string) =>
+  listRuns: (status?: string, opts?: RequestOptions) =>
     http
       .get<RunView[]>("/api/v1/runs", {
         params: status ? { status } : undefined,
+        ...opts,
       })
       .then((r) => r.data),
-  getRun: (id: string) =>
-    http.get<RunView>(`/api/v1/runs/${id}`).then((r) => r.data),
+  getRun: (id: string, opts?: RequestOptions) =>
+    http.get<RunView>(`/api/v1/runs/${id}`, { ...opts }).then((r) => r.data),
   createRun: (req: CreateRunRequest) =>
     http.post<RunView>("/api/v1/runs", req).then((r) => r.data),
   deleteRun: (id: string) =>
@@ -191,51 +195,51 @@ export const api = {
     http
       .patch<RunView>(`/api/v1/runs/${id}/traffic`, patch)
       .then((r) => r.data),
-  getRunStats: (id: string) =>
-    http.get<RunStats>(`/api/v1/runs/${id}/stats`).then((r) => r.data),
-  getRunTimeseries: (id: string) =>
+  getRunStats: (id: string, opts?: RequestOptions) =>
+    http
+      .get<RunStats>(`/api/v1/runs/${id}/stats`, { ...opts })
+      .then((r) => r.data),
+  getRunTimeseries: (id: string, opts?: RequestOptions) =>
     http
       .get<{ points?: TimePoint[] } | TimePoint[]>(
         `/api/v1/runs/${id}/timeseries`,
+        { ...opts },
       )
       .then((r) => (Array.isArray(r.data) ? r.data : (r.data.points ?? []))),
-  getRunTimeline: (id: string) =>
+  getRunTimeline: (id: string, opts?: RequestOptions) =>
     http
       .get<{ events?: TimelineEvent[] } | TimelineEvent[]>(
         `/api/v1/runs/${id}/timeline`,
+        { ...opts },
       )
       .then((r) => (Array.isArray(r.data) ? r.data : (r.data.events ?? []))),
-  getRunWindows: (id: string) =>
+  getRunWindows: (id: string, opts?: RequestOptions) =>
     http
       .get<{ windows?: WindowRow[] } | WindowRow[]>(
         `/api/v1/runs/${id}/windows`,
+        { ...opts },
       )
       .then((r) => (Array.isArray(r.data) ? r.data : (r.data.windows ?? []))),
   getRunVerdict: (id: string) =>
     http.get<Verdict>(`/api/v1/runs/${id}/verdict`).then((r) => r.data),
   getRunSamples: (
     id: string,
-    params?: {
-      limit?: number;
-      after_worker?: number;
-      after_seq?: number;
-      success?: boolean;
-      product_id?: string;
-      error_class?: string;
-      min_latency_us?: number;
-    },
+    params: SampleFilters & Partial<SampleCursor> & { limit?: number },
+    opts?: RequestOptions,
   ) =>
     http
-      .get<{
-        items?: SampleRow[];
-        next?: { after_worker?: number; after_seq?: number; worker?: number; seq?: number } | null;
-      }>(`/api/v1/runs/${id}/samples`, { params })
+      .get<{ items?: SampleRow[]; next?: SampleCursor | null }>(
+        `/api/v1/runs/${id}/samples`,
+        { params, ...opts },
+      )
       .then((r) => ({
         items: r.data.items ?? [],
         next: r.data.next ?? null,
       })),
-  getRunReport: (id: string) =>
-    http.get<ReportPayload>(`/api/v1/runs/${id}/report`).then((r) => r.data),
+  getRunReport: (id: string, opts?: RequestOptions) =>
+    http
+      .get<ReportPayload>(`/api/v1/runs/${id}/report`, { ...opts })
+      .then((r) => r.data),
   downloadReportBlob: (id: string, kind: "json" | "html") =>
     http
       .get<Blob>(`/api/v1/runs/${id}/report.${kind}`, { responseType: "blob" })

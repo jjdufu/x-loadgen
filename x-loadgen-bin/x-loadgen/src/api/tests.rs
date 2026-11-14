@@ -90,20 +90,28 @@ async fn login_with(
     (status, cookie, json_body(response).await)
 }
 
-fn assert_auth_cookie(set_cookie: &str, token: &str) {
+fn extract_session_cookie(set_cookie: &str, raw_password: &str) -> String {
     assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
     assert!(set_cookie.contains("Path=/"), "{set_cookie}");
     assert!(set_cookie.contains("SameSite=Lax"), "{set_cookie}");
-    let lower = set_cookie.to_ascii_lowercase();
-    assert!(!lower.contains("secure"), "{set_cookie}");
+    assert!(set_cookie.contains("Max-Age=86400"), "{set_cookie}");
     assert!(
-        !lower.contains("max-age") && !lower.contains("expires="),
-        "login cookie must not auto-expire: {set_cookie}"
-    );
-    assert!(
-        set_cookie.contains(&format!("{AUTH_COOKIE}={token}")),
+        !set_cookie.to_ascii_lowercase().contains("secure"),
         "{set_cookie}"
     );
+    assert!(
+        !set_cookie.contains(raw_password),
+        "Set-Cookie must never contain the raw admin password: {set_cookie}"
+    );
+    let first = set_cookie.split(';').next().expect("cookie pair").trim();
+    let session_id = first
+        .strip_prefix(&format!("{AUTH_COOKIE}="))
+        .expect("cookie prefix");
+    assert!(
+        session_id.starts_with("s_") && session_id.len() == 66,
+        "expected opaque s_<64-hex> session token, got {session_id}"
+    );
+    session_id.to_string()
 }
 
 fn cookie_for(token: &str) -> String {
@@ -113,13 +121,13 @@ fn cookie_for(token: &str) -> String {
 async fn post_password(
     client: &reqwest::Client,
     base: &str,
-    presented: &str,
+    session_cookie: &str,
     old: &str,
     new: &str,
 ) -> (reqwest::StatusCode, Option<String>, Value) {
     let response = client
         .post(format!("{base}/api/v1/auth/password"))
-        .header(reqwest::header::COOKIE, cookie_for(presented))
+        .header(reqwest::header::COOKIE, cookie_for(session_cookie))
         .json(&serde_json::json!({"old_token": old, "new_token": new}))
         .send()
         .await
@@ -176,7 +184,7 @@ async fn serve_creates_password_file_mode_600_and_does_not_overwrite() {
 }
 
 #[tokio::test]
-async fn login_echoes_token_in_cookie_and_blocks_meta_until_change() {
+async fn login_issues_opaque_session_cookie_without_echoing_password_and_logout_revokes_it() {
     let tmp = TempDir::new("login");
     let (base, shutdown) = start(&tmp.path, false).await;
     let client = client();
@@ -192,7 +200,7 @@ async fn login_echoes_token_in_cookie_and_blocks_meta_until_change() {
     assert_eq!(health_json["ok"], true);
     assert_eq!(health_json["version"], env!("CARGO_PKG_VERSION"));
 
-    // Bearer with the login token works without calling login first.
+    // Stateless Bearer with the admin token works without calling login first.
     let (me_status, me_json) = get_auth(
         &client,
         &format!("{base}/api/v1/auth/me"),
@@ -204,17 +212,30 @@ async fn login_echoes_token_in_cookie_and_blocks_meta_until_change() {
     assert_eq!(me_json["auth_required"], true);
     assert_eq!(me_json["must_change_password"], true);
 
+    // Raw admin password in Cookie header must NOT be accepted.
+    let (raw_cookie_status, _) = get_auth(
+        &client,
+        &format!("{base}/api/v1/auth/me"),
+        Some(&file_token),
+        false,
+    )
+    .await;
+    assert_eq!(raw_cookie_status, reqwest::StatusCode::UNAUTHORIZED);
+
     let (status, set_cookie, body) = login_with(&client, &base, &file_token).await;
     assert_eq!(status, reqwest::StatusCode::OK);
     let set_cookie = set_cookie.expect("set-cookie");
-    assert_auth_cookie(&set_cookie, &file_token);
+    let session_id = extract_session_cookie(&set_cookie, &file_token);
     assert_eq!(body["must_change_password"], true);
-    assert_eq!(body["token"].as_str().expect("token"), file_token);
+    assert!(
+        body.get("token").is_none(),
+        "login response body must not echo password: {body}"
+    );
 
     let (forbidden_status, forbidden_json) = get_auth(
         &client,
         &format!("{base}/api/v1/meta"),
-        Some(&file_token),
+        Some(&session_id),
         false,
     )
     .await;
@@ -224,7 +245,7 @@ async fn login_echoes_token_in_cookie_and_blocks_meta_until_change() {
     let (me_status, me_json) = get_auth(
         &client,
         &format!("{base}/api/v1/auth/me"),
-        Some(&file_token),
+        Some(&session_id),
         false,
     )
     .await;
@@ -232,21 +253,39 @@ async fn login_echoes_token_in_cookie_and_blocks_meta_until_change() {
     assert_eq!(me_json["auth_required"], true);
     assert_eq!(me_json["must_change_password"], true);
 
+    // Logout must revoke the server-side session immediately.
+    let logout = client
+        .post(format!("{base}/api/v1/auth/logout"))
+        .header(reqwest::header::COOKIE, cookie_for(&session_id))
+        .send()
+        .await
+        .expect("logout");
+    assert!(logout.status().is_success());
+    let (revoked_status, _) = get_auth(
+        &client,
+        &format!("{base}/api/v1/auth/me"),
+        Some(&session_id),
+        false,
+    )
+    .await;
+    assert_eq!(revoked_status, reqwest::StatusCode::UNAUTHORIZED);
+
     shutdown.send(()).ok();
 }
 
 #[tokio::test]
-async fn password_change_rejects_weak_tokens_then_revokes_the_old_one() {
+async fn password_change_rejects_weak_tokens_then_revokes_old_credentials_and_sessions() {
     let tmp = TempDir::new("change");
     let (base, shutdown) = start(&tmp.path, false).await;
     let client = client();
     let file_token = read_admin_passwd(&tmp.paths().admin_passwd()).expect("file token");
-    let (status, _, _) = login_with(&client, &base, &file_token).await;
+    let (status, set_cookie, _) = login_with(&client, &base, &file_token).await;
     assert_eq!(status, reqwest::StatusCode::OK);
+    let old_session = extract_session_cookie(&set_cookie.expect("cookie"), &file_token);
 
     let too_short = "a".repeat(MIN_NEW_TOKEN_LEN - 1);
     let (short_status, _, short_json) =
-        post_password(&client, &base, &file_token, &file_token, &too_short).await;
+        post_password(&client, &base, &old_session, &file_token, &too_short).await;
     assert_eq!(short_status, reqwest::StatusCode::BAD_REQUEST);
     assert_eq!(short_json["error"]["code"], "invalid_request");
     assert!(
@@ -260,7 +299,7 @@ async fn password_change_rejects_weak_tokens_then_revokes_the_old_one() {
     let (invalid_status, _, _) = post_password(
         &client,
         &base,
-        &file_token,
+        &old_session,
         &file_token,
         "aaaaaaaaaaaaaaaaaaaaaaa;",
     )
@@ -268,25 +307,26 @@ async fn password_change_rejects_weak_tokens_then_revokes_the_old_one() {
     assert_eq!(invalid_status, reqwest::StatusCode::BAD_REQUEST);
 
     let (change_status, change_cookie, _) =
-        post_password(&client, &base, &file_token, &file_token, NEW_TOKEN).await;
+        post_password(&client, &base, &old_session, &file_token, NEW_TOKEN).await;
     assert!(
         change_status.is_success(),
         "change failed: {change_status:?}"
     );
-    assert_auth_cookie(&change_cookie.expect("change set-cookie"), NEW_TOKEN);
+    let new_session = extract_session_cookie(&change_cookie.expect("change set-cookie"), NEW_TOKEN);
+    assert_ne!(new_session, old_session);
     assert!(
         !tmp.paths().admin_passwd().exists(),
         "admin.passwd should be deleted"
     );
 
-    let (stale_status, _) = get_auth(
+    let (stale_session_status, _) = get_auth(
         &client,
         &format!("{base}/api/v1/auth/me"),
-        Some(&file_token),
+        Some(&old_session),
         false,
     )
     .await;
-    assert_eq!(stale_status, reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(stale_session_status, reqwest::StatusCode::UNAUTHORIZED);
 
     let (old_status, _, _) = login_with(&client, &base, &file_token).await;
     assert_eq!(old_status, reqwest::StatusCode::UNAUTHORIZED);
@@ -304,16 +344,17 @@ async fn password_change_rejects_weak_tokens_then_revokes_the_old_one() {
     let (cookie_status, _) = get_auth(
         &client,
         &format!("{base}/api/v1/meta"),
-        Some(NEW_TOKEN),
+        Some(&new_session),
         false,
     )
     .await;
     assert!(cookie_status.is_success());
 
-    let (new_status, _, new_body) = login_with(&client, &base, NEW_TOKEN).await;
+    let (new_status, new_login_cookie, new_body) = login_with(&client, &base, NEW_TOKEN).await;
     assert!(new_status.is_success());
+    let _ = extract_session_cookie(&new_login_cookie.expect("cookie"), NEW_TOKEN);
     assert_eq!(new_body["must_change_password"], false);
-    assert_eq!(new_body["token"].as_str().expect("token"), NEW_TOKEN);
+    assert!(new_body.get("token").is_none());
 
     shutdown.send(()).ok();
 }
@@ -324,12 +365,12 @@ async fn restart_after_password_change_does_not_recreate_password_file() {
     let (base, shutdown) = start(&tmp.path, false).await;
     let client = client();
     let file_token = read_admin_passwd(&tmp.paths().admin_passwd()).expect("file token");
-    let (status, _, body) = login_with(&client, &base, &file_token).await;
+    let (status, set_cookie, _) = login_with(&client, &base, &file_token).await;
     assert_eq!(status, reqwest::StatusCode::OK);
-    let token = body["token"].as_str().expect("token").to_string();
+    let session_id = extract_session_cookie(&set_cookie.expect("cookie"), &file_token);
     let change = client
         .post(format!("{base}/api/v1/auth/password"))
-        .header(reqwest::header::COOKIE, format!("{AUTH_COOKIE}={token}"))
+        .header(reqwest::header::COOKIE, cookie_for(&session_id))
         .json(&serde_json::json!({"old_token": file_token, "new_token": NEW_TOKEN_RESTART}))
         .send()
         .await
@@ -427,12 +468,66 @@ async fn reset_passwd_revokes_old_secret_and_requires_change_again() {
         .await
         .expect("new secret");
     assert!(fresh.status().is_success());
+    let fresh_cookie = fresh
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .expect("fresh cookie")
+        .to_string();
+    let _ = extract_session_cookie(&fresh_cookie, &regenerated);
     let fresh_body = json_body(fresh).await;
     assert_eq!(fresh_body["must_change_password"], true);
-    assert_eq!(
-        fresh_body["token"].as_str().expect("token"),
-        regenerated.as_str()
-    );
+    assert!(fresh_body.get("token").is_none());
+
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn repeated_failed_logins_are_rate_limited_with_429() {
+    let tmp = TempDir::new("ratelimit");
+    let (base, shutdown) = start(&tmp.path, false).await;
+    let client = client();
+    for _ in 0..10 {
+        let (status, _, _) = login_with(&client, &base, "wrong-token-attempt").await;
+        assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    }
+    let (limited_status, _, limited_body) = login_with(&client, &base, "wrong-token-attempt").await;
+    assert_eq!(limited_status, reqwest::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited_body["error"]["code"], "rate_limited");
+    shutdown.send(()).ok();
+}
+
+#[tokio::test]
+async fn cross_origin_mutations_and_loopback_dns_rebinding_are_rejected() {
+    let tmp = TempDir::new("csrf");
+    let (base, shutdown) = start(&tmp.path, true).await;
+    let client = client();
+
+    let cross_origin = client
+        .post(format!("{base}/api/v1/collections"))
+        .header(reqwest::header::ORIGIN, "https://attacker.example")
+        .json(&serde_json::json!({"name": "csrf"}))
+        .send()
+        .await
+        .expect("cross-origin");
+    assert_eq!(cross_origin.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let same_origin = client
+        .post(format!("{base}/api/v1/collections"))
+        .header(reqwest::header::ORIGIN, &base)
+        .json(&serde_json::json!({"name": "same-origin"}))
+        .send()
+        .await
+        .expect("same-origin");
+    assert!(same_origin.status().is_success());
+
+    let rebind = client
+        .get(format!("{base}/api/v1/meta"))
+        .header(reqwest::header::HOST, "rebind.attacker.example:8757")
+        .send()
+        .await
+        .expect("rebind");
+    assert_eq!(rebind.status(), reqwest::StatusCode::FORBIDDEN);
 
     shutdown.send(()).ok();
 }

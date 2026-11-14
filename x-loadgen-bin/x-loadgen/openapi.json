@@ -3075,14 +3075,9 @@
       "LoginResponse": {
         "type": "object",
         "required": [
-          "token",
           "must_change_password"
         ],
         "properties": {
-          "token": {
-            "type": "string",
-            "description": "登录提交并验证通过的访问口令。"
-          },
           "must_change_password": {
             "type": "boolean"
           }

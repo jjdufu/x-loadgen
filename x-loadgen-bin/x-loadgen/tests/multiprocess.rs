@@ -84,6 +84,10 @@ async fn start_mock() -> (String, tokio::sync::oneshot::Sender<()>) {
 }
 
 fn mp_duration_profile(name: &str, qps: u64) -> Value {
+    mp_duration_profile_mode(name, qps, "total")
+}
+
+fn mp_duration_profile_mode(name: &str, qps: u64, qps_mode: &str) -> Value {
     json!({
         "name": name,
         "model": "open_loop",
@@ -94,7 +98,7 @@ fn mp_duration_profile(name: &str, qps: u64) -> Value {
         "ramp_secs": 0,
         "timeout_secs": 5,
         "processes": 2,
-        "qps_mode": "total",
+        "qps_mode": qps_mode,
         "requests_mode": "total",
         "loop_enabled": false
     })
@@ -172,7 +176,34 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn spawn_serve(bin: &Path, listen: &str, data_dir: &Path) -> (Child, PathBuf) {
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn shutdown(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = Command::new("kill")
+                .args(["-TERM", &self.0.id().to_string()])
+                .status();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if self.0.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn spawn_serve(bin: &Path, listen: &str, data_dir: &Path) -> (ChildGuard, PathBuf) {
     let log_path = data_dir.join("serve.spawn.log");
     let log = fs::File::create(&log_path).expect("log");
     let child = Command::new(bin)
@@ -186,7 +217,7 @@ fn spawn_serve(bin: &Path, listen: &str, data_dir: &Path) -> (Child, PathBuf) {
         .stderr(Stdio::from(log))
         .spawn()
         .expect("spawn serve");
-    (child, log_path)
+    (ChildGuard(child), log_path)
 }
 
 async fn wait_healthy(http: &reqwest::Client, base: &str, log: &Path) {
@@ -349,7 +380,7 @@ async fn processes_two_split_qps_and_merge_stats() {
         .post(format!("{base}/api/v1/runs/{id}/stop"))
         .send()
         .await;
-    let _ = child.kill();
+    child.shutdown();
 }
 
 #[tokio::test]
@@ -425,7 +456,8 @@ async fn two_multiprocess_runs_are_isolated_and_killing_one_worker_stays_local()
         .post(format!("{base}/api/v1/runs/{id_b}/stop"))
         .send()
         .await;
-    let _ = (child.kill(), child.wait(), status_a);
+    child.shutdown();
+    let _ = status_a;
 }
 
 #[tokio::test]
@@ -503,7 +535,7 @@ async fn processes_two_request_once_finishes_and_consolidates_report_and_verdict
     assert_eq!(verdict["result"], "pass", "{verdict}");
     assert_eq!(verdict["actual"]["samples"], request_count, "{verdict}");
 
-    let _ = child.kill();
+    child.shutdown();
 }
 
 const MP_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
@@ -648,6 +680,455 @@ async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_success
     assert_eq!(stats.bindings_verified, request_count);
     assert_eq!(stats.envelopes_opened, request_count);
     assert_eq!(stats.responses_sealed, request_count);
-    let _ = child.kill();
+    child.shutdown();
     gateway.stop().await;
+}
+
+#[tokio::test]
+async fn per_process_qps_is_not_multiplied_twice_and_stop_keeps_counters() {
+    let tmp = TempDir::new("perproc");
+    let (mock, _shutdown_mock) = start_mock().await;
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let (env_id, req_id) = seed_http_item(&http, &base, "perproc", &mock).await;
+    let (status, profile) = post_json(
+        &http,
+        &format!("{base}/api/v1/load-profiles"),
+        &mp_duration_profile_mode("tmpl-perproc", 20, "per_process"),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
+    let (status, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "once"
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
+    // 20 per process x 2 processes = 40 run-wide.
+    assert_eq!(run["current_qps"], 40, "{run}");
+    let id = run["id"].as_str().unwrap().to_string();
+    let run_dir = tmp.path.join("runs").join(&id);
+    wait_file(&run_dir.join("w00-live.json")).await;
+    wait_file(&run_dir.join("w01-live.json")).await;
+    let live0: Value =
+        serde_json::from_slice(&fs::read(run_dir.join("w00-live.json")).unwrap()).unwrap();
+    let live1: Value =
+        serde_json::from_slice(&fs::read(run_dir.join("w01-live.json")).unwrap()).unwrap();
+    assert_eq!(live0["current_qps"], 20, "{live0}");
+    assert_eq!(live1["current_qps"], 20, "{live1}");
+
+    // Stop mid-window (the 20 s window has no checkpoint boundary yet).
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    let _ = http
+        .post(format!("{base}/api/v1/runs/{id}/stop"))
+        .send()
+        .await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "stopped" {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run did not stop: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let from_db =
+        sample_count(&run_dir.join("w00.sqlite")) + sample_count(&run_dir.join("w01.sqlite"));
+    let (code, run_stats) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{run_stats}");
+    let samples = run_stats["samples"].as_u64().unwrap_or(0);
+    assert!(from_db > 0, "no samples written");
+    assert_eq!(
+        samples, from_db,
+        "final counters lost on stop: stats {run_stats} vs db {from_db}"
+    );
+    // ~2.5 s at 40 QPS is ~100; the old split ran each worker at 40 (80 run-wide, ~200).
+    assert!(samples <= 160, "too many samples for 40 QPS: {samples}");
+    child.shutdown();
+}
+
+#[tokio::test]
+async fn multiprocess_loop_verdict_excludes_loop_gaps() {
+    let tmp = TempDir::new("mploop");
+    let (mock, _shutdown_mock) = start_mock().await;
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let (env_id, req_id) = seed_http_item(&http, &base, "mploop", &mock).await;
+    let (status, profile) = post_json(
+        &http,
+        &format!("{base}/api/v1/load-profiles"),
+        &json!({
+            "name": "tmpl-mploop",
+            "model": "open_loop",
+            "qps": 20,
+            "concurrency": 4,
+            "duration_secs": 2,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 2,
+            "qps_mode": "total",
+            "requests_mode": "total",
+            "loop_enabled": true,
+            "rounds": 2,
+            "loop_interval_secs": 3,
+            "assert": {"min_qps_ratio": 0.8}
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
+    let (status, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "loop"
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
+    let id = run["id"].as_str().unwrap().to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "finished" {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run did not finish: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let (_, windows) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+    let rows = windows["windows"].as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), 2, "one merged row per loop window: {windows}");
+    let summed: u64 = rows
+        .iter()
+        .map(|w| w["samples"].as_u64().unwrap_or(0))
+        .sum();
+
+    let (code, verdict) = get_json(&http, &format!("{base}/api/v1/runs/{id}/verdict")).await;
+    let actual = &verdict["actual"];
+    assert_eq!(actual["samples"].as_u64(), Some(summed), "{verdict}");
+    // Two 2 s windows: ~4 s of sending. The 3 s gap must not be counted.
+    let elapsed = actual["elapsed_ms"].as_i64().unwrap_or(0);
+    assert!(
+        (3_500..=5_000).contains(&elapsed),
+        "effective elapsed {elapsed} ms should exclude the loop gap: {verdict}"
+    );
+    assert_eq!(
+        code,
+        reqwest::StatusCode::OK,
+        "qps ratio should pass: {verdict}"
+    );
+    child.shutdown();
+}
+
+#[tokio::test]
+async fn multiprocess_loop_resume_continues_window_index_and_remaining_rounds() {
+    let tmp = TempDir::new("mp-resume-gap");
+    let (mock, _shutdown_mock) = start_mock().await;
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let (env_id, req_id) = seed_http_item(&http, &base, "mp-resume-gap", &mock).await;
+    let (status, profile) = post_json(
+        &http,
+        &format!("{base}/api/v1/load-profiles"),
+        &json!({
+            "name": "tmpl-mp-resume-gap",
+            "model": "open_loop",
+            "qps": 20,
+            "concurrency": 4,
+            "duration_secs": 1,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 2,
+            "qps_mode": "total",
+            "requests_mode": "total",
+            "loop_enabled": true,
+            "rounds": 3,
+            "loop_interval_secs": 3,
+            "assert": {"min_qps_ratio": 0.8}
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
+    let (status, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "loop"
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
+    let id = run["id"].as_str().unwrap().to_string();
+
+    // Wait until window 0 completes and workers sit in the 3 s loop interval.
+    let gap_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, win_res) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+        let rows = win_res["windows"].as_array().cloned().unwrap_or_default();
+        if rows.len() == 1 && rows[0]["ended_at"].is_number() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < gap_deadline,
+            "window 0 did not close before gap deadline: {win_res}"
+        );
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+
+    let (st, _) = post_json(&http, &format!("{base}/api/v1/runs/{id}/stop"), &json!({})).await;
+    assert_eq!(st, reqwest::StatusCode::OK);
+    let stop_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "stopped" {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < stop_deadline,
+            "run did not stop: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+
+    let (_, pre_win) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+    let pre_rows = pre_win["windows"].as_array().cloned().unwrap_or_default();
+    assert_eq!(pre_rows.len(), 1, "{pre_win}");
+    assert_eq!(pre_rows[0]["window_index"], 0, "{pre_win}");
+    assert_eq!(pre_rows[0]["completed"], true, "{pre_win}");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (st, resumed) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs/{id}/resume"),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{resumed}");
+
+    // Immediately after resume, live stats must not regress window_index back to 0.
+    let (st, live_stats) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{live_stats}");
+    assert!(
+        live_stats["window_index"].as_i64().unwrap_or(0) >= 1,
+        "live stats window_index regressed to 0 on resume: {live_stats}"
+    );
+
+    let finish_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "finished" {
+            break;
+        }
+        assert!(
+            !matches!(record["status"].as_str(), Some("failed" | "interrupted")),
+            "resumed run failed: {record}"
+        );
+        assert!(
+            tokio::time::Instant::now() < finish_deadline,
+            "resumed run did not finish: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    let (_, windows) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+    let rows = windows["windows"].as_array().cloned().unwrap_or_default();
+    let indices: Vec<i64> = rows
+        .iter()
+        .filter_map(|w| w["window_index"].as_i64())
+        .collect();
+    assert_eq!(
+        indices,
+        vec![0, 1, 2],
+        "window_index must continue [0, 1, 2] without restarting at 0: {windows}"
+    );
+    for row in &rows {
+        assert_eq!(row["completed"], true, "{windows}");
+    }
+    assert!(
+        rows[0]["ended_at"].as_i64().unwrap() <= rows[1]["started_at"].as_i64().unwrap()
+            && rows[1]["ended_at"].as_i64().unwrap() <= rows[2]["started_at"].as_i64().unwrap(),
+        "windows must be strictly non-overlapping across resume: {windows}"
+    );
+
+    let (code, verdict) = get_json(&http, &format!("{base}/api/v1/runs/{id}/verdict")).await;
+    assert_eq!(
+        code,
+        reqwest::StatusCode::OK,
+        "resumed loop verdict should pass without counting stop downtime: {verdict}"
+    );
+    child.shutdown();
+}
+
+#[tokio::test]
+async fn multiprocess_mid_window_resume_advances_window_index_and_finishes_budget() {
+    let tmp = TempDir::new("mp-resume-mid");
+    let (mock, _shutdown_mock) = start_mock().await;
+    let listen = format!("127.0.0.1:{}", free_port());
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_x-loadgen"));
+    let (mut child, log) = spawn_serve(&bin, &listen, &tmp.path);
+    let base = format!("http://{listen}");
+    let http = client();
+    wait_healthy(&http, &base, &log).await;
+
+    let (env_id, req_id) = seed_http_item(&http, &base, "mp-resume-mid", &mock).await;
+    let (status, profile) = post_json(
+        &http,
+        &format!("{base}/api/v1/load-profiles"),
+        &json!({
+            "name": "tmpl-mp-resume-mid",
+            "model": "open_loop",
+            "qps": 10,
+            "concurrency": 4,
+            "requests": 40,
+            "warmup_secs": 0,
+            "ramp_secs": 0,
+            "timeout_secs": 5,
+            "processes": 2,
+            "qps_mode": "total",
+            "requests_mode": "total",
+            "loop_enabled": true,
+            "rounds": 2,
+            "loop_interval_secs": 0
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{profile}");
+    let (status, run) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs"),
+        &json!({
+            "request_id": req_id,
+            "environment_id": env_id,
+            "load_profile_id": profile["id"],
+            "mode": "loop"
+        }),
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{run}");
+    let id = run["id"].as_str().unwrap().to_string();
+
+    // Round 0 needs 40 requests at 10 QPS (~4 s); stop once a few requests landed.
+    let mid_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, live_counters) = get_json(&http, &format!("{base}/api/v1/runs/{id}/stats")).await;
+        let samples = live_counters["samples"].as_u64().unwrap_or(0);
+        if samples >= 6 {
+            assert!(
+                samples < 40,
+                "round 0 finished before stop: {live_counters}"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < mid_deadline,
+            "mid-window samples did not advance: {live_counters}"
+        );
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+
+    let (st, _) = post_json(&http, &format!("{base}/api/v1/runs/{id}/stop"), &json!({})).await;
+    assert_eq!(st, reqwest::StatusCode::OK);
+    let stop_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "stopped" {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < stop_deadline,
+            "run did not stop: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+
+    let (_, pre_win) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+    let pre_rows = pre_win["windows"].as_array().cloned().unwrap_or_default();
+    assert_eq!(pre_rows.len(), 1, "{pre_win}");
+    assert_eq!(pre_rows[0]["window_index"], 0, "{pre_win}");
+    assert_eq!(pre_rows[0]["completed"], false, "{pre_win}");
+
+    let (st, resumed) = post_json(
+        &http,
+        &format!("{base}/api/v1/runs/{id}/resume"),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{resumed}");
+
+    let finish_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (_, record) = get_json(&http, &format!("{base}/api/v1/runs/{id}")).await;
+        if record["status"] == "finished" {
+            break;
+        }
+        assert!(
+            !matches!(record["status"].as_str(), Some("failed" | "interrupted")),
+            "resumed mid-window run failed: {record}"
+        );
+        assert!(
+            tokio::time::Instant::now() < finish_deadline,
+            "resumed mid-window run did not finish: {record}"
+        );
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    let (_, windows) = get_json(&http, &format!("{base}/api/v1/runs/{id}/windows")).await;
+    let rows = windows["windows"].as_array().cloned().unwrap_or_default();
+    let indices: Vec<i64> = rows
+        .iter()
+        .filter_map(|w| w["window_index"].as_i64())
+        .collect();
+    let completed: Vec<bool> = rows
+        .iter()
+        .filter_map(|w| w["completed"].as_bool())
+        .collect();
+    assert_eq!(
+        indices,
+        vec![0, 1, 2],
+        "expected partial window 0 + remainder window 1 + round 2 window 2: {windows}"
+    );
+    assert_eq!(completed, vec![false, true, true], "{windows}");
+    let total_samples: u64 = rows.iter().filter_map(|w| w["samples"].as_u64()).sum();
+    assert_eq!(
+        total_samples, 80,
+        "2 rounds x 40 requests must equal 80 across split windows: {windows}"
+    );
+    child.shutdown();
 }

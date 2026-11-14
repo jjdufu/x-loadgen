@@ -13,7 +13,8 @@ pub use x_loadgen_crypto::suite::{
     SUITE_GM_SM4_HMAC_SM3, SUITE_TENANT_CHACHA20, SUITE_TENANT_DEFAULT_2026_11, known_suites,
     resolve_suite,
 };
+pub use x_loadgen_crypto::traits::Mac;
 pub use x_loadgen_crypto::{
-    AlgorithmId, AlgorithmKind, CryptoError, KeyRef, SignKeyPair, generate_sign_keypair,
-    key_ref_from_text, validate_sign_public_key,
+    AlgorithmId, AlgorithmKind, CryptoError, KeyPurpose, KeyRef, SignKeyPair,
+    generate_sign_keypair, key_ref_from_text, validate_sign_public_key,
 };

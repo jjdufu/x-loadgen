@@ -111,6 +111,7 @@ impl RequestExecutor for MockExecutor {
                 request_id: Some(format!("r{index}")),
                 customer_name: None,
                 body: None,
+                pre_send_wait_us: 0,
             }
         })
     }
@@ -451,4 +452,108 @@ fn mix_request_seed_is_deterministic_and_respects_weights() {
     }
     // The middle bucket has 3/5 of the weight, so it should win clearly.
     assert!(counts[1] > counts[0] && counts[1] > counts[2], "{counts:?}");
+}
+
+fn latency_sample(latency_us: i64) -> Sample {
+    Sample {
+        seq: None,
+        start_unix_ms: 1_700_000_000_000,
+        end_unix_ms: 1_700_000_000_001,
+        latency_us,
+        product_id: "P1".into(),
+        product_name: None,
+        request_index: Some(0),
+        http_status: Some(200),
+        success: true,
+        expected: false,
+        reason: None,
+        error_class: None,
+        request_id: None,
+        error: None,
+        response_bytes: None,
+        customer_name: None,
+    }
+}
+
+#[test]
+fn histogram_keeps_samples_above_initial_ceiling() {
+    // Ceiling 1s; a 90s outlier used to be dropped silently.
+    let metrics = Metrics::new(1_000_000).expect("metrics");
+    metrics.record(
+        latency_sample(1_000),
+        OutcomeClass::Success,
+        false,
+        &NullSink,
+    );
+    metrics.record(
+        latency_sample(90_000_000),
+        OutcomeClass::Failure,
+        false,
+        &NullSink,
+    );
+    let (_, _, _, max) = metrics.percentiles_us();
+    let max = max.expect("max");
+    assert!(max >= 89_000_000, "max {max} lost the outlier");
+    // And the blob still merges (cluster merge used a fixed 60s ceiling).
+    let blob = metrics.histogram_blob().expect("blob");
+    let merged = super::merge_percentiles(&[blob], 60_000_000).expect("merge");
+    assert!(merged.3.unwrap_or(0) >= 89_000_000, "{merged:?}");
+}
+
+#[test]
+fn zero_latency_failures_stay_out_of_histogram() {
+    let metrics = Metrics::new(1_000_000).expect("metrics");
+    metrics.record(latency_sample(0), OutcomeClass::Failure, false, &NullSink);
+    assert_eq!(metrics.counters().failure, 1);
+    assert_eq!(metrics.percentiles_us().3, None);
+    metrics.record(
+        latency_sample(5_000),
+        OutcomeClass::Success,
+        false,
+        &NullSink,
+    );
+    let (p50, ..) = metrics.percentiles_us();
+    assert!(
+        p50.unwrap_or(0) >= 4_990,
+        "p50 {p50:?} dragged down by 0us failure"
+    );
+}
+
+#[test]
+fn queue_time_is_charged_to_histogram_not_sample() {
+    let metrics = Metrics::new(1_000_000).expect("metrics");
+    let sink = CollectingSink::new();
+    metrics.record_with_queue(
+        latency_sample(1_000),
+        OutcomeClass::Success,
+        false,
+        50_000,
+        &sink,
+    );
+    let (p50, ..) = metrics.percentiles_us();
+    let p50 = p50.expect("p50");
+    assert!((50_900..=51_100).contains(&p50), "p50 {p50}");
+    let stored = sink.samples.lock().expect("lock");
+    assert_eq!(
+        stored[0].latency_us, 1_000,
+        "stored sample keeps raw latency"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn open_loop_reaches_qps_well_above_one_thousand() {
+    let executor = Arc::new(MockExecutor::new(Duration::from_millis(2)));
+    let mut cfg = config(0, 200, Duration::ZERO);
+    cfg.model = EngineModel::OpenLoop;
+    cfg.qps = Some(5_000);
+    cfg.requests = None;
+    cfg.duration = Some(Duration::from_secs(1));
+    let handle = EngineHandle::start(cfg, executor, Arc::new(NullSink)).expect("start");
+    let snapshot = handle.join().await.expect("join");
+    // The old relative scheduler capped at ~1000/s (1ms timer granularity).
+    assert!(
+        (4_500..=5_050).contains(&snapshot.samples),
+        "dispatched {} at qps=5000 for 1s",
+        snapshot.samples
+    );
 }

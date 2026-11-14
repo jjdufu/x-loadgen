@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
-use hdrhistogram::Histogram;
 use hdrhistogram::serialization::Deserializer;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -57,6 +56,11 @@ pub struct LiveSnapshot {
     /// V2-serialized `HdrHistogram`, base64-encoded. Empty when unused.
     #[serde(default)]
     pub histogram_b64: Option<String>,
+    /// Open-loop sends dropped for falling too far behind schedule.
+    pub missed_sends: u64,
+    /// Chronologically ordered non-empty per-second throughput buckets.
+    #[serde(default)]
+    pub timeseries: Vec<crate::engine::RingSlot>,
 }
 
 /// Merged view of every worker's live snapshot for one run.
@@ -77,6 +81,8 @@ pub struct MergedStats {
     pub p99_us: Option<u64>,
     pub max_us: Option<u64>,
     pub window_index: Option<i64>,
+    pub missed_sends: u64,
+    pub timeseries: Vec<crate::engine::RingSlot>,
 }
 
 /// Merge live snapshots: counters are summed, percentiles come from a histogram merge.
@@ -97,6 +103,7 @@ pub fn merge_live(snaps: &[LiveSnapshot], highest_trackable_us: u64) -> Result<M
         merged.expected = merged.expected.saturating_add(snap.expected);
         merged.bytes = merged.bytes.saturating_add(snap.bytes);
         merged.dropped_details = merged.dropped_details.saturating_add(snap.dropped_details);
+        merged.missed_sends = merged.missed_sends.saturating_add(snap.missed_sends);
         merged.in_flight = merged.in_flight.saturating_add(snap.in_flight);
         merged.peak_in_flight = merged.peak_in_flight.max(snap.peak_in_flight);
         merged.current_qps = merged.current_qps.saturating_add(snap.current_qps);
@@ -116,6 +123,11 @@ pub fn merge_live(snaps: &[LiveSnapshot], highest_trackable_us: u64) -> Result<M
             blobs.push(bytes);
         }
     }
+    merged.timeseries = crate::engine::merge_timeseries_slots(
+        snaps
+            .iter()
+            .flat_map(|snap| snap.timeseries.iter().cloned()),
+    );
     if let Ok((p50, p95, p99, max)) = merge_percentiles(&blobs, highest_trackable_us) {
         merged.p50_us = p50;
         merged.p95_us = p95;
@@ -130,6 +142,10 @@ pub type HistogramPercentiles = (Option<u64>, Option<u64>, Option<u64>, Option<u
 
 /// Decode each V2 blob and add them into one histogram, then read percentiles.
 ///
+/// `highest_trackable_us` is only the initial size of the accumulator: it
+/// auto-resizes, so blobs containing samples above the ceiling (for example a
+/// run with a timeout longer than 60 s) still merge instead of failing.
+///
 /// # Errors
 ///
 /// Returns an error if a blob is not a valid histogram or the histograms cannot
@@ -141,9 +157,8 @@ pub fn merge_percentiles(
     if blobs.is_empty() {
         return Ok((None, None, None, None));
     }
-    let highest = highest_trackable_us.max(2);
-    let mut acc =
-        Histogram::<u64>::new_with_bounds(1, highest, 3).context("create merge histogram")?;
+    let mut acc = super::metrics::new_latency_histogram(highest_trackable_us)
+        .context("create merge histogram")?;
     let mut deserializer = Deserializer::new();
     for blob in blobs {
         let mut cursor = std::io::Cursor::new(blob.as_slice());
@@ -206,6 +221,288 @@ pub fn load_live_snapshots(paths: &DataPaths, run_id: &str, processes: u32) -> V
     snaps
 }
 
+/// One worker's record of one window, persisted in `wNN-windows.json`.
+///
+/// Written with `ended_at = None` when the window starts and rewritten with
+/// the final counters when it ends, so the server always knows which part of
+/// the run's wall-clock time was actually spent sending (loop gaps excluded).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkerWindowRecord {
+    pub window_index: i64,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub samples: u64,
+    pub success: u64,
+    pub failure: u64,
+    pub expected: u64,
+    pub bytes: u64,
+    pub dropped_details: u64,
+    pub missed_sends: u64,
+    /// V2-serialized window histogram, base64-encoded.
+    pub histogram_b64: Option<String>,
+    /// True when this worker finished the window naturally (not cancelled or crashed).
+    #[serde(default)]
+    pub completed: bool,
+}
+
+/// Shared resume parameters computed before spawning worker processes so every
+/// shard starts at the exact same window index and remaining round budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterResumePlan {
+    /// Zero-based index of the first window to open in this session.
+    pub start_window: i64,
+    /// Number of rounds that completed naturally across all workers prior to this session.
+    pub completed_rounds: u64,
+    /// Active wall-clock milliseconds already spent in the current incomplete round.
+    pub partial_elapsed_ms: u64,
+    /// Highest `window_index` with `completed == true`, or `-1` when none completed yet.
+    pub last_completed_window: i64,
+}
+
+impl Default for ClusterResumePlan {
+    fn default() -> Self {
+        Self {
+            start_window: 0,
+            completed_rounds: 0,
+            partial_elapsed_ms: 0,
+            last_completed_window: -1,
+        }
+    }
+}
+
+impl ClusterResumePlan {
+    /// Derive the resume plan from prior merged window rows.
+    #[must_use]
+    pub fn from_windows(windows: &[serde_json::Value], now_ms: i64) -> Self {
+        if windows.is_empty() {
+            return Self::default();
+        }
+        let max_index = windows
+            .iter()
+            .filter_map(|w| w["window_index"].as_i64())
+            .max();
+        let Some(max_index) = max_index else {
+            return Self::default();
+        };
+        let mut completed_rounds = 0_u64;
+        let mut last_completed_window = -1_i64;
+        for w in windows {
+            if w["completed"].as_bool() == Some(true) {
+                completed_rounds = completed_rounds.saturating_add(1);
+                if let Some(idx) = w["window_index"].as_i64() {
+                    last_completed_window = last_completed_window.max(idx);
+                }
+            }
+        }
+        let mut partial_elapsed_ms = 0_u64;
+        for w in windows {
+            let Some(idx) = w["window_index"].as_i64() else {
+                continue;
+            };
+            if idx > last_completed_window {
+                let start = w["started_at"].as_i64().unwrap_or(now_ms);
+                let end = w["ended_at"].as_i64().unwrap_or(now_ms);
+                let dur = u64::try_from(end.saturating_sub(start).max(0)).unwrap_or(0);
+                partial_elapsed_ms = partial_elapsed_ms.saturating_add(dur);
+            }
+        }
+        Self {
+            start_window: max_index.saturating_add(1),
+            completed_rounds,
+            partial_elapsed_ms,
+            last_completed_window,
+        }
+    }
+}
+
+/// Read a worker's window records (missing or unreadable file → empty).
+#[must_use]
+pub fn load_worker_window_records(
+    paths: &DataPaths,
+    run_id: &str,
+    worker_index: u32,
+) -> Vec<WorkerWindowRecord> {
+    fs::read(paths.worker_windows(run_id, worker_index))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Seal any unclosed (`ended_at == None`) window records across all workers of a
+/// run, recovering counter deltas from each worker's latest SQLite checkpoint.
+pub fn seal_worker_windows(paths: &DataPaths, run_id: &str, processes: u32, fallback_end_ms: i64) {
+    for worker in 0..processes {
+        seal_single_worker_windows(paths, run_id, worker, fallback_end_ms);
+    }
+}
+
+/// Seal any unclosed (`ended_at == None`) window records for a single worker shard.
+pub fn seal_single_worker_windows(
+    paths: &DataPaths,
+    run_id: &str,
+    worker_index: u32,
+    fallback_end_ms: i64,
+) {
+    let mut records = load_worker_window_records(paths, run_id, worker_index);
+    if !records.iter().any(|r| r.ended_at.is_none()) {
+        return;
+    }
+    let mut closed_samples = 0_u64;
+    let mut closed_success = 0_u64;
+    let mut closed_failure = 0_u64;
+    let mut closed_expected = 0_u64;
+    let mut closed_bytes = 0_u64;
+    let mut closed_dropped = 0_u64;
+    let mut closed_missed = 0_u64;
+    for r in records.iter().filter(|r| r.ended_at.is_some()) {
+        closed_samples = closed_samples.saturating_add(r.samples);
+        closed_success = closed_success.saturating_add(r.success);
+        closed_failure = closed_failure.saturating_add(r.failure);
+        closed_expected = closed_expected.saturating_add(r.expected);
+        closed_bytes = closed_bytes.saturating_add(r.bytes);
+        closed_dropped = closed_dropped.saturating_add(r.dropped_details);
+        closed_missed = closed_missed.saturating_add(r.missed_sends);
+    }
+
+    let checkpoint = crate::db::open_existing_worker(paths, run_id, worker_index, true)
+        .ok()
+        .flatten()
+        .and_then(|conn| {
+            crate::db::runs::latest_worker_checkpoint(&conn)
+                .ok()
+                .flatten()
+        });
+    let cp_ts = checkpoint.as_ref().map(|cp| cp.ts);
+    let cp_counters = checkpoint
+        .as_ref()
+        .and_then(|cp| serde_json::from_str::<super::CounterSnapshot>(&cp.counters_json).ok());
+
+    let last_open_pos = records.iter().rposition(|r| r.ended_at.is_none());
+    for (pos, r) in records.iter_mut().enumerate() {
+        if r.ended_at.is_none() {
+            let end = cp_ts
+                .filter(|&ts| ts >= r.started_at)
+                .unwrap_or(fallback_end_ms)
+                .max(r.started_at);
+            r.ended_at = Some(end);
+            r.completed = false;
+            if Some(pos) == last_open_pos
+                && r.samples == 0
+                && let Some(cnt) = cp_counters.as_ref()
+            {
+                r.samples = cnt.samples.saturating_sub(closed_samples);
+                r.success = cnt.success.saturating_sub(closed_success);
+                r.failure = cnt.failure.saturating_sub(closed_failure);
+                r.expected = cnt.expected.saturating_sub(closed_expected);
+                r.bytes = cnt.bytes.saturating_sub(closed_bytes);
+                r.dropped_details = cnt.dropped_details.saturating_sub(closed_dropped);
+                r.missed_sends = cnt.missed_sends.saturating_sub(closed_missed);
+            }
+        }
+    }
+    if let Err(err) = write_atomic_json(&paths.worker_windows(run_id, worker_index), &records) {
+        warn!(error = %err, worker = worker_index, "seal worker windows failed");
+    }
+}
+
+/// Insert or replace (same `window_index` and `started_at`) one record and
+/// rewrite the worker's window file atomically.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
+pub fn upsert_worker_window_record(
+    paths: &DataPaths,
+    run_id: &str,
+    worker_index: u32,
+    record: WorkerWindowRecord,
+) -> Result<()> {
+    let mut records = load_worker_window_records(paths, run_id, worker_index);
+    if let Some(existing) = records
+        .iter_mut()
+        .find(|r| r.window_index == record.window_index && r.started_at == record.started_at)
+    {
+        *existing = record;
+    } else {
+        records.push(record);
+    }
+    write_atomic_json(&paths.worker_windows(run_id, worker_index), &records)
+}
+
+/// Merge every worker's window records into one row per `window_index`, in
+/// the same JSON shape as `run_windows` rows.
+///
+/// A merged window spans the earliest start to the latest end across workers;
+/// it stays open (`ended_at = null`) while any worker's part is still open,
+/// unless `close_open_at` is given (used when consolidating a finished run).
+#[must_use]
+pub fn merge_worker_windows(
+    paths: &DataPaths,
+    run_id: &str,
+    processes: u32,
+    close_open_at: Option<i64>,
+) -> Vec<serde_json::Value> {
+    let mut by_index: std::collections::BTreeMap<i64, Vec<WorkerWindowRecord>> =
+        std::collections::BTreeMap::new();
+    for worker in 0..processes {
+        for record in load_worker_window_records(paths, run_id, worker) {
+            by_index
+                .entry(record.window_index)
+                .or_default()
+                .push(record);
+        }
+    }
+    by_index
+        .into_iter()
+        .map(|(window_index, parts)| {
+            merge_window_parts(window_index, &parts, processes, close_open_at)
+        })
+        .collect()
+}
+
+fn merge_window_parts(
+    window_index: i64,
+    parts: &[WorkerWindowRecord],
+    processes: u32,
+    close_open_at: Option<i64>,
+) -> serde_json::Value {
+    let started_at = parts.iter().map(|p| p.started_at).min().unwrap_or(0);
+    let ended_at = if parts.iter().any(|p| p.ended_at.is_none()) {
+        close_open_at
+    } else {
+        parts.iter().filter_map(|p| p.ended_at).max()
+    };
+    let completed = u32::try_from(parts.len()).ok() == Some(processes.max(1))
+        && parts.iter().all(|p| p.ended_at.is_some() && p.completed);
+    let sum =
+        |f: fn(&WorkerWindowRecord) -> u64| parts.iter().map(f).fold(0_u64, u64::saturating_add);
+    let blobs: Vec<Vec<u8>> = parts
+        .iter()
+        .filter_map(|p| p.histogram_b64.as_deref())
+        .filter(|b64| !b64.is_empty())
+        .filter_map(|b64| BASE64.decode(b64).ok())
+        .collect();
+    let (p50, p95, p99, max) =
+        merge_percentiles(&blobs, 60_000_000).unwrap_or((None, None, None, None));
+    serde_json::json!({
+        "window_index": window_index,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "samples": sum(|p| p.samples),
+        "success": sum(|p| p.success),
+        "failure": sum(|p| p.failure),
+        "expected": sum(|p| p.expected),
+        "dropped_details": sum(|p| p.dropped_details),
+        "missed_sends": sum(|p| p.missed_sends),
+        "p50_us": p50,
+        "p95_us": p95,
+        "p99_us": p99,
+        "max_us": max,
+        "bytes": sum(|p| p.bytes),
+        "completed": completed,
+    })
+}
+
 /// Resolve the `x-loadgen` binary used to spawn workers.
 ///
 /// # Errors
@@ -252,7 +549,12 @@ fn is_loadgen_bin(path: &Path) -> bool {
 /// # Errors
 ///
 /// Returns an error if the binary cannot be located or a child cannot be started.
-pub fn spawn_workers(paths: &DataPaths, run_id: &str, processes: u32) -> Result<SpawnedWorkers> {
+pub fn spawn_workers(
+    paths: &DataPaths,
+    run_id: &str,
+    processes: u32,
+    resume: ClusterResumePlan,
+) -> Result<SpawnedWorkers> {
     let bin = worker_binary()?;
     let mut children: Vec<Child> = Vec::new();
     let logs = paths.logs_dir();
@@ -271,6 +573,14 @@ pub fn spawn_workers(paths: &DataPaths, run_id: &str, processes: u32) -> Result<
             .arg(index.to_string())
             .arg("--worker-count")
             .arg(processes.to_string())
+            .arg("--start-window")
+            .arg(resume.start_window.to_string())
+            .arg("--completed-rounds")
+            .arg(resume.completed_rounds.to_string())
+            .arg("--partial-elapsed-ms")
+            .arg(resume.partial_elapsed_ms.to_string())
+            .arg("--last-completed-window")
+            .arg(resume.last_completed_window.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log.try_clone().context("clone log")?))
             .stderr(Stdio::from(log));
@@ -300,6 +610,17 @@ pub struct SpawnedWorkers {
     pub pgid: Option<i32>,
 }
 
+impl Drop for SpawnedWorkers {
+    fn drop(&mut self) {
+        for child in &mut self.children {
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 fn pid_i32(pid: u32) -> i32 {
     i32::try_from(pid).unwrap_or(i32::MAX)
 }
@@ -311,8 +632,13 @@ fn write_pid_file(paths: &DataPaths, run_id: &str, index: u32, pid: u32) -> Resu
     Ok(())
 }
 
-/// Signal every remaining child and wait, first with TERM then KILL.
-pub fn stop_workers(workers: &mut SpawnedWorkers, timeout: Duration) {
+/// Ask every remaining child to stop with SIGTERM, wait up to `grace` for a
+/// clean exit, then SIGKILL whatever is left.
+///
+/// Workers handle SIGTERM by cancelling their window, draining in-flight
+/// requests and writing a final checkpoint, so `grace` should cover one
+/// request timeout. Waiting is async so the runtime thread is not blocked.
+pub async fn stop_workers(workers: &mut SpawnedWorkers, grace: Duration) {
     let _ = workers.pgid;
     for child in &mut workers.children {
         if child.try_wait().ok().flatten().is_none() {
@@ -321,23 +647,32 @@ pub fn stop_workers(workers: &mut SpawnedWorkers, timeout: Duration) {
                 .status();
         }
     }
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = tokio::time::Instant::now() + grace;
+    while tokio::time::Instant::now() < deadline
+        && workers
+            .children
+            .iter_mut()
+            .any(|child| matches!(child.try_wait(), Ok(None)))
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     for child in &mut workers.children {
-        wait_child_until(child, deadline);
         if child.try_wait().ok().flatten().is_none() {
+            warn!(
+                pid = child.id(),
+                "worker did not exit within grace period; killing"
+            );
             let _ = child.kill();
             let _ = child.wait();
         }
     }
 }
 
-fn wait_child_until(child: &mut Child, deadline: std::time::Instant) {
-    while std::time::Instant::now() < deadline {
-        match child.try_wait() {
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Ok(Some(_)) | Err(_) => return,
-        }
-    }
+/// Grace period for a worker to drain after SIGTERM: one request timeout plus
+/// slack, capped so `stop_all` (30 s budget) can still finish.
+fn stop_grace(snapshot: &RunSnapshot) -> Duration {
+    let timeout = u64::try_from(snapshot.template.timeout_secs.max(1)).unwrap_or(1);
+    Duration::from_secs(timeout.saturating_add(3)).min(Duration::from_secs(20))
 }
 
 /// Drive a multi-process run until every worker exits or the run is cancelled.
@@ -346,18 +681,26 @@ pub async fn drive_cluster(
     run_id: String,
     snapshot: RunSnapshot,
     task: Arc<RunningTask>,
+    resume: ClusterResumePlan,
 ) -> Result<(), StoreError> {
     let processes = u32::try_from(snapshot.template.processes.max(1)).unwrap_or(1);
-    let mut workers = spawn_workers(supervisor.paths(), &run_id, processes)
+    let mut workers = spawn_workers(supervisor.paths(), &run_id, processes, resume)
         .map_err(|err| StoreError::Other(err.context("spawn workers")))?;
-    info!(run_id = %run_id, processes, "spawned workers");
+    info!(
+        run_id = %run_id,
+        processes,
+        start_window = resume.start_window,
+        completed_rounds = resume.completed_rounds,
+        "spawned workers"
+    );
     append_event(&supervisor, &run_id, "workers", processes);
 
     let cancel = task.cancel.clone();
+    let grace = stop_grace(&snapshot);
     let mut terminal = crate::db::runs::STATUS_FINISHED;
     loop {
         if cancel.is_cancelled() {
-            stop_workers(&mut workers, Duration::from_secs(10));
+            stop_workers(&mut workers, grace).await;
             terminal = match task_stop_kind(&task) {
                 StopKind::User => STATUS_STOPPED,
                 StopKind::Signal | StopKind::None => STATUS_INTERRUPTED,
@@ -383,18 +726,14 @@ pub async fn drive_cluster(
             Harvest::OneFailed { index } => {
                 warn!(run_id = %run_id, worker = index, "worker exited unexpectedly");
                 append_event(&supervisor, &run_id, "worker_exit", index);
-                stop_workers(&mut workers, Duration::from_secs(10));
+                stop_workers(&mut workers, grace).await;
                 terminal = STATUS_INTERRUPTED;
                 break;
             }
         }
     }
     // Drop remaining child handles.
-    stop_workers(&mut workers, Duration::from_secs(2));
-    let _ = terminal;
-    // The caller (supervisor.drive) persists the status; return a marker via
-    // a side channel by writing a small status file if needed. Instead we
-    // return Ok and let drive_cluster_status communicate.
+    stop_workers(&mut workers, Duration::from_secs(2)).await;
     set_cluster_terminal(&task, terminal);
     Ok(())
 }
@@ -448,7 +787,7 @@ fn harvest(workers: &mut SpawnedWorkers) -> Harvest {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_worker_split, merge_percentiles};
+    use super::{ClusterResumePlan, apply_worker_split, merge_percentiles};
     use hdrhistogram::Histogram;
     use hdrhistogram::serialization::{Serializer, V2Serializer};
 
@@ -460,6 +799,118 @@ mod tests {
         let mut out = Vec::new();
         V2Serializer::new().serialize(&hist, &mut out).expect("ser");
         out
+    }
+
+    #[test]
+    fn merged_window_spans_all_workers_and_sums_counters() {
+        let part = |start: i64, end: Option<i64>, samples: u64, completed: bool| {
+            super::WorkerWindowRecord {
+                window_index: 0,
+                started_at: start,
+                ended_at: end,
+                samples,
+                success: samples,
+                failure: 0,
+                expected: 0,
+                bytes: 0,
+                dropped_details: 0,
+                missed_sends: 1,
+                histogram_b64: Some(super::histogram_to_b64(&blob(&[1_000, 2_000]))),
+                completed,
+            }
+        };
+        let closed = super::merge_window_parts(
+            0,
+            &[
+                part(100, Some(2_100), 5, true),
+                part(90, Some(2_050), 7, true),
+            ],
+            2,
+            None,
+        );
+        assert_eq!(closed["started_at"], 90);
+        assert_eq!(closed["ended_at"], 2_100);
+        assert_eq!(closed["samples"], 12);
+        assert_eq!(closed["missed_sends"], 2);
+        assert_eq!(closed["completed"], true);
+        assert!(closed["p99_us"].as_u64().is_some());
+
+        let partial = super::merge_window_parts(
+            0,
+            &[
+                part(100, Some(2_100), 5, true),
+                part(90, Some(1_500), 3, false),
+            ],
+            2,
+            None,
+        );
+        assert_eq!(partial["completed"], false);
+
+        let open = super::merge_window_parts(
+            0,
+            &[part(100, Some(2_100), 5, true), part(90, None, 7, false)],
+            2,
+            None,
+        );
+        assert!(open["ended_at"].is_null(), "{open}");
+        assert_eq!(open["completed"], false);
+
+        let forced = super::merge_window_parts(0, &[part(100, None, 5, false)], 1, Some(9_000));
+        assert_eq!(forced["ended_at"], 9_000);
+        assert_eq!(forced["completed"], false);
+    }
+
+    #[test]
+    fn resume_plan_advances_index_and_tracks_incomplete_round() {
+        assert_eq!(
+            ClusterResumePlan::from_windows(&[], 5_000),
+            ClusterResumePlan::default()
+        );
+        let gap_stop = vec![serde_json::json!({
+            "window_index": 0,
+            "started_at": 1_000,
+            "ended_at": 3_000,
+            "completed": true,
+        })];
+        assert_eq!(
+            ClusterResumePlan::from_windows(&gap_stop, 5_000),
+            ClusterResumePlan {
+                start_window: 1,
+                completed_rounds: 1,
+                partial_elapsed_ms: 0,
+                last_completed_window: 0,
+            }
+        );
+
+        let mid_window_twice = vec![
+            serde_json::json!({
+                "window_index": 0,
+                "started_at": 1_000,
+                "ended_at": 3_000,
+                "completed": true,
+            }),
+            serde_json::json!({
+                "window_index": 1,
+                "started_at": 5_000,
+                "ended_at": 5_800,
+                "completed": false,
+            }),
+            serde_json::json!({
+                "window_index": 2,
+                "started_at": 8_000,
+                "ended_at": 8_700,
+                "completed": false,
+            }),
+        ];
+        assert_eq!(
+            ClusterResumePlan::from_windows(&mid_window_twice, 9_000),
+            ClusterResumePlan {
+                start_window: 3,
+                completed_rounds: 1,
+                partial_elapsed_ms: 1_500,
+                last_completed_window: 0,
+            }
+        );
     }
 
     #[test]
@@ -500,5 +951,84 @@ mod tests {
             p99 >= 9_000,
             "merged p99 {p99} should sit near the slower worker"
         );
+    }
+
+    #[test]
+    fn seal_worker_windows_recovers_crash_deltas_from_checkpoint() {
+        let dir = std::env::temp_dir().join(format!(
+            "x-loadgen-seal-test-{}-{}",
+            std::process::id(),
+            crate::engine::unix_now_ms()
+        ));
+        let paths = crate::db::DataPaths::new(&dir);
+        let run_id = "run-crash";
+        paths.ensure_run(run_id).expect("ensure run");
+        let records = vec![
+            super::WorkerWindowRecord {
+                window_index: 0,
+                started_at: 1_000,
+                ended_at: Some(2_000),
+                samples: 10,
+                success: 9,
+                failure: 1,
+                expected: 0,
+                bytes: 100,
+                dropped_details: 0,
+                missed_sends: 0,
+                histogram_b64: None,
+                completed: true,
+            },
+            super::WorkerWindowRecord {
+                window_index: 1,
+                started_at: 3_000,
+                ended_at: None,
+                samples: 0,
+                success: 0,
+                failure: 0,
+                expected: 0,
+                bytes: 0,
+                dropped_details: 0,
+                missed_sends: 0,
+                histogram_b64: None,
+                completed: false,
+            },
+        ];
+        super::write_atomic_json(&paths.worker_windows(run_id, 0), &records).expect("write win");
+
+        let conn = crate::db::open_worker_connection(&paths, run_id, 0).expect("open w00");
+        let snap = crate::engine::CounterSnapshot {
+            samples: 17,
+            success: 15,
+            failure: 2,
+            expected: 0,
+            bytes: 170,
+            dropped_details: 1,
+            in_flight: 3,
+            peak_in_flight: 4,
+            missed_sends: 2,
+        };
+        conn.execute(
+            "INSERT INTO worker_checkpoints (ts, window_index, counters_json, histogram_blob)
+             VALUES (?1, ?2, ?3, NULL)",
+            rusqlite::params![3_650_i64, 1_i64, serde_json::to_string(&snap).unwrap()],
+        )
+        .expect("insert cp");
+        drop(conn);
+
+        super::seal_worker_windows(&paths, run_id, 1, 4_000);
+        let sealed = super::load_worker_window_records(&paths, run_id, 0);
+        assert_eq!(sealed.len(), 2);
+        assert_eq!(sealed[0].samples, 10);
+        assert!(sealed[0].completed);
+        assert_eq!(sealed[1].ended_at, Some(3_650));
+        assert_eq!(sealed[1].samples, 7);
+        assert_eq!(sealed[1].success, 6);
+        assert_eq!(sealed[1].failure, 1);
+        assert_eq!(sealed[1].bytes, 70);
+        assert_eq!(sealed[1].dropped_details, 1);
+        assert_eq!(sealed[1].missed_sends, 2);
+        assert!(!sealed[1].completed);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

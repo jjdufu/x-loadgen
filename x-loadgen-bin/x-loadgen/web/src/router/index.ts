@@ -3,8 +3,7 @@ import {
   createWebHistory,
   type RouteRecordRaw,
 } from "vue-router";
-import { http } from "../api/http";
-import type { MeResponse } from "../api/types";
+import { getCachedMe } from "../modules/auth";
 
 const routes: RouteRecordRaw[] = [
   {
@@ -79,7 +78,7 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   try {
-    const { data } = await http.get<MeResponse>("/api/v1/auth/me");
+    const data = await getCachedMe();
     if (!data.auth_required && to.name === "login") {
       return { name: "workspace" };
     }

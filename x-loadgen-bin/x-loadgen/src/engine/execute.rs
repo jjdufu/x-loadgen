@@ -29,6 +29,8 @@ pub struct ExecutePlan {
 pub struct Executed {
     pub sample: Sample,
     pub class: OutcomeClass,
+    /// Pre-send wait reported by the executor (see [`ExecOutcome::pre_send_wait_us`]).
+    pub pre_send_wait_us: u64,
 }
 
 /// Run a single request and classify it.
@@ -88,6 +90,7 @@ fn classify(
     }
     let success = matches!(class, OutcomeClass::Success);
     let customer_name = outcome.customer_name.or(tenant_name);
+    let pre_send_wait_us = outcome.pre_send_wait_us;
     let sample = Sample {
         seq: None,
         start_unix_ms: outcome.start_unix_ms,
@@ -107,5 +110,9 @@ fn classify(
         customer_name,
     };
     let _ = outcome.body;
-    Executed { sample, class }
+    Executed {
+        sample,
+        class,
+        pre_send_wait_us,
+    }
 }

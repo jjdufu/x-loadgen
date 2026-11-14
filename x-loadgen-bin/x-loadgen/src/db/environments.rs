@@ -148,6 +148,20 @@ pub fn list_environments(conn: &Connection) -> Result<Vec<EnvironmentSummary>, S
         .map_err(StoreError::from)
 }
 
+fn run_in_tx<T>(
+    conn: &Connection,
+    op: impl FnOnce(&Connection) -> Result<T, StoreError>,
+) -> Result<T, StoreError> {
+    if conn.is_autocommit() {
+        let tx = conn.unchecked_transaction()?;
+        let out = op(&tx)?;
+        tx.commit()?;
+        Ok(out)
+    } else {
+        op(conn)
+    }
+}
+
 /// Create a named environment (with optional initial tenant pool).
 ///
 /// # Errors
@@ -176,28 +190,29 @@ pub fn create_environment(
     }
     let id = new_id();
     let now = now_ms()?;
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO environments (
-            id, name, is_global, gateway_base_url, variables_json,
-            http_auth_json, tls_json, note, created_at, updated_at
-         ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![
-            id,
-            name,
-            gateway_base_url,
-            serde_json::to_string(&input.variables).unwrap_or_else(|_| "[]".into()),
-            serde_json::to_string(&input.http_auth).unwrap_or_else(|_| "{}".into()),
-            serde_json::to_string(&input.tls).unwrap_or_else(|_| "{}".into()),
-            non_empty_owned(input.note.as_deref()),
-            now
-        ],
-    )
-    .map_err(|err| map_unique_err(err, name))?;
-    if let Some(tenants) = input.tenants.as_ref() {
-        replace_tenants(&tx, &id, tenants, &[])?;
-    }
-    tx.commit()?;
+    run_in_tx(conn, |tx| {
+        tx.execute(
+            "INSERT INTO environments (
+                id, name, is_global, gateway_base_url, variables_json,
+                http_auth_json, tls_json, note, created_at, updated_at
+             ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![
+                id,
+                name,
+                gateway_base_url,
+                serde_json::to_string(&input.variables).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&input.http_auth).unwrap_or_else(|_| "{}".into()),
+                serde_json::to_string(&input.tls).unwrap_or_else(|_| "{}".into()),
+                non_empty_owned(input.note.as_deref()),
+                now
+            ],
+        )
+        .map_err(|err| map_unique_err(err, name))?;
+        if let Some(tenants) = input.tenants.as_ref() {
+            replace_tenants(tx, &id, tenants, &[])?;
+        }
+        Ok(())
+    })?;
     get_environment(conn, &id)
 }
 
@@ -235,28 +250,29 @@ pub fn update_environment(
         validate_tenant_slice(tenants)?;
     }
     let now = now_ms()?;
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE environments SET
-            name = ?1, gateway_base_url = ?2, variables_json = ?3,
-            http_auth_json = ?4, tls_json = ?5, note = ?6, updated_at = ?7
-         WHERE id = ?8",
-        params![
-            name,
-            gateway_base_url,
-            serde_json::to_string(&input.variables).unwrap_or_else(|_| "[]".into()),
-            serde_json::to_string(&input.http_auth).unwrap_or_else(|_| "{}".into()),
-            serde_json::to_string(&input.tls).unwrap_or_else(|_| "{}".into()),
-            non_empty_owned(input.note.as_deref()),
-            now,
-            id
-        ],
-    )
-    .map_err(|err| map_unique_err(err, &name))?;
-    if let Some(tenants) = input.tenants.as_ref() {
-        replace_tenants(&tx, id, tenants, &existing.tenants)?;
-    }
-    tx.commit()?;
+    run_in_tx(conn, |tx| {
+        tx.execute(
+            "UPDATE environments SET
+                name = ?1, gateway_base_url = ?2, variables_json = ?3,
+                http_auth_json = ?4, tls_json = ?5, note = ?6, updated_at = ?7
+             WHERE id = ?8",
+            params![
+                name,
+                gateway_base_url,
+                serde_json::to_string(&input.variables).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&input.http_auth).unwrap_or_else(|_| "{}".into()),
+                serde_json::to_string(&input.tls).unwrap_or_else(|_| "{}".into()),
+                non_empty_owned(input.note.as_deref()),
+                now,
+                id
+            ],
+        )
+        .map_err(|err| map_unique_err(err, &name))?;
+        if let Some(tenants) = input.tenants.as_ref() {
+            replace_tenants(tx, id, tenants, &existing.tenants)?;
+        }
+        Ok(())
+    })?;
     get_environment(conn, id)
 }
 
@@ -612,6 +628,7 @@ pub fn import_environments_json(
             "expected a Hoppscotch environment object/array or x-loadgen environments bundle",
         ));
     };
+    let tx = conn.unchecked_transaction()?;
     let mut created = Vec::new();
     for item in items {
         let is_global = item
@@ -656,11 +673,12 @@ pub fn import_environments_json(
             tenants,
         };
         if is_global {
-            created.push(update_environment(conn, GLOBAL_ENV_ID, &input)?);
+            created.push(update_environment(&tx, GLOBAL_ENV_ID, &input)?);
         } else {
-            created.push(create_environment(conn, &input)?);
+            created.push(create_environment(&tx, &input)?);
         }
     }
+    tx.commit()?;
     Ok(created)
 }
 

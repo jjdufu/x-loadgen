@@ -66,7 +66,7 @@
     <div v-else class="divide-y divide-border border-b border-border">
       <div
         v-for="(row, index) in rows"
-        :key="index"
+        :key="rowObjectKey(row)"
         class="group flex items-center divide-x divide-border transition-colors hover:bg-muted/35"
       >
         <div class="flex h-9 w-10 shrink-0 items-center justify-center">
@@ -82,6 +82,7 @@
           <input
             :value="row.key"
             type="text"
+            :aria-label="`${title} 第 ${index + 1} 行键名`"
             :placeholder="keyPlaceholder"
             class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
             :class="{ 'opacity-50 line-through': !row.active }"
@@ -92,6 +93,7 @@
           <input
             :value="row.value"
             type="text"
+            :aria-label="`${title} 第 ${index + 1} 行取值`"
             :placeholder="valuePlaceholder"
             class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
             :class="{ 'opacity-50': !row.active }"
@@ -102,6 +104,7 @@
           <input
             :value="row.description ?? ''"
             type="text"
+            :aria-label="`${title} 第 ${index + 1} 行备注`"
             placeholder="备注说明 (可选)"
             class="h-9 w-full bg-transparent px-3 text-xs text-muted-foreground placeholder:text-muted-foreground/70 focus:text-foreground focus:outline-none"
             @input="updateField(index, 'description', ($event.target as HTMLInputElement).value)"
@@ -128,6 +131,7 @@ import { computed, ref } from "vue";
 import { FileEdit, Plus, Trash2 } from "lucide-vue-next";
 import type { KeyValueRow } from "../../api/types";
 import { createEmptyKvRow } from "../../helpers/format";
+import { rowObjectKey } from "../../helpers/rowKey";
 import UiButton from "../ui/UiButton.vue";
 import UiTextarea from "../ui/UiTextarea.vue";
 
@@ -213,10 +217,10 @@ function clearAll(): void {
 }
 
 function toggleRow(index: number): void {
-  const next = rows.value.map((r, i) =>
-    i === index ? { ...r, active: !r.active } : r,
-  );
-  emit("update:modelValue", next);
+  const row = rows.value[index];
+  if (!row) return;
+  row.active = !row.active;
+  emit("update:modelValue", rows.value.slice());
 }
 
 function updateField(
@@ -224,9 +228,9 @@ function updateField(
   field: "key" | "value" | "description",
   val: string,
 ): void {
-  const next = rows.value.map((r, i) =>
-    i === index ? { ...r, [field]: val } : r,
-  );
-  emit("update:modelValue", next);
+  const row = rows.value[index];
+  if (!row) return;
+  row[field] = val;
+  emit("update:modelValue", rows.value.slice());
 }
 </script>

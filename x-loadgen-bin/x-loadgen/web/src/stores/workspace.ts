@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, markRaw, ref, watch } from "vue";
 import { api } from "../api/workspace";
 import type {
   CollectionNode,
@@ -39,7 +39,17 @@ export interface WorkspaceTab {
     | "mazbri_wire";
   sending: boolean;
   response: ProbeResponse | null;
+  /** Per-protocol endpoint/method/body kept while the other protocol is active. */
+  protocolStash: ProtocolStash;
 }
+
+export interface ProtocolFields {
+  endpoint: string;
+  method: RequestDraft["method"];
+  body: RequestDraft["body"];
+}
+
+export type ProtocolStash = Partial<Record<"http" | "mazbri", ProtocolFields>>;
 
 export type RightSidebarSection = "collections" | "environments" | "profiles";
 
@@ -54,6 +64,112 @@ const TABS_STORAGE_KEY = "x-loadgen.workspace.tabs.v3";
 const ACTIVE_TAB_STORAGE_KEY = "x-loadgen.workspace.activeTab.v2";
 const ENV_STORAGE_KEY = "x-loadgen.workspace.envId.v2";
 const LAYOUT_STORAGE_KEY = "x-loadgen.workspace.layout.v3";
+/**
+ * Draft secrets live in sessionStorage (per browser tab, gone when it closes)
+ * keyed by tabId; localStorage only ever holds the redacted drafts.
+ */
+const SECRETS_STORAGE_KEY = "x-loadgen.workspace.secrets.v1";
+const PERSIST_DEBOUNCE_MS = 300;
+
+/** Credential fields of a draft that must never reach localStorage. */
+const SECRET_PATHS: readonly (readonly string[])[] = [
+  ["auth", "token"],
+  ["auth", "password"],
+  ["auth", "value"],
+  ["tls", "client_key"],
+  ["mazbri", "inline_tenant", "api_key"],
+  ["mazbri", "inline_tenant", "tenant_key_base64"],
+  ["mazbri", "inline_tenant", "binding_key"],
+];
+
+type DraftSecrets = Record<string, string>;
+
+/** Secrets removed from one persisted tab: its draft and both dirty-check snapshots. */
+interface TabSecrets {
+  draft?: DraftSecrets;
+  saved?: DraftSecrets;
+  baseline?: DraftSecrets;
+}
+
+function readPath(obj: unknown, path: readonly string[]): unknown {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+function writePath(obj: unknown, path: readonly string[], value: unknown): void {
+  let cur: unknown = obj;
+  for (const key of path.slice(0, -1)) {
+    if (cur === null || typeof cur !== "object") return;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  if (cur !== null && typeof cur === "object") {
+    (cur as Record<string, unknown>)[path[path.length - 1]!] = value;
+  }
+}
+
+/** Copy of `draft` without credentials, plus the removed values. */
+function splitDraftSecrets(draft: RequestDraft): {
+  redacted: RequestDraft;
+  secrets: DraftSecrets;
+} {
+  const redacted = cloneJson(draft);
+  const secrets: DraftSecrets = {};
+  for (const path of SECRET_PATHS) {
+    const value = readPath(redacted, path);
+    if (typeof value === "string" && value !== "") {
+      secrets[path.join(".")] = value;
+      writePath(redacted, path, "");
+    }
+  }
+  return { redacted, secrets };
+}
+
+function mergeDraftSecrets(draft: RequestDraft, secrets: DraftSecrets | undefined): void {
+  if (!secrets) return;
+  for (const path of SECRET_PATHS) {
+    const value = secrets[path.join(".")];
+    if (value !== undefined) writePath(draft, path, value);
+  }
+}
+
+/** Redact a JSON snapshot string; returns it unchanged if it doesn't parse. */
+function splitSnapshotSecrets(json: string): { json: string; secrets?: DraftSecrets } {
+  try {
+    const { redacted, secrets } = splitDraftSecrets(JSON.parse(json) as RequestDraft);
+    return Object.keys(secrets).length > 0
+      ? { json: JSON.stringify(redacted), secrets }
+      : { json };
+  } catch {
+    return { json };
+  }
+}
+
+function mergeSnapshotSecrets(json: string, secrets: DraftSecrets | undefined): string {
+  if (!secrets) return json;
+  try {
+    const draft = JSON.parse(json) as RequestDraft;
+    mergeDraftSecrets(draft, secrets);
+    return JSON.stringify(draft);
+  } catch {
+    return json;
+  }
+}
+
+function loadSessionSecrets(): Record<string, TabSecrets> {
+  try {
+    const raw = sessionStorage.getItem(SECRETS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, TabSecrets>)
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 function makeTabId(): string {
   return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -74,6 +190,7 @@ export function createWorkspaceTab(
     responseSubTab: "json",
     sending: false,
     response: null,
+    protocolStash: {},
   };
 }
 
@@ -85,8 +202,11 @@ function loadInitialTabs(): WorkspaceTab[] {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return [createWorkspaceTab()];
     }
+    const secrets = loadSessionSecrets();
     return parsed.map((item) => {
       const draft = item.draft ?? createDefaultRequestDraft("http");
+      const tabSecrets = item.tabId ? secrets[item.tabId] : undefined;
+      mergeDraftSecrets(draft, tabSecrets?.draft);
       const defaultBaseline = JSON.stringify(
         normalizeDraftForApi(
           createDefaultRequestDraft(
@@ -97,12 +217,17 @@ function loadInitialTabs(): WorkspaceTab[] {
       return {
         tabId: item.tabId || makeTabId(),
         draft,
-        savedSnapshotJson: item.savedSnapshotJson ?? null,
-        baselineSnapshotJson: item.baselineSnapshotJson ?? defaultBaseline,
+        savedSnapshotJson: item.savedSnapshotJson
+          ? mergeSnapshotSecrets(item.savedSnapshotJson, tabSecrets?.saved)
+          : null,
+        baselineSnapshotJson: item.baselineSnapshotJson
+          ? mergeSnapshotSecrets(item.baselineSnapshotJson, tabSecrets?.baseline)
+          : defaultBaseline,
         requestSubTab: item.requestSubTab ?? "params",
         responseSubTab: item.responseSubTab ?? "json",
         sending: false,
-        response: item.response ?? null,
+        response: null,
+        protocolStash: item.protocolStash ?? {},
       };
     });
   } catch {
@@ -164,12 +289,27 @@ export const activeTab = computed<WorkspaceTab>(() => {
   );
 });
 
-export function isTabDirty(tab: WorkspaceTab): boolean {
+function computeTabDirty(tab: WorkspaceTab): boolean {
   const current = JSON.stringify(normalizeDraftForApi(tab.draft));
   if (tab.savedSnapshotJson) {
     return current !== tab.savedSnapshotJson;
   }
   return current !== tab.baselineSnapshotJson;
+}
+
+const dirtyTabIds = computed<ReadonlySet<string>>(() => {
+  const dirty = new Set<string>();
+  for (const tab of tabs.value) {
+    if (computeTabDirty(tab)) dirty.add(tab.tabId);
+  }
+  return dirty;
+});
+
+export function isTabDirty(tab: WorkspaceTab): boolean {
+  if (tabs.value.some((t) => t.tabId === tab.tabId)) {
+    return dirtyTabIds.value.has(tab.tabId);
+  }
+  return computeTabDirty(tab);
 }
 
 // Layout state (responsePaneOpen defaults to false so bottom response bar is hidden initially)
@@ -196,25 +336,84 @@ watch(
   },
 );
 
-watch(
-  tabs,
-  (list) => {
-    try {
-      const compact = list.map((t) => ({
+function persistTabs(): void {
+  try {
+    const secrets: Record<string, TabSecrets> = {};
+    const compact = tabs.value.map((t) => {
+      const draft = splitDraftSecrets(t.draft);
+      const saved = t.savedSnapshotJson
+        ? splitSnapshotSecrets(t.savedSnapshotJson)
+        : null;
+      const baseline = splitSnapshotSecrets(t.baselineSnapshotJson);
+      const tabSecrets: TabSecrets = {};
+      if (Object.keys(draft.secrets).length > 0) tabSecrets.draft = draft.secrets;
+      if (saved?.secrets) tabSecrets.saved = saved.secrets;
+      if (baseline.secrets) tabSecrets.baseline = baseline.secrets;
+      if (Object.keys(tabSecrets).length > 0) secrets[t.tabId] = tabSecrets;
+      return {
         tabId: t.tabId,
-        draft: t.draft,
-        savedSnapshotJson: t.savedSnapshotJson,
-        baselineSnapshotJson: t.baselineSnapshotJson,
+        draft: draft.redacted,
+        savedSnapshotJson: saved?.json ?? null,
+        baselineSnapshotJson: baseline.json,
         requestSubTab: t.requestSubTab,
         responseSubTab: t.responseSubTab,
-      }));
-      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(compact));
-    } catch {
-      // Ignore storage quota errors
-    }
+        protocolStash: t.protocolStash,
+      };
+    });
+    localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(compact));
+    sessionStorage.setItem(SECRETS_STORAGE_KEY, JSON.stringify(secrets));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+let persistTimer: number | null = null;
+
+function flushPersistTabs(): void {
+  if (persistTimer !== null) {
+    window.clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  persistTabs();
+}
+
+watch(
+  () =>
+    tabs.value.map((t) => [
+      t.tabId,
+      t.draft,
+      t.savedSnapshotJson,
+      t.baselineSnapshotJson,
+      t.requestSubTab,
+      t.responseSubTab,
+      t.protocolStash,
+    ]),
+  () => {
+    if (persistTimer !== null) window.clearTimeout(persistTimer);
+    persistTimer = window.setTimeout(flushPersistTabs, PERSIST_DEBOUNCE_MS);
   },
   { deep: true },
 );
+window.addEventListener("pagehide", flushPersistTabs);
+// Rewrite storage right away so nothing loaded from it stays unredacted.
+persistTabs();
+
+/**
+ * Forget all locally kept drafts and their secrets (logout on a shared
+ * machine must not leave them behind) and start with one blank tab.
+ */
+export function clearWorkspaceSession(): void {
+  if (persistTimer !== null) {
+    window.clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const fresh = createWorkspaceTab();
+  tabs.value = [fresh];
+  activeTabId.value = fresh.tabId;
+  localStorage.removeItem(TABS_STORAGE_KEY);
+  localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY);
+  sessionStorage.removeItem(SECRETS_STORAGE_KEY);
+}
 
 watch(activeTabId, (id) => {
   localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, id);
@@ -277,22 +476,81 @@ export const effectiveVariables = computed<
   return Array.from(map.values());
 });
 
-watch(activeEnvironmentId, async (envId) => {
-  if (envId) {
-    localStorage.setItem(ENV_STORAGE_KEY, envId);
-    try {
-      activeEnvironmentDetail.value = await api.getEnvironment(envId);
-    } catch {
-      activeEnvironmentDetail.value = null;
-    }
-  } else {
-    localStorage.removeItem(ENV_STORAGE_KEY);
+/**
+ * Load the detail of the currently selected environment. A response that
+ * arrives after the selection moved on is discarded, so the variables shown
+ * (and used for sending) always belong to the selected environment.
+ */
+let envDetailSeq = 0;
+
+async function loadActiveEnvironmentDetail(): Promise<void> {
+  const seq = ++envDetailSeq;
+  const envId = activeEnvironmentId.value;
+  if (!envId) {
+    activeEnvironmentDetail.value = null;
+    return;
+  }
+  // Never show the previous environment's variables under the new selection.
+  if (activeEnvironmentDetail.value?.id !== envId) {
     activeEnvironmentDetail.value = null;
   }
+  let detail: EnvironmentDetail | null;
+  try {
+    detail = await api.getEnvironment(envId);
+  } catch {
+    detail = null;
+  }
+  if (seq === envDetailSeq) {
+    activeEnvironmentDetail.value = detail;
+  }
+}
+
+watch(activeEnvironmentId, (envId) => {
+  if (envId) {
+    localStorage.setItem(ENV_STORAGE_KEY, envId);
+  } else {
+    localStorage.removeItem(ENV_STORAGE_KEY);
+  }
+  void loadActiveEnvironmentDetail();
 });
 
 export async function refreshCollections(): Promise<void> {
   collections.value = await api.listCollections();
+  detachOrphanTabs(collections.value);
+}
+
+/**
+ * Tabs whose saved request (or collection) no longer exists on the server are
+ * turned back into unsaved drafts: their content is kept, the next save goes
+ * through "save as" instead of failing with 404, and closing asks first.
+ */
+function detachOrphanTabs(tree: CollectionNode[]): void {
+  const requestIds = new Set<string>();
+  const collectionIds = new Set<string>();
+  const walk = (nodes: CollectionNode[]): void => {
+    for (const n of nodes) {
+      collectionIds.add(n.id);
+      for (const r of n.requests) requestIds.add(r.id);
+      walk(n.folders);
+    }
+  };
+  walk(tree);
+  for (const tab of tabs.value) {
+    const { id, collection_id: colId } = tab.draft;
+    const requestGone = Boolean(id) && !requestIds.has(id!);
+    const collectionGone = Boolean(colId) && !collectionIds.has(colId!);
+    if (!requestGone && !collectionGone) continue;
+    if (requestGone) tab.draft.id = null;
+    if (collectionGone) tab.draft.collection_id = null;
+    tab.savedSnapshotJson = null;
+    tab.baselineSnapshotJson = JSON.stringify(
+      normalizeDraftForApi(
+        createDefaultRequestDraft(
+          tab.draft.protocol === "mazbri" ? "mazbri" : "http",
+        ),
+      ),
+    );
+  }
 }
 
 export async function refreshEnvironments(): Promise<void> {
@@ -306,13 +564,11 @@ export async function refreshEnvironments(): Promise<void> {
     activeEnvironmentId.value &&
     !list.some((e) => e.id === activeEnvironmentId.value && !e.is_global)
   ) {
+    // The watcher clears the detail.
     activeEnvironmentId.value = null;
+    return;
   }
-  if (activeEnvironmentId.value) {
-    activeEnvironmentDetail.value = await api.getEnvironment(
-      activeEnvironmentId.value,
-    );
-  }
+  await loadActiveEnvironmentDetail();
 }
 
 export async function refreshLoadProfiles(): Promise<void> {
@@ -321,14 +577,14 @@ export async function refreshLoadProfiles(): Promise<void> {
 
 export async function refreshMeta(): Promise<void> {
   try {
-    serverMeta.value = await api.meta();
+    serverMeta.value = await api.meta({ silent: true });
   } catch {
-    // Ignore transient meta errors
+    // Background poll: transient meta errors are ignored, never toasted.
   }
 }
 
 export async function bootstrapWorkspace(): Promise<void> {
-  await Promise.all([
+  await Promise.allSettled([
     refreshCollections(),
     refreshEnvironments(),
     refreshLoadProfiles(),
@@ -347,36 +603,64 @@ export function addNewRequestTab(protocol?: "http" | "mazbri"): void {
   activeTabId.value = tab.tabId;
 }
 
+/** Path + query of an absolute URL; non-URLs are returned unchanged. */
+function urlPathPart(endpoint: string): string {
+  if (!/^https?:\/\//i.test(endpoint)) return endpoint;
+  try {
+    const u = new URL(endpoint);
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return endpoint;
+  }
+}
+
 export function switchActiveTabProtocol(next?: "http" | "mazbri"): void {
   const tab = activeTab.value;
   const draft = tab.draft;
+  const source: "http" | "mazbri" =
+    draft.protocol === "mazbri" ? "mazbri" : "http";
   const target: "http" | "mazbri" =
-    next ?? (draft.protocol === "mazbri" ? "http" : "mazbri");
-  if (draft.protocol === target) return;
+    next ?? (source === "mazbri" ? "http" : "mazbri");
+  if (source === target) return;
 
   const wasUntouched = !tab.savedSnapshotJson && !isTabDirty(tab);
+  // Remember what the user typed for the protocol being left so that
+  // switching back restores it verbatim.
+  tab.protocolStash = {
+    ...tab.protocolStash,
+    [source]: {
+      endpoint: draft.endpoint,
+      method: draft.method,
+      body: cloneJson(draft.body),
+    },
+  };
   draft.protocol = target;
+
+  const stashed = tab.protocolStash[target];
+  if (stashed) {
+    draft.endpoint = stashed.endpoint;
+    draft.method = stashed.method;
+    draft.body = cloneJson(stashed.body);
+  } else if (wasUntouched) {
+    const defaults = createDefaultRequestDraft(target);
+    draft.endpoint = defaults.endpoint;
+    draft.method = defaults.method;
+    draft.body = defaults.body;
+  } else if (target === "mazbri") {
+    // Mazbri endpoints are gateway paths; keep the user's path, drop the origin.
+    draft.endpoint = urlPathPart(draft.endpoint);
+  }
 
   if (target === "mazbri") {
     tab.requestSubTab = "auth";
-    if (!draft.endpoint || draft.endpoint.startsWith("http")) {
-      draft.endpoint = "/v1/demo";
-    }
-    if (draft.method === "GET" && !draft.body.content_type) {
-      draft.method = "POST";
-      draft.body.content_type = "application/json";
-      if (!draft.body.body) {
-        draft.body.body = '{\n  "ping": "mazbri"\n}';
-      }
-    }
-  } else {
-    if (draft.endpoint === "/v1/demo") {
-      draft.endpoint = "";
-    }
-    if (tab.requestSubTab === "auth" && draft.auth.auth_type === "inherit") {
-      tab.requestSubTab = "params";
-    }
+  } else if (
+    tab.requestSubTab === "auth" &&
+    draft.auth.auth_type === "inherit"
+  ) {
+    tab.requestSubTab = "params";
   }
+  // A response from the other protocol no longer describes this request.
+  tab.response = null;
 
   if (wasUntouched) {
     tab.baselineSnapshotJson = JSON.stringify(normalizeDraftForApi(draft));
@@ -450,15 +734,38 @@ export function openDraftInNewTab(draft: RequestDraft): void {
   activeTabId.value = tab.tabId;
 }
 
+/**
+ * Apply a server save result to the tab that issued the save.
+ *
+ * `sentJson` is the normalized draft that was sent. If the user kept editing
+ * while the request was in flight, only the identity fields are adopted so the
+ * newer edits survive (the tab then stays dirty against the saved snapshot).
+ */
+export function applySavedRequest(
+  tab: WorkspaceTab,
+  sentJson: string,
+  saved: SavedRequest,
+): void {
+  const snap = JSON.stringify(normalizeDraftForApi(cloneJson(saved)));
+  const editedMeanwhile =
+    JSON.stringify(normalizeDraftForApi(tab.draft)) !== sentJson;
+  if (editedMeanwhile) {
+    tab.draft.id = saved.id;
+    tab.draft.collection_id = saved.collection_id;
+  } else {
+    tab.draft = cloneJson(saved);
+  }
+  tab.savedSnapshotJson = snap;
+  tab.baselineSnapshotJson = snap;
+}
+
 export async function saveActiveTab(): Promise<void> {
   const tab = activeTab.value;
   if (tab.draft.id && tab.draft.collection_id) {
     const normalized = normalizeDraftForApi(tab.draft);
+    const sentJson = JSON.stringify(normalized);
     const saved = await api.updateRequest(tab.draft.id, normalized);
-    tab.draft = cloneJson(saved);
-    const snap = JSON.stringify(normalizeDraftForApi(tab.draft));
-    tab.savedSnapshotJson = snap;
-    tab.baselineSnapshotJson = snap;
+    applySavedRequest(tab, sentJson, saved);
     await refreshCollections();
     toast.success(`已保存「${saved.name}」`);
   } else {
@@ -485,7 +792,7 @@ export async function sendActiveTabProbe(): Promise<void> {
       collection_id: normalized.collection_id ?? null,
       environment_id: activeEnvironmentId.value,
     });
-    tab.response = res;
+    tab.response = markRaw(res);
     if (res.protocol === "mazbri" && !res.transport_ok && res.mazbri_wire) {
       tab.responseSubTab = "mazbri_wire";
     } else if (res.body_json !== undefined && res.body_json !== null) {

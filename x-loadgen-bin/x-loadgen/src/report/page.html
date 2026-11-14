@@ -204,77 +204,140 @@
     document.getElementById("verdict-badge").innerHTML = '<span class="' + cls + '">SLA: ' + escapeHtml(label) + '</span>';
   }
   const cards = [
-    ["总样本", counters.samples],
-    ["成功", counters.success],
-    ["失败", counters.failure],
-    ["预期拒绝", counters.expected],
-    ["p50 (µs)", pct.p50_us],
-    ["p95 (µs)", pct.p95_us],
-    ["p99 (µs)", pct.p99_us],
-    ["最大值 (µs)", pct.max_us]
+    ["样本总数", fmt(counters.samples)],
+    ["成功请求", fmt(counters.success)],
+    ["失败请求", fmt(counters.failure)],
+    ["预期拒绝", fmt(counters.expected)],
+    ["p50 延迟", fmtLatencyUs(pct.p50_us)],
+    ["p95 延迟", fmtLatencyUs(pct.p95_us)],
+    ["p99 延迟", fmtLatencyUs(pct.p99_us)],
+    ["累计字节", fmtBytes(counters.bytes)]
   ];
   document.getElementById("overview").innerHTML = cards.map(([k, val]) =>
-    '<div class="card"><span>' + k + '</span><b>' + fmt(val) + '</b></div>').join("");
+    '<div class="card"><span>' + k + '</span><b>' + escapeHtml(val) + '</b></div>').join("");
   const envName = (r.source && r.source.environment_name) ? (" · 环境 " + r.source.environment_name) : "";
+  const maxTail = (pct.max_us !== null && pct.max_us !== undefined) ? (" · 最大延迟 " + fmtLatencyUs(pct.max_us)) : "";
   document.getElementById("range").textContent =
     "开始 " + fmtTime(r.started_at) + " · 结束 " + fmtTime(r.ended_at) +
-    " · 模式 " + (modeMap[r.mode] || r.mode || "-") + " · 进程数 " + fmt(r.processes) + envName;
-  document.getElementById("windows").innerHTML = table(
-    ["窗口", "开始时间", "结束时间", "样本", "成功", "失败", "预期", "p99 (µs)", "字节"],
-    (r.windows || []).map(w => [w.window_index, fmtTime(w.started_at), fmtTime(w.ended_at), w.samples,
-      w.success, w.failure, w.expected, w.p99_us, w.bytes])
-  );
-  document.getElementById("timeline").innerHTML = table(
-    ["时间", "事件", "详情"],
-    (r.timeline || []).map(e => [fmtTime(e.ts), e.event, e.payload ? JSON.stringify(e.payload) : ""])
-  );
+    " · 模式 " + (modeMap[r.mode] || r.mode || "-") + " · 进程数 " + fmt(r.processes) + maxTail + envName;
+  document.getElementById("windows").innerHTML = (r.windows || []).length
+    ? table(
+        ["轮次 #", "开始时间", "结束时间", "样本数", "成功", "失败", "预期", "p99 延迟", "字节"],
+        (r.windows || []).map(w => ["#" + fmt(w.window_index), fmtTime(w.started_at), fmtTime(w.ended_at), w.samples,
+          w.success, w.failure, w.expected, fmtLatencyUs(w.p99_us), fmtBytes(w.bytes)])
+      )
+    : "<p class='muted'>当前任务无多轮循环窗口记录</p>";
+  document.getElementById("timeline").innerHTML = (r.timeline || []).length
+    ? table(
+        ["时间", "事件", "详情"],
+        (r.timeline || []).map(e => {
+          const t = fmtTimeline(e.event, e.payload);
+          return [fmtTime(e.ts), t.label, t.detail];
+        })
+      )
+    : "<p class='muted'>暂无生命周期事件记录</p>";
   const ranges = r.interrupt_ranges || [];
   document.getElementById("interrupts").innerHTML = ranges.length
     ? table(["开始时间", "结束时间"], ranges.map(x => [fmtTime(x.start), fmtTime(x.end)]))
     : "<p class='muted'>无中断区间</p>";
   const points = r.timeseries || [];
-  const showDot = points.length <= 2;
-  const axisColor = isDark ? "#27272a" : "#e4e4e7";
-  const labelColor = isDark ? "#a1a1aa" : "#71717a";
-  const primaryLine = isDark ? "#fafafa" : "#18181b";
-  const okLine = isDark ? "#34d399" : "#059669";
-  const errLine = isDark ? "#fb7185" : "#e11d48";
-  const chart = echarts.init(document.getElementById("timeseries"));
-  chart.setOption({
-    backgroundColor: "transparent",
-    textStyle: { color: labelColor, fontFamily: "Geist Mono, monospace" },
-    grid: { top: 36, right: 20, bottom: 28, left: 48 },
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: isDark ? "#09090b" : "#ffffff",
-      borderColor: axisColor,
-      textStyle: { color: isDark ? "#fafafa" : "#09090b", fontSize: 12 }
-    },
-    legend: { data: ["样本", "成功", "失败"], textStyle: { color: labelColor } },
-    xAxis: {
-      type: "category",
-      data: points.map(p => {
-        const raw = p.unix_sec || p.started_at;
-        if (!raw) return "";
-        const ms = raw > 1e11 ? raw : raw * 1000;
-        return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
-      }),
-      axisLine: { lineStyle: { color: axisColor } },
-      axisLabel: { color: labelColor }
-    },
-    yAxis: {
-      type: "value",
-      splitLine: { lineStyle: { color: axisColor, type: "dashed" } },
-      axisLabel: { color: labelColor }
-    },
-    series: [
-      { name: "样本", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: primaryLine }, data: points.map(p => p.samples || 0) },
-      { name: "成功", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 1.75 }, itemStyle: { color: okLine }, data: points.map(p => p.success || 0) },
-      { name: "失败", type: "line", smooth: true, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 1.75 }, itemStyle: { color: errLine }, data: points.map(p => p.failure || 0) }
-    ]
-  });
-  window.addEventListener("resize", function () { chart.resize(); });
+  const chartHost = document.getElementById("timeseries");
+  if (!points.length) {
+    chartHost.style.height = "auto";
+    chartHost.innerHTML = "<p class='muted'>暂无秒级吞吐采样数据</p>";
+  } else {
+    const showDot = points.length <= 2;
+    const axisColor = isDark ? "#27272a" : "#e4e4e7";
+    const labelColor = isDark ? "#a1a1aa" : "#71717a";
+    const primaryLine = isDark ? "#fafafa" : "#18181b";
+    const okLine = isDark ? "#34d399" : "#059669";
+    const errLine = isDark ? "#fb7185" : "#e11d48";
+    const chart = echarts.init(chartHost);
+    chart.setOption({
+      backgroundColor: "transparent",
+      textStyle: { color: labelColor, fontFamily: "Geist Mono, monospace" },
+      grid: { top: 36, right: 20, bottom: 28, left: 48 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: isDark ? "#09090b" : "#ffffff",
+        borderColor: axisColor,
+        textStyle: { color: isDark ? "#fafafa" : "#09090b", fontSize: 12 }
+      },
+      legend: { data: ["总样本/s", "成功/s", "失败/s"], textStyle: { color: labelColor } },
+      xAxis: {
+        type: "category",
+        data: points.map(p => {
+          const raw = p.unix_sec || p.started_at;
+          if (!raw) return "";
+          const ms = raw > 1e11 ? raw : raw * 1000;
+          return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
+        }),
+        axisLine: { lineStyle: { color: axisColor } },
+        axisLabel: { color: labelColor }
+      },
+      yAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: axisColor, type: "dashed" } },
+        axisLabel: { color: labelColor }
+      },
+      series: [
+        { name: "总样本/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2, type: "dashed" }, itemStyle: { color: primaryLine }, data: points.map(p => p.samples || 0) },
+        { name: "成功/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: okLine }, data: points.map(p => p.success || 0) },
+        { name: "失败/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: errLine }, data: points.map(p => p.failure || 0) }
+      ]
+    });
+    window.addEventListener("resize", function () { chart.resize(); });
+  }
   function fmt(val) { return (val === null || val === undefined) ? "-" : String(val); }
+  function fmtLatencyUs(us) {
+    if (us === null || us === undefined) return "-";
+    const n = Number(us);
+    if (!Number.isFinite(n)) return String(us);
+    if (n < 1000) return n + " µs";
+    const ms = n / 1000;
+    if (ms < 1000) return ms.toFixed(ms < 10 ? 2 : 1) + " ms";
+    return (ms / 1000).toFixed(2) + " s";
+  }
+  function fmtBytes(bytes) {
+    if (bytes === null || bytes === undefined) return "-";
+    const n = Number(bytes);
+    if (!Number.isFinite(n)) return String(bytes);
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(2) + " MB";
+  }
+  function fmtTimeline(event, raw) {
+    const p = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
+    switch (event) {
+      case "start":
+        return { label: "启动压测", detail: p.mode ? ("执行模式：" + (modeMap[p.mode] || p.mode)) : "" };
+      case "workers":
+        return { label: "拉起工作进程", detail: p.value !== undefined ? ("并发工作进程数：" + p.value) : "" };
+      case "worker_exit":
+        return { label: "工作进程异常退出", detail: p.value !== undefined ? ("进程编号：w" + p.value) : "" };
+      case "traffic": {
+        const fq = v => (v === null || v === undefined) ? "不限速" : (v + " QPS");
+        return { label: "动态调整流量", detail: "速率 " + fq(p.old_qps) + " → " + fq(p.qps) + "，并发 " + fmt(p.old_concurrency) + " → " + fmt(p.concurrency) };
+      }
+      case "window": {
+        const idx = p.window_index !== undefined ? ("#" + p.window_index) : "-";
+        const missed = Number(p.missed_sends || 0);
+        return { label: "完成循环窗口", detail: missed > 0 ? ("轮次 " + idx + "（过载漏发 " + missed + " 次）") : ("轮次 " + idx) };
+      }
+      case "stop": {
+        const km = { user: "手动停止", signal: "系统信号" };
+        return { label: "收到停止指令", detail: p.kind ? ("触发方式：" + (km[p.kind] || p.kind)) : "" };
+      }
+      case "resume":
+        return { label: "恢复续跑", detail: "" };
+      case "interrupted":
+        return { label: "任务中断", detail: p.reason === "process restarted" ? "服务进程重启，未完成任务转为中断状态" : (p.reason || "") };
+      case "end":
+        return { label: "任务结束", detail: "最终状态：" + (statusMap[p.status] || p.status || "-") + (p.error ? (" · 错误：" + p.error) : "") };
+      default:
+        return { label: String(event || "-"), detail: raw ? JSON.stringify(raw) : "" };
+    }
+  }
   function fmtTime(val) {
     if (val === null || val === undefined || val === "") return "-";
     const n = Number(val);

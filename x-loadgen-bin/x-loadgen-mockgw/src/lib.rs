@@ -17,7 +17,7 @@
 //! injects a tampered or plaintext response so clients can prove they count
 //! decrypt / verify failures as errors.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -278,7 +278,7 @@ struct Tables {
     token_ttl: Duration,
     tenants: HashMap<String, Arc<PreparedTenant>>,
     tokens: HashMap<String, (String, Instant)>,
-    nonces: HashSet<String>,
+    nonces: HashMap<String, i64>,
     issued: u64,
 }
 
@@ -324,7 +324,7 @@ impl MockGateway {
                 token_ttl: Duration::from_secs(config.token_ttl_secs),
                 tenants: prepare_tenants(config)?,
                 tokens: HashMap::new(),
-                nonces: HashSet::new(),
+                nonces: HashMap::new(),
                 issued: 0,
             }),
             counters: Counters::default(),
@@ -617,7 +617,9 @@ fn verify_request_binding(
     }
     let timestamp = parse_unix_timestamp(header(headers, HEADER_TIMESTAMP).ok_or(missing)?)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid binding timestamp"))?;
-    if (unix_now_secs() - timestamp).abs() > BINDING_CLOCK_SKEW_SECS {
+    let now = unix_now_secs();
+    let skew_limit = u64::try_from(BINDING_CLOCK_SKEW_SECS).unwrap_or(300);
+    if now.abs_diff(timestamp) > skew_limit {
         return Err((StatusCode::UNAUTHORIZED, "binding timestamp outside window"));
     }
     let nonce = header(headers, HEADER_NONCE).ok_or(missing)?;
@@ -638,12 +640,23 @@ fn verify_request_binding(
         )
     })?;
     let mut tables = shared.tables();
-    if tables.nonces.len() >= NONCE_CAPACITY {
-        tables.nonces.clear();
-    }
-    if !tables.nonces.insert(nonce.to_string()) {
+    if let Some(&seen_ts) = tables.nonces.get(nonce)
+        && now.abs_diff(seen_ts) <= skew_limit
+    {
         return Err((StatusCode::UNAUTHORIZED, "binding nonce replayed"));
     }
+    if tables.nonces.len() >= NONCE_CAPACITY {
+        tables
+            .nonces
+            .retain(|_, ts| now.abs_diff(*ts) <= skew_limit);
+        if tables.nonces.len() >= NONCE_CAPACITY {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                "nonce replay cache saturated",
+            ));
+        }
+    }
+    tables.nonces.insert(nonce.to_string(), timestamp);
     Ok(())
 }
 

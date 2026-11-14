@@ -9,7 +9,7 @@
     :autocomplete="resolvedAutocomplete"
     :class="
       cn(
-        'flex w-full rounded-md border border-input bg-background text-foreground shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+        'flex w-full rounded-md border border-input bg-background text-foreground shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring aria-[invalid=true]:border-rose-500 aria-[invalid=true]:focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-50',
         size === 'sm' ? 'h-8 px-2.5 py-1 text-xs' : 'h-9 px-3 py-1.5 text-sm',
         mono && 'font-mono text-[13px]',
         props.class,

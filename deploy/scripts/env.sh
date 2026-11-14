@@ -44,9 +44,15 @@ access_urls() {
 # 鉴权提示：只打印口令文件路径，不打印内容
 auth_hint() {
   local pass="$PROJECT_ROOT/data/admin.passwd"
-  if [ "${X_LOADGEN_NO_AUTH:-0}" = 1 ] || [ "${X_LOADGEN_NO_AUTH:-0}" = true ]; then
-    log "鉴权: 已关闭（X_LOADGEN_NO_AUTH=${X_LOADGEN_NO_AUTH}），任何能访问端口的人都可操作"
-  elif [ -f "$pass" ]; then
+  local no_auth_norm
+  no_auth_norm="$(printf '%s' "${X_LOADGEN_NO_AUTH:-0}" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$no_auth_norm" in
+    1|true|yes|on)
+      log "鉴权: 已关闭（X_LOADGEN_NO_AUTH=${X_LOADGEN_NO_AUTH}），任何能访问端口的人都可操作"
+      return 0
+      ;;
+  esac
+  if [ -f "$pass" ]; then
     log "鉴权: 首次登录口令文件 $pass（容器内 /data/admin.passwd，登录改密后自动删除）"
   elif [ -f "$PROJECT_ROOT/data/loadgen.sqlite" ]; then
     log "鉴权: 已改密（口令文件已删除）；忘记口令执行 scripts/reset-passwd.sh"
@@ -114,12 +120,19 @@ hook_backup() {
     svc_stop
   fi
   log "pending-*.bin: $(pending_count) 个（随数据一起备份）"
-  ( umask 077; tar -C data --exclude=./logs -czf "$out" . ) || die "打包 data/ 失败"
+  if ! ( umask 077; tar -C data --exclude=./logs -czf "$out" . ); then
+    rm -f "$out"
+    if [ "$was" = 1 ]; then
+      warn "备份打包失败，正在恢复启动原服务..."
+      svc_start || warn "原服务重新启动失败，请检查日志"
+    fi
+    die "打包 data/ 失败"
+  fi
   log "备份: $out（含 SQLite 与签名私钥，按密钥材料保管）"
-  if [ $was = 1 ]; then svc_start; fi
+  if [ "$was" = 1 ]; then svc_start; fi
 }
 
-# 恢复：确认 -> 校验备份 -> 下线 -> 当前 data/ 移到 backups/pre-restore_<ts>/ -> 解包 -> 启动
+# 恢复：确认 -> 预解包校验 -> 下线 -> 当前 data/ 移到 backups/pre-restore_<ts>/ -> 原子移入 -> 启动（失败自动回滚）
 hook_restore() {
   local f="$1"; shift
   f="$(cd -- "$(dirname -- "$f")" && pwd)/$(basename -- "$f")"
@@ -127,13 +140,35 @@ hook_restore() {
   tar -tzf "$f" >/dev/null || die "备份文件损坏: $f"
   confirm "将用 $(basename "$f") 覆盖当前 data/（当前数据移到 backups/pre-restore_<时间>/）。" "$@"
   prepare_dirs
+
+  local stage="backups/.restore_stage_$$"
+  rm -rf "$stage"
+  mkdir -m 700 "$stage"
+  if ! ( umask 077; tar -C "$stage" --exclude=./logs -xzf "$f" ); then
+    rm -rf "$stage"
+    die "解包备份失败（未改动当前运行数据）: $f"
+  fi
+  if [ ! -f "$stage/loadgen.sqlite" ] && [ ! -f "$stage/admin.passwd" ]; then
+    rm -rf "$stage"
+    die "归档内未找到 loadgen.sqlite 或 admin.passwd，拒绝恢复: $f"
+  fi
+
+  local was=0
+  if container_running; then was=1; fi
   svc_down
   local keep; keep="backups/pre-restore_$(date +%Y%m%d_%H%M%S)"
   mkdir -m 700 "$keep"
-  if [ -n "$(ls -A data)" ]; then
-    find data -mindepth 1 -maxdepth 1 ! -name logs -exec mv -t "$keep" {} +
+  find data -mindepth 1 -maxdepth 1 ! -name logs -exec mv -t "$keep" {} +
+
+  if ! find "$stage" -mindepth 1 -maxdepth 1 ! -name logs -exec mv -t data {} +; then
+    warn "移入恢复数据失败，正在从 $keep 回滚..."
+    find data -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf {} +
+    find "$keep" -mindepth 1 -maxdepth 1 -exec mv -t data {} + || true
+    rm -rf "$stage"
+    if [ "$was" = 1 ]; then svc_start || true; fi
+    die "恢复切换失败，已回滚原数据"
   fi
-  ( umask 077; tar -C data -xzf "$f" )
+  rm -rf "$stage"
   log "当前数据已移到 $keep/"
   svc_start
   log "已从 $(basename "$f") 恢复（pending-*.bin: $(pending_count) 个）"

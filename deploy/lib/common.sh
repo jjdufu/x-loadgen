@@ -27,6 +27,10 @@ lib_load() {
   # sudo 执行时沿用发起 sudo 的普通用户，避免产生 root 属主文件。
   export RUN_UID="${SUDO_UID:-$(id -u)}"
   export RUN_GID="${SUDO_GID:-$(id -g)}"
+  if [ "$RUN_UID" = "0" ] && [ "${ALLOW_ROOT_CONTAINER:-0}" != "1" ]; then
+    RUN_UID=10001
+    RUN_GID=10001
+  fi
   export CONTAINER_NAME="${STACK}-${COMPONENT}"
   # 镜像仓库名：Docker Hub 发版镜像，或本地构建 / docker load 的 x-loadgen
   export X_LOADGEN_IMAGE="${X_LOADGEN_IMAGE:-dex2all/x-loadgen}"
@@ -116,7 +120,14 @@ svc_backup() {
   local ts; ts="$(date +%Y%m%d_%H%M%S)"
   hook_backup "$ts"
   local keep="${BACKUP_RETENTION_DAYS:-7}"
-  find "$PROJECT_ROOT/backups" -mindepth 1 -maxdepth 1 -mtime +"$keep" -exec rm -rf {} + 2>/dev/null || true
+  case "$keep" in
+    ''|*[!0-9]*)
+      warn "BACKUP_RETENTION_DAYS='$keep' 非法（需为非负整数），跳过旧备份清理"
+      ;;
+    *)
+      find "$PROJECT_ROOT/backups" -mindepth 1 -maxdepth 1 -type f -name "${COMPONENT}_*.tar.gz" -mtime +"$keep" -exec rm -f {} +
+      ;;
+  esac
   log "备份完成，目录: backups/"; ls -la "$PROJECT_ROOT/backups"
 }
 

@@ -456,6 +456,11 @@ async fn two_once_runs_can_overlap_and_third_over_cap_is_rejected() {
     let (status, running) = get_json(&client, &format!("{base}/api/v1/runs?status=running")).await;
     assert_eq!(status, reqwest::StatusCode::OK);
     assert_eq!(running.as_array().map(Vec::len), Some(2), "{running}");
+    let url = format!("{base}/api/v1/runs?status=stopping,%20running,running");
+    let (_, active) = get_json(&client, &url).await;
+    assert_eq!(active.as_array().map(Vec::len), Some(2), "{active}");
+    let (status, bad) = get_json(&client, &format!("{base}/api/v1/runs?status=bogus")).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{bad}");
 
     let (status, rejected) = post_json(
         &client,

@@ -1,28 +1,44 @@
-//! Admin password file, login-token verification, and an in-memory token cache.
+//! Admin password file, login-token verification, session store, and rate limiting.
 //!
-//! The login token is the only credential. It never expires on its own and
-//! changes only when the password is changed or `reset-passwd` is run. The
-//! token is stored on disk as an argon2id hash (or, before the first change,
-//! as plaintext in `admin.passwd`). After the first successful argon2
-//! verification, subsequent requests compare the presented token with the
-//! cached plaintext in constant time.
+//! Browser logins exchange the admin credential for a random opaque session ID
+//! (`s_<64-hex>`, TTL 24h, revocable on logout / password change / `reset-passwd`).
+//! Stateless API callers may still present `Authorization: Bearer <admin-token>`,
+//! verified outside the global DB mutex with HMAC-digest caching and failure rate
+//! limiting.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Argon2, password_hash::rand_core::OsRng};
 use rusqlite::{Connection, OptionalExtension, params};
 use subtle::ConstantTimeEq;
+use x_loadgen_core::crypto::{AlgorithmId, AlgorithmRegistry, KeyPurpose, KeyRef, Mac};
 
 use crate::db::{DataPaths, unix_now_ms};
 
-/// Auth cookie name (`HttpOnly`, `Path=/`, `SameSite=Lax`, no `Secure`, no
-/// `Max-Age`). The cookie holds the login token itself.
+/// Auth cookie name (`HttpOnly`, `Path=/`, `SameSite=Lax`, `Max-Age=86400`).
+/// Holds an opaque server-side session ID (`s_<64-hex>`), never the admin password.
 pub const AUTH_COOKIE: &str = "x_loadgen_token";
+
+/// Prefix identifying an opaque server-issued session token.
+pub const SESSION_TOKEN_PREFIX: &str = "s_";
+
+/// Session cookie & server-side session lifetime (24 hours).
+pub const SESSION_TTL_SECS: u64 = 86_400;
+
+/// Maximum concurrent server-side sessions retained in memory.
+const MAX_ACTIVE_SESSIONS: usize = 256;
+
+/// Maximum failed authentication attempts allowed per [`AUTH_FAILURE_WINDOW`].
+pub const MAX_AUTH_FAILURES_PER_WINDOW: u32 = 10;
+
+/// Sliding window duration for authentication failure rate limiting.
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 
 /// Minimum length of a changed password token.
 pub const MIN_NEW_TOKEN_LEN: usize = 24;
@@ -98,7 +114,7 @@ pub fn read_admin_passwd(path: &Path) -> Result<String> {
     Ok(token)
 }
 
-/// Write `token` (plus a trailing newline) and set mode 600.
+/// Write `token` (plus a trailing newline) atomically with mode 600 at creation.
 ///
 /// # Errors
 ///
@@ -110,6 +126,11 @@ pub fn write_admin_passwd(path: &Path, token: &str, overwrite: bool) -> Result<(
         opts.truncate(true);
     } else {
         opts.create_new(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
     let mut file = opts
         .open(path)
@@ -204,7 +225,7 @@ pub fn load_auth_state(conn: &Connection) -> Result<AuthState> {
     }))
 }
 
-/// Insert or replace the single `auth_state` row.
+/// Insert or replace the single `auth_state` row and return the written `updated_at`.
 ///
 /// # Errors
 ///
@@ -213,7 +234,7 @@ pub fn replace_auth_state(
     conn: &Connection,
     password_hash: Option<&str>,
     must_change: bool,
-) -> Result<()> {
+) -> Result<i64> {
     let now = i64::try_from(unix_now_ms()?).unwrap_or(i64::MAX);
     conn.execute(
         "INSERT INTO auth_state (id, password_hash, must_change, updated_at)
@@ -225,10 +246,11 @@ pub fn replace_auth_state(
         params![password_hash, i64::from(must_change), now],
     )
     .context("write auth_state")?;
-    Ok(())
+    Ok(now)
 }
 
 /// Current credential used for login and password change.
+#[derive(Clone)]
 pub enum Credential {
     /// Plain token still stored in `admin.passwd`.
     Bootstrap(String),
@@ -253,10 +275,6 @@ pub fn current_credential(paths: &DataPaths, state: &AuthState) -> Result<Creden
 
 /// Check a presented login/old token against the current credential.
 ///
-/// Bootstrap tokens are compared in constant time against the file. Hashed
-/// tokens run argon2id. Prefer [`TokenCache::verify`] on the request path so
-/// argon2 runs only once until the password changes.
-///
 /// # Errors
 ///
 /// Returns an error if hash verification fails internally.
@@ -267,42 +285,56 @@ pub fn verify_credential(presented: &str, credential: &Credential) -> Result<boo
     }
 }
 
-/// In-memory cache of a successfully verified login token.
+fn new_ephemeral_hmac_key() -> KeyRef {
+    let mut key = vec![0u8; 32];
+    let _ = getrandom::getrandom(&mut key);
+    KeyRef::raw(KeyPurpose::Mac, key)
+}
+
+fn hmac_digest(key: &KeyRef, input: &str) -> Vec<u8> {
+    AlgorithmRegistry::default_registry()
+        .mac(AlgorithmId::HmacSha256)
+        .and_then(|mac| mac.sign(key, input.as_bytes()))
+        .unwrap_or_default()
+}
+
+/// In-memory HMAC digest cache of a verified stateless Bearer token.
 ///
-/// The password is never stored on disk in a weaker form. After the first
-/// successful argon2 verification, later checks compare against this cached
-/// value in constant time. The cache is keyed by the stored hash and
-/// `auth_state.updated_at`, so a `reset-passwd` from another process is
-/// noticed on the next request. [`TokenCache::invalidate`] is used after an
-/// in-process password change.
-#[derive(Clone, Default)]
+/// Stores only a per-process keyed HMAC-SHA256 digest (never plaintext).
+#[derive(Clone)]
 pub struct TokenCache {
+    hmac_key: Arc<KeyRef>,
     inner: Arc<Mutex<Option<CachedToken>>>,
 }
 
 struct CachedToken {
-    token: String,
+    token_mac: Vec<u8>,
     password_hash: String,
     updated_at: i64,
 }
 
+impl Default for TokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TokenCache {
-    /// Empty cache.
+    /// Empty cache with a fresh ephemeral HMAC key.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            hmac_key: Arc::new(new_ephemeral_hmac_key()),
+            inner: Arc::new(Mutex::new(None)),
+        }
     }
 
-    /// Drop any cached token. Called after an in-process password change.
+    /// Drop any cached digest. Called after an in-process password change.
     pub fn invalidate(&self) {
         *self.lock() = None;
     }
 
     /// Verify `presented` against `credential`.
-    ///
-    /// Bootstrap credentials always compare against the file (cheap, no
-    /// argon2). Hash credentials use the cache when `updated_at` and the hash
-    /// still match; otherwise argon2 runs and a successful result is stored.
     ///
     /// # Errors
     ///
@@ -316,16 +348,17 @@ impl TokenCache {
         match credential {
             Credential::Bootstrap(expected) => Ok(tokens_equal(presented, expected)),
             Credential::Hash(hash) => {
+                let candidate_mac = hmac_digest(&self.hmac_key, presented);
                 if let Some(cached) = self.lock().as_ref()
                     && cached.updated_at == updated_at
                     && cached.password_hash == *hash
                 {
-                    return Ok(tokens_equal(presented, &cached.token));
+                    return Ok(bool::from(candidate_mac.ct_eq(&cached.token_mac)));
                 }
                 let ok = verify_password(presented, hash)?;
                 if ok {
                     *self.lock() = Some(CachedToken {
-                        token: presented.to_string(),
+                        token_mac: candidate_mac,
                         password_hash: hash.clone(),
                         updated_at,
                     });
@@ -339,6 +372,153 @@ impl TokenCache {
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Server-side store of opaque browser session tokens (`s_<64-hex>`).
+///
+/// Only HMAC-SHA256 digests are kept in memory. Sessions expire after
+/// [`SESSION_TTL_SECS`] and are invalidated immediately on `logout`,
+/// `change_password`, or out-of-process `reset-passwd` (`auth_updated_at` mismatch).
+#[derive(Clone)]
+pub struct SessionStore {
+    hmac_key: Arc<KeyRef>,
+    sessions: Arc<Mutex<Vec<SessionEntry>>>,
+}
+
+struct SessionEntry {
+    id_mac: Vec<u8>,
+    auth_updated_at: i64,
+    expires_at: Instant,
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SessionStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            hmac_key: Arc::new(new_ephemeral_hmac_key()),
+            sessions: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Issue a new opaque session token bound to `auth_updated_at`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the OS CSPRNG fails.
+    pub fn issue(&self, auth_updated_at: i64) -> Result<String> {
+        let token = format!("{SESSION_TOKEN_PREFIX}{}", random_token()?);
+        let id_mac = hmac_digest(&self.hmac_key, &token);
+        let now = Instant::now();
+        let expires_at = now + Duration::from_secs(SESSION_TTL_SECS);
+        let mut guard = self.lock();
+        guard.retain(|entry| entry.expires_at > now);
+        if guard.len() >= MAX_ACTIVE_SESSIONS {
+            guard.remove(0);
+        }
+        guard.push(SessionEntry {
+            id_mac,
+            auth_updated_at,
+            expires_at,
+        });
+        Ok(token)
+    }
+
+    /// Check whether `token` is a live session matching `current_auth_updated_at`.
+    #[must_use]
+    pub fn verify(&self, token: &str, current_auth_updated_at: i64) -> bool {
+        if !token.starts_with(SESSION_TOKEN_PREFIX) {
+            return false;
+        }
+        let candidate_mac = hmac_digest(&self.hmac_key, token);
+        let now = Instant::now();
+        let mut guard = self.lock();
+        guard.retain(|entry| entry.expires_at > now);
+        guard.iter().any(|entry| {
+            entry.auth_updated_at == current_auth_updated_at
+                && bool::from(candidate_mac.ct_eq(&entry.id_mac))
+        })
+    }
+
+    /// Revoke a single session token on logout.
+    pub fn revoke(&self, token: &str) {
+        if !token.starts_with(SESSION_TOKEN_PREFIX) {
+            return;
+        }
+        let candidate_mac = hmac_digest(&self.hmac_key, token);
+        let mut guard = self.lock();
+        guard.retain(|entry| !bool::from(candidate_mac.ct_eq(&entry.id_mac)));
+    }
+
+    /// Revoke every active session (e.g. after a password change).
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<SessionEntry>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Sliding-window limiter capping failed authentication attempts.
+#[derive(Clone)]
+pub struct AuthRateLimiter {
+    inner: Arc<Mutex<FailureWindow>>,
+}
+
+struct FailureWindow {
+    failures: u32,
+    started_at: Instant,
+}
+
+impl Default for AuthRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AuthRateLimiter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(FailureWindow {
+                failures: 0,
+                started_at: Instant::now(),
+            })),
+        }
+    }
+
+    #[must_use]
+    pub fn check_allowed(&self) -> bool {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.started_at.elapsed() >= AUTH_FAILURE_WINDOW {
+            guard.failures = 0;
+            guard.started_at = Instant::now();
+        }
+        guard.failures < MAX_AUTH_FAILURES_PER_WINDOW
+    }
+
+    pub fn record_failure(&self) {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.started_at.elapsed() >= AUTH_FAILURE_WINDOW {
+            guard.failures = 0;
+            guard.started_at = Instant::now();
+        }
+        guard.failures = guard.failures.saturating_add(1);
     }
 }
 
@@ -368,8 +548,7 @@ pub enum ChangePasswordError {
 }
 
 /// Validate a candidate new token against the length, charset, and "different
-/// from old" rules. The initial bootstrap token (64 hex characters) already
-/// satisfies these rules; they apply only when the user sets a new token.
+/// from old" rules.
 ///
 /// # Errors
 ///
@@ -395,20 +574,44 @@ fn is_allowed_token_char(c: char) -> bool {
     c.is_ascii_graphic() && !matches!(c, '"' | ';' | ',' | '\\')
 }
 
-/// Change the admin token: write the argon2id hash and delete `admin.passwd`.
-///
-/// If the password file cannot be deleted, the database is left unchanged.
-/// The caller must invalidate any in-memory [`TokenCache`].
+/// Commit an already-computed argon2id `hash` into `auth_state`, then remove
+/// `admin.passwd` after commit so a commit failure never locks out the admin.
 ///
 /// # Errors
 ///
-/// Returns an error on validation or I/O failure. The caller maps these to HTTP.
+/// Returns an error if the SQLite transaction cannot be committed.
+pub fn commit_password_hash(
+    paths: &DataPaths,
+    conn: &mut Connection,
+    hash: &str,
+) -> Result<i64, anyhow::Error> {
+    let tx = conn.transaction().context("begin password change")?;
+    let updated_at = replace_auth_state(&tx, Some(hash), false)?;
+    tx.commit().context("commit password change")?;
+    let file = paths.admin_passwd();
+    if let Err(err) = fs::remove_file(&file)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %file.display(),
+            error = %err,
+            "failed to remove bootstrap admin.passwd after committing password hash"
+        );
+    }
+    Ok(updated_at)
+}
+
+/// Change the admin token: write the argon2id hash, commit, and delete `admin.passwd`.
+///
+/// # Errors
+///
+/// Returns an error on validation or storage failure.
 pub fn change_password(
     paths: &DataPaths,
     conn: &mut Connection,
     old_token: &str,
     new_token: &str,
-) -> Result<(), ChangePasswordError> {
+) -> Result<i64, ChangePasswordError> {
     let state = load_auth_state(conn)?;
     let credential = current_credential(paths, &state)?;
     if !verify_credential(old_token, &credential)? {
@@ -416,32 +619,24 @@ pub fn change_password(
     }
     validate_new_token(new_token, old_token)?;
     let hash = hash_password(new_token)?;
-    let tx = conn.transaction().context("begin password change")?;
-    replace_auth_state(&tx, Some(&hash), false)?;
-    let file = paths.admin_passwd();
-    if file.exists() {
-        fs::remove_file(&file).map_err(|err| {
-            anyhow::anyhow!(
-                "delete admin password file {} after hashing the new token: {err}",
-                file.display()
-            )
-        })?;
-    }
-    tx.commit().context("commit password change")?;
-    Ok(())
+    let updated_at = commit_password_hash(paths, conn, &hash)?;
+    Ok(updated_at)
 }
 
-/// Format a `Set-Cookie` value that stores the login token (no `Secure`, no
-/// `Max-Age`: a browser session cookie). The token itself does not expire.
+/// Format a `Set-Cookie` value storing an opaque server-side session token.
 #[must_use]
-pub fn auth_cookie(token: &str) -> String {
-    format!("{AUTH_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax")
+pub fn auth_cookie(session_token: &str, secure: bool) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!(
+        "{AUTH_COOKIE}={session_token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECS}{secure_attr}"
+    )
 }
 
 /// Format a `Set-Cookie` value that clears the auth cookie.
 #[must_use]
-pub fn clear_auth_cookie() -> String {
-    format!("{AUTH_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0")
+pub fn clear_auth_cookie(secure: bool) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!("{AUTH_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{secure_attr}")
 }
 
 fn set_mode_600(path: &Path) -> Result<()> {
@@ -471,8 +666,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTH_COOKIE, ChangePasswordError, Credential, MIN_NEW_TOKEN_LEN, TokenCache, auth_cookie,
-        change_password, clear_auth_cookie, ensure_admin_passwd, hash_password, load_auth_state,
+        AUTH_COOKIE, AuthRateLimiter, ChangePasswordError, Credential, MIN_NEW_TOKEN_LEN,
+        SESSION_TOKEN_PREFIX, SessionStore, TokenCache, auth_cookie, change_password,
+        clear_auth_cookie, ensure_admin_passwd, hash_password, load_auth_state,
         password_file_log_line, random_token, tokens_equal, validate_new_token, verify_password,
     };
     use crate::db::DataPaths;
@@ -582,21 +778,56 @@ mod tests {
     }
 
     #[test]
-    fn auth_cookie_is_session_cookie_without_max_age_or_secure() {
-        let cookie = auth_cookie("tok");
+    fn auth_cookie_includes_ttl_and_optional_secure_attribute() {
+        let plain_cookie = auth_cookie("s_tok", false);
         assert!(
-            cookie.starts_with(&format!("{AUTH_COOKIE}=tok;")),
-            "{cookie}"
+            plain_cookie.starts_with(&format!("{AUTH_COOKIE}=s_tok;")),
+            "{plain_cookie}"
         );
-        assert!(cookie.contains("HttpOnly"), "{cookie}");
-        assert!(cookie.contains("Path=/"), "{cookie}");
-        assert!(cookie.contains("SameSite=Lax"), "{cookie}");
-        let lower = cookie.to_ascii_lowercase();
-        assert!(!lower.contains("secure"), "{cookie}");
-        assert!(!lower.contains("max-age"), "{cookie}");
-        assert!(!lower.contains("expires="), "{cookie}");
-        let clear = clear_auth_cookie();
+        assert!(plain_cookie.contains("HttpOnly"), "{plain_cookie}");
+        assert!(plain_cookie.contains("Path=/"), "{plain_cookie}");
+        assert!(plain_cookie.contains("SameSite=Lax"), "{plain_cookie}");
+        assert!(plain_cookie.contains("Max-Age=86400"), "{plain_cookie}");
+        assert!(
+            !plain_cookie.to_ascii_lowercase().contains("secure"),
+            "{plain_cookie}"
+        );
+
+        let tls_cookie = auth_cookie("s_tok", true);
+        assert!(tls_cookie.contains("; Secure"), "{tls_cookie}");
+
+        let clear = clear_auth_cookie(false);
         assert!(clear.contains("Max-Age=0"), "{clear}");
+        assert!(!clear.contains("Secure"), "{clear}");
+        assert!(clear_auth_cookie(true).contains("; Secure"));
+    }
+
+    #[test]
+    fn session_store_verifies_revokes_and_invalidates_on_auth_update() {
+        let store = SessionStore::new();
+        let tok = store.issue(100).expect("issue");
+        assert!(tok.starts_with(SESSION_TOKEN_PREFIX));
+        assert_eq!(tok.len(), SESSION_TOKEN_PREFIX.len() + 64);
+        assert!(store.verify(&tok, 100));
+        assert!(!store.verify("raw-password-not-a-session", 100));
+        assert!(
+            !store.verify(&tok, 101),
+            "credential rotation must invalidate sessions"
+        );
+        let tok2 = store.issue(101).expect("issue2");
+        assert!(store.verify(&tok2, 101));
+        store.revoke(&tok2);
+        assert!(!store.verify(&tok2, 101));
+    }
+
+    #[test]
+    fn auth_rate_limiter_blocks_after_burst_of_failures() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..10 {
+            assert!(limiter.check_allowed());
+            limiter.record_failure();
+        }
+        assert!(!limiter.check_allowed());
     }
 
     #[test]

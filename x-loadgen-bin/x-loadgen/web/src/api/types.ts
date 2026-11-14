@@ -384,6 +384,7 @@ export interface RunView {
   template_id: string;
   target_id: string;
   mode: string;
+  model?: string | null;
   status: string;
   started_at: number | null;
   ended_at: number | null;
@@ -460,6 +461,7 @@ export interface SampleRow {
   latency_us: number;
   product_id: string;
   product_name?: string | null;
+  customer_name?: string | null;
   request_index?: number | null;
   http_status?: number | null;
   success: boolean;
@@ -469,6 +471,21 @@ export interface SampleRow {
   request_id?: string | null;
   error?: string | null;
   response_bytes?: number | null;
+}
+
+/** Server-side filters for `GET /runs/:id/samples`. */
+export interface SampleFilters {
+  success?: boolean;
+  product_id?: string;
+  error_class?: string;
+  min_latency_us?: number;
+}
+
+/** Keyset cursor returned as `next`; send all three fields back verbatim. */
+export interface SampleCursor {
+  after_end_unix_ms: number;
+  after_worker: number;
+  after_seq: number;
 }
 
 export interface ReportPayload {

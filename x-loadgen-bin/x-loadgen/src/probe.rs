@@ -134,6 +134,11 @@ pub fn prepare_probe(conn: &Connection, req: &ProbeRequest) -> Result<ExecutionT
     Ok(target)
 }
 
+/// Maximum response body buffered by interactive `probe` calls (10 MiB).
+const MAX_PROBE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+/// Maximum timeout allowed for a single `probe` request (5 minutes).
+const MAX_PROBE_TIMEOUT_SECS: i64 = 300;
+
 /// Execute a compiled single-request target once and collect full debug telemetry.
 ///
 /// # Errors
@@ -147,7 +152,7 @@ pub async fn run_probe(target: ExecutionTarget, seq: u64) -> Result<ProbeRespons
 
     let mut load_cfg = LoadConfig::default();
     if let Some(t) = exec_req.timeout_secs.filter(|v| *v > 0) {
-        load_cfg.timeout_secs = t;
+        load_cfg.timeout_secs = t.min(MAX_PROBE_TIMEOUT_SECS);
     }
     let merged_tls = exec_req.tls.overlay_on(&target.tls);
     let client = build_client_for_tls(&merged_tls, &load_cfg)
@@ -226,6 +231,26 @@ async fn run_http_probe(
         unresolved_variables: unresolved,
     };
 
+    if let Err(reason) = validate_probe_target_url(&call.url) {
+        return ProbeResponse {
+            protocol: "http".into(),
+            transport_ok: false,
+            passed_assertions: false,
+            http_status: None,
+            status_text: None,
+            latency_us: 0,
+            response_bytes: 0,
+            headers: Vec::new(),
+            body_text: String::new(),
+            body_json: None,
+            error_class: Some("config".into()),
+            error: Some(reason),
+            assertions: Vec::new(),
+            request_preview,
+            mazbri_wire: None,
+        };
+    }
+
     let mut builder = client.request(prepared.method.clone(), &call.url);
     if let Some(timeout) = prepared.timeout {
         builder = builder.timeout(timeout);
@@ -293,7 +318,7 @@ async fn decode_http_probe_response(
         })
         .collect();
 
-    let raw_bytes = match response.bytes().await {
+    let raw_bytes = match read_probe_body_capped(response).await {
         Ok(b) => b,
         Err(err) => {
             return ProbeResponse {
@@ -308,7 +333,7 @@ async fn decode_http_probe_response(
                 body_text: String::new(),
                 body_json: None,
                 error_class: Some("transport".into()),
-                error: Some(err.to_string()),
+                error: Some(err),
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: None,
@@ -465,6 +490,32 @@ async fn run_mazbri_probe(
         }
     };
 
+    if let Err(reason) = validate_probe_target_url(&invoke_url) {
+        return ProbeResponse {
+            protocol: "mazbri".into(),
+            transport_ok: false,
+            passed_assertions: false,
+            http_status: None,
+            status_text: None,
+            latency_us: 0,
+            response_bytes: 0,
+            headers: Vec::new(),
+            body_text: String::new(),
+            body_json: None,
+            error_class: Some("config".into()),
+            error: Some(reason),
+            assertions: Vec::new(),
+            request_preview: ProbeRequestPreview {
+                method: "POST".into(),
+                url: invoke_url,
+                headers: Vec::new(),
+                body_preview: Some(inner_pretty),
+                unresolved_variables: unresolved,
+            },
+            mazbri_wire: None,
+        };
+    }
+
     // Step 1: Exchange API key for Bearer token at /auth/token
     let api_key = tenant.api_key.as_deref().unwrap_or("").trim();
     let tok_started = Instant::now();
@@ -478,7 +529,7 @@ async fn run_mazbri_probe(
     let issued = match tok_resp {
         Ok(resp) => {
             let st = resp.status().as_u16();
-            match resp.bytes().await {
+            match read_probe_body_capped(resp).await {
                 Ok(raw) => parse_token_response(st, &raw).map_err(|e| e.to_string()),
                 Err(e) => Err(format!("token response read failed: {e}")),
             }
@@ -667,7 +718,7 @@ async fn run_mazbri_probe(
         })
         .collect();
 
-    let raw_bytes = match response.bytes().await {
+    let raw_bytes = match read_probe_body_capped(response).await {
         Ok(b) => b,
         Err(err) => {
             return ProbeResponse {
@@ -682,7 +733,7 @@ async fn run_mazbri_probe(
                 body_text: String::new(),
                 body_json: None,
                 error_class: Some("transport".into()),
-                error: Some(err.to_string()),
+                error: Some(err),
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: None,
@@ -815,6 +866,64 @@ async fn run_mazbri_probe(
     }
 }
 
+async fn read_probe_body_capped(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+    if let Some(len) = response.content_length()
+        && len > MAX_PROBE_RESPONSE_BYTES as u64
+    {
+        return Err(format!(
+            "probe response body ({len} bytes) exceeds {} MiB cap",
+            MAX_PROBE_RESPONSE_BYTES / (1024 * 1024)
+        ));
+    }
+    let mut out = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if out.len().saturating_add(chunk.len()) > MAX_PROBE_RESPONSE_BYTES {
+            return Err(format!(
+                "probe response body exceeds {} MiB cap",
+                MAX_PROBE_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+fn validate_probe_target_url(raw_url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(raw_url).map_err(|e| format!("invalid target URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!(
+            "unsupported URL scheme '{}': only http and https are allowed",
+            parsed.scheme()
+        ));
+    }
+    let allow_link_local = std::env::var("X_LOADGEN_ALLOW_LINK_LOCAL")
+        .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"));
+    if !allow_link_local && let Some(host_str) = parsed.host_str() {
+        if host_str.eq_ignore_ascii_case("metadata.google.internal") {
+            return Err("cloud metadata host is blocked".into());
+        }
+        let bare = host_str
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host_str);
+        if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+            match ip {
+                std::net::IpAddr::V4(v4) if v4.is_link_local() => {
+                    return Err(
+                        "link-local / cloud metadata IPv4 targets (169.254.0.0/16) are blocked"
+                            .into(),
+                    );
+                }
+                std::net::IpAddr::V6(v6) if v6.is_unicast_link_local() => {
+                    return Err("link-local IPv6 targets (fe80::/10) are blocked".into());
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_unresolved(req: &ExecutionRequest, env_base_url: Option<&str>) -> Vec<String> {
     let mut missing = Vec::new();
     let mut scan = |s: &str| {
@@ -860,10 +969,13 @@ fn collect_unresolved(req: &ExecutionRequest, env_base_url: Option<&str>) -> Vec
 
 fn mask_token(token: &str) -> String {
     let trimmed = token.trim();
-    if trimmed.len() <= 10 {
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 10 {
         "***".to_string()
     } else {
-        format!("{}...{}", &trimmed[..6], &trimmed[trimmed.len() - 4..])
+        let prefix: String = chars[..6].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{prefix}...{suffix}")
     }
 }
 
@@ -884,4 +996,27 @@ fn mask_header_if_secret(key: &str, value: &str) -> String {
 
 fn elapsed_us(started: Instant) -> i64 {
     i64::try_from(started.elapsed().as_micros()).unwrap_or(i64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mask_token, validate_probe_target_url};
+
+    #[test]
+    fn mask_token_handles_multibyte_utf8_without_panicking() {
+        let masked = mask_token("密钥前缀测试中间隐藏尾部字符");
+        assert_eq!(masked, "密钥前缀测试...尾部字符");
+        assert_eq!(mask_token("短密钥"), "***");
+    }
+
+    #[test]
+    fn probe_blocks_cloud_metadata_and_non_http_schemes() {
+        assert!(validate_probe_target_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(
+            validate_probe_target_url("http://metadata.google.internal/computeMetadata/v1/")
+                .is_err()
+        );
+        assert!(validate_probe_target_url("file:///etc/passwd").is_err());
+        assert!(validate_probe_target_url("http://127.0.0.1:8080/health").is_ok());
+    }
 }

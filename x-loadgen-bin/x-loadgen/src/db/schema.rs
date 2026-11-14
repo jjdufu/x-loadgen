@@ -6,16 +6,7 @@ pub const USER_VERSION: i32 = 2;
 /// Current `PRAGMA user_version` for per-worker sample databases (`wNN.sqlite`).
 pub const WORKER_USER_VERSION: i32 = 1;
 
-/// Drop legacy v1 four-tier catalog tables when upgrading a v1 central database to v2.
-pub const DROP_LEGACY_V1_CATALOG: &str = "
-DROP TABLE IF EXISTS templates;
-DROP TABLE IF EXISTS target_products;
-DROP TABLE IF EXISTS target_tenants;
-DROP TABLE IF EXISTS targets;
-DROP TABLE IF EXISTS sessions;
-";
-
-/// Central database DDL applied on fresh creation or v1 -> v2 upgrade.
+/// Central database DDL applied on fresh creation.
 pub const CENTRAL_SCHEMA_V2: &str = "
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
@@ -183,17 +174,20 @@ CREATE TABLE IF NOT EXISTS run_windows (
   p99_us           INTEGER,
   max_us           INTEGER,
   bytes            INTEGER NOT NULL DEFAULT 0,
+  missed_sends     INTEGER NOT NULL DEFAULT 0,
+  completed        INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (run_id, window_index)
 );
 
 CREATE TABLE IF NOT EXISTS run_checkpoints (
-  run_id         TEXT NOT NULL,
-  worker_index   INTEGER NOT NULL,
-  ts             INTEGER NOT NULL,
-  window_index   INTEGER,
-  counters_json  TEXT NOT NULL,
-  histogram_blob BLOB,
-  PRIMARY KEY (run_id, worker_index, ts)
+  run_id          TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  worker_index    INTEGER NOT NULL,
+  ts              INTEGER NOT NULL,
+  window_index    INTEGER,
+  counters_json   TEXT NOT NULL,
+  histogram_blob  BLOB,
+  timeseries_json TEXT,
+  PRIMARY KEY (run_id, worker_index)
 );
 ";
 
@@ -231,6 +225,7 @@ CREATE TABLE IF NOT EXISTS worker_checkpoints (
   window_index    INTEGER,
   counters_json   TEXT NOT NULL,
   histogram_blob  BLOB,
+  timeseries_json TEXT,
   dropped_details INTEGER NOT NULL DEFAULT 0
 );
 ";

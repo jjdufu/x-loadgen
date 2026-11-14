@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::Json;
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -82,9 +83,13 @@ pub async fn list_samples(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Query(query): Query<SamplesQuery>,
+    query: Result<Query<SamplesQuery>, QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
     require_ready_auth(&state, &headers)?;
+    let Query(query) = query?;
+    query
+        .validate()
+        .map_err(|message| ApiError::bad_request("invalid_request", message))?;
     let record = state.supervisor.get_run(&id)?;
     let page = query_samples(&state.paths, &id, &record.snapshot_json, &query)?;
     Ok(Json(json!({
@@ -93,11 +98,41 @@ pub async fn list_samples(
     })))
 }
 
+/// Maximum concurrent SSE streams allowed across a server instance.
+const MAX_CONCURRENT_SSE_STREAMS: usize = 64;
+
+struct SseStreamGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl SseStreamGuard {
+    fn try_acquire(counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        let mut cur = counter.load(Ordering::Acquire);
+        loop {
+            if cur >= MAX_CONCURRENT_SSE_STREAMS {
+                return None;
+            }
+            match counter.compare_exchange_weak(cur, cur + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Some(Self(std::sync::Arc::clone(counter))),
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+}
+
+impl Drop for SseStreamGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// Server-sent events with a live stats snapshot once a second.
+///
+/// Emits one final `stats` snapshot and closes the stream as soon as the run is
+/// no longer `running` or `stopping`.
 ///
 /// # Errors
 ///
-/// Returns an authentication or not-found error before the stream starts.
+/// Returns an authentication, rate-limit, or not-found error before the stream starts.
 pub async fn get_events(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -105,14 +140,25 @@ pub async fn get_events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let _ = state.supervisor.get_run(&id)?;
-    let stream = futures::stream::unfold((state, id, 0_u64), |(state, id, tick)| async move {
-        if tick > 0 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        let payload = event_payload(&state, &id);
-        let event = Event::default().event("stats").data(payload.to_string());
-        Some((Ok(event), (state, id, tick.saturating_add(1))))
-    });
+    let guard = SseStreamGuard::try_acquire(&state.active_sse)
+        .ok_or_else(|| ApiError::too_many_requests("too many concurrent SSE streams"))?;
+    let stream = futures::stream::unfold(
+        (state, id, 0_u64, false, guard),
+        |(state, id, tick, done, guard)| async move {
+            if done {
+                return None;
+            }
+            if tick > 0 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            let (payload, active) = event_payload(&state, &id);
+            let event = Event::default().event("stats").data(payload.to_string());
+            Some((
+                Ok(event),
+                (state, id, tick.saturating_add(1), !active, guard),
+            ))
+        },
+    );
     Ok(Sse::new(stream.boxed()).keep_alive(KeepAlive::default()))
 }
 
@@ -173,11 +219,12 @@ fn live_inputs(
                 dropped_details: merged.dropped_details,
                 in_flight: merged.in_flight,
                 peak_in_flight: merged.peak_in_flight,
+                missed_sends: merged.missed_sends,
             };
             return (
                 Some(counters),
                 Some((merged.p50_us, merged.p95_us, merged.p99_us, merged.max_us)),
-                None,
+                Some(merged.timeseries),
             );
         }
         return (None, None, None);
@@ -185,24 +232,31 @@ fn live_inputs(
     (
         Some(task.metrics.counters()),
         Some(task.metrics.percentiles_us()),
-        Some(task.metrics.ring_snapshot()),
+        Some(task.metrics.timeseries_slots()),
     )
 }
 
 fn download_body(body: Vec<u8>, content_type: &'static str, filename: &str) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+    let safe_name: String = filename
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .collect();
+    if !safe_name.is_empty()
+        && let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{safe_name}\""))
+    {
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
     (headers, body).into_response()
 }
 
-fn event_payload(state: &AppState, id: &str) -> Value {
+fn event_payload(state: &AppState, id: &str) -> (Value, bool) {
     match state.supervisor.get_run(id) {
         Ok(record) => {
+            let active = matches!(record.status.as_str(), "running" | "stopping");
             let (live_counters, live_percentiles, _) = live_inputs(state, &record);
-            if let Some(cnt) = live_counters {
+            let payload = if let Some(cnt) = live_counters {
                 let (p50, p95, p99, max) = live_percentiles.unwrap_or((None, None, None, None));
                 json!({
                     "id": record.id,
@@ -227,8 +281,9 @@ fn event_payload(state: &AppState, id: &str) -> Value {
                     "current_qps": record.current_qps,
                     "current_concurrency": record.current_concurrency,
                 })
-            }
+            };
+            (payload, active)
         }
-        Err(err) => json!({ "error": err.to_string() }),
+        Err(_) => (json!({ "error": "run not found" }), false),
     }
 }

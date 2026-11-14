@@ -10,22 +10,44 @@
       <Loader2 class="h-6 w-6 animate-spin text-foreground" />
     </div>
 
+    <div
+      v-else-if="loadError"
+      class="flex flex-col items-center justify-center gap-3 py-14 text-sm text-muted-foreground"
+      role="alert"
+    >
+      <span>环境加载失败：{{ loadError }}</span>
+      <UiButton variant="outline" size="sm" @click="loadForm">重试</UiButton>
+    </div>
+
     <div v-else class="space-y-5">
       <div v-if="!isGlobal" class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          <label
+            :for="envNameInputId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
             环境名称 *
           </label>
           <UiInput
+            :id="envNameInputId"
             v-model="form.name"
             placeholder="例如 测试环境 / 模拟网关"
+            :aria-invalid="Boolean(nameError)"
+            @update:model-value="nameError = ''"
           />
+          <p v-if="nameError" class="text-xs text-rose-600 dark:text-rose-400">
+            {{ nameError }}
+          </p>
         </div>
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          <label
+            :for="gatewayUrlInputId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
             默认网关地址（供相对路径与 Mazbri 使用）
           </label>
           <UiInput
+            :id="gatewayUrlInputId"
             v-model="gatewayUrl"
             mono
             placeholder="例如 http://127.0.0.1:18080"
@@ -34,11 +56,17 @@
       </div>
 
       <!-- Shadcn Segmented Sub-Tabs -->
-      <div class="inline-flex flex-wrap items-center rounded-lg border border-border bg-muted p-1 gap-0.5">
+      <div
+        role="tablist"
+        aria-label="环境配置分栏"
+        class="inline-flex flex-wrap items-center rounded-lg border border-border bg-muted p-1 gap-0.5"
+      >
         <button
           v-for="tab in modalTabs"
           :key="tab.id"
           type="button"
+          role="tab"
+          :aria-selected="activeSubTab === tab.id"
           class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
           :class="
             activeSubTab === tab.id
@@ -84,7 +112,7 @@
         <div v-else class="divide-y divide-border overflow-hidden rounded-lg border border-border">
           <div
             v-for="(v, idx) in form.variables"
-            :key="idx"
+            :key="rowObjectKey(v)"
             class="flex items-center divide-x divide-border bg-background"
           >
             <div class="flex h-9 w-10 shrink-0 items-center justify-center">
@@ -100,6 +128,7 @@
               <input
                 v-model="v.key"
                 type="text"
+                :aria-label="`变量 ${idx + 1} 名称`"
                 placeholder="变量名 (例如 baseUrl)"
                 class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
               />
@@ -108,6 +137,7 @@
               <input
                 v-model="v.value"
                 :type="v.secret ? 'password' : 'text'"
+                :aria-label="`变量 ${idx + 1} 值`"
                 placeholder="变量值"
                 class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
               />
@@ -116,6 +146,7 @@
               <button
                 type="button"
                 :title="v.secret ? '敏感变量（导出默认脱敏）' : '标记为敏感变量'"
+                :aria-label="v.secret ? '取消敏感变量标记' : '标记为敏感变量'"
                 class="rounded p-1.5 transition-colors hover:bg-accent"
                 :class="v.secret ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'"
                 @click="v.secret = !v.secret"
@@ -126,6 +157,7 @@
               <button
                 type="button"
                 title="删除变量"
+                aria-label="删除变量"
                 class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
                 @click="form.variables.splice(idx, 1)"
               >
@@ -165,7 +197,7 @@
           <div class="flex flex-wrap items-center gap-2 border-b border-border pb-3">
             <button
               v-for="(t, idx) in tenants"
-              :key="idx"
+              :key="t.id ?? rowObjectKey(t)"
               type="button"
               class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-xs transition-colors"
               :class="
@@ -193,6 +225,7 @@
               </UiButton>
             </div>
             <TenantCryptoForm
+              :key="tenantFormKey(selectedTenantIdx)"
               :model-value="tenants[selectedTenantIdx]!"
               :environment-id="editingEnvId"
               @update:model-value="(val) => (tenants[selectedTenantIdx] = val)"
@@ -207,7 +240,7 @@
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             默认认证方式（请求选择「继承默认」时生效）
           </label>
-          <UiSelect v-model="httpAuth.auth_type">
+          <UiSelect v-model="httpAuth.auth_type" aria-label="默认认证方式">
             <option value="none">无认证</option>
             <option value="bearer">Bearer Token</option>
             <option value="basic">Basic Auth</option>
@@ -219,7 +252,7 @@
           <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
             Bearer Token
           </label>
-          <UiInput v-model="httpAuthToken" mono placeholder="输入 Token 或 <<token>>" />
+          <UiInput v-model="httpAuthToken" mono aria-label="Bearer Token" placeholder="输入 Token 或 <<token>>" />
         </div>
 
         <div v-else-if="httpAuth.auth_type === 'basic'" class="grid max-w-xl grid-cols-2 gap-4">
@@ -227,13 +260,13 @@
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               用户名
             </label>
-            <UiInput v-model="httpAuthUser" mono />
+            <UiInput v-model="httpAuthUser" mono aria-label="用户名" />
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               密码
             </label>
-            <UiInput v-model="httpAuthPass" type="password" mono />
+            <UiInput v-model="httpAuthPass" type="password" mono aria-label="密码" />
           </div>
         </div>
 
@@ -242,19 +275,19 @@
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               参数名
             </label>
-            <UiInput v-model="httpAuthKey" mono placeholder="X-API-Key" />
+            <UiInput v-model="httpAuthKey" mono aria-label="API Key 参数名" placeholder="X-API-Key" />
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               参数值
             </label>
-            <UiInput v-model="httpAuthVal" type="password" mono />
+            <UiInput v-model="httpAuthVal" type="password" mono aria-label="API Key 参数值" />
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               注入位置
             </label>
-            <UiSelect v-model="httpAuthAddTo">
+            <UiSelect v-model="httpAuthAddTo" aria-label="API Key 注入位置">
               <option value="HEADERS">请求头</option>
               <option value="QUERY_PARAMS">查询参数</option>
             </UiSelect>
@@ -265,7 +298,7 @@
       <!-- 4. TLS / mTLS -->
       <div v-else-if="activeSubTab === 'tls' && !isGlobal" class="space-y-4">
         <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
-          <UiSwitch v-model="tls.insecure_skip_verify" />
+          <UiSwitch v-model="tls.insecure_skip_verify" aria-label="跳过服务端 TLS 证书校验" />
           <span>跳过服务端 TLS 证书校验</span>
         </label>
 
@@ -314,6 +347,7 @@
           <UiButton
             v-if="editingEnvId && !isGlobal"
             variant="outline"
+            :disabled="!formReady"
             class="text-rose-600 dark:text-rose-400 hover:text-rose-600"
             @click="handleDelete"
           >
@@ -323,7 +357,12 @@
         </div>
         <div class="flex items-center gap-2">
           <UiButton variant="outline" @click="close">取消</UiButton>
-          <UiButton variant="default" :loading="saving" @click="handleSave">
+          <UiButton
+            variant="default"
+            :loading="saving"
+            :disabled="!formReady"
+            @click="handleSave"
+          >
             保存
           </UiButton>
         </div>
@@ -333,7 +372,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
+import { isAxiosError } from "axios";
 import { Loader2, Lock, Plus, Trash2, Unlock } from "lucide-vue-next";
 import { api } from "../../api/workspace";
 import type {
@@ -348,6 +388,7 @@ import {
   createDefaultTls,
   normalizeTenantForApi,
 } from "../../helpers/format";
+import { rowObjectKey } from "../../helpers/rowKey";
 import { askConfirm } from "../../modules/confirm";
 import { toast } from "../../modules/toast";
 import {
@@ -364,8 +405,20 @@ import UiSelect from "../ui/UiSelect.vue";
 import UiSwitch from "../ui/UiSwitch.vue";
 import UiTextarea from "../ui/UiTextarea.vue";
 
+const envNameInputId = useId();
+const gatewayUrlInputId = useId();
+
 const loading = ref(false);
+const loadError = ref<string | null>(null);
 const saving = ref(false);
+const nameError = ref("");
+/**
+ * Environment id whose data currently fills the form (`null` for a new
+ * environment). Saving always targets this id, never a later selection.
+ */
+const formEnvId = ref<string | null>(null);
+let loadSeq = 0;
+const formReady = computed(() => !loading.value && !loadError.value);
 const isGlobal = ref(false);
 const activeSubTab = ref<"vars" | "tenants" | "auth" | "tls">("vars");
 const selectedTenantIdx = ref(0);
@@ -445,44 +498,81 @@ const clientKey = computed({
 
 const modalTitle = computed(() => {
   if (isGlobal.value) return "编辑全局变量";
+  if (editingEnvId.value && !formEnvId.value) return "编辑环境";
   return editingEnvId.value
     ? `编辑环境：${form.value.name || "未命名"}`
     : "新建环境";
 });
 
+function resetForm(): void {
+  isGlobal.value = false;
+  nameError.value = "";
+  form.value = { name: "", variables: [] };
+  gatewayUrl.value = "";
+  httpAuth.value = createDefaultHttpAuth("none");
+  tls.value = createDefaultTls();
+  tenants.value = [];
+}
+
+async function loadForm(): Promise<void> {
+  const seq = ++loadSeq;
+  const envId = editingEnvId.value;
+  // Start from a blank form so nothing from a previously opened environment
+  // can be shown or saved under this one.
+  resetForm();
+  formEnvId.value = null;
+  loadError.value = null;
+  activeSubTab.value = "vars";
+  selectedTenantIdx.value = 0;
+  if (!envId) {
+    loading.value = false;
+    return;
+  }
+  loading.value = true;
+  try {
+    const detail = await api.getEnvironment(envId);
+    if (seq !== loadSeq) return;
+    isGlobal.value = detail.is_global;
+    form.value = {
+      name: detail.name,
+      variables: detail.variables.map((v) => ({ ...v })),
+    };
+    gatewayUrl.value = detail.gateway_base_url ?? "";
+    httpAuth.value = { ...createDefaultHttpAuth("none"), ...detail.http_auth };
+    tls.value = { ...createDefaultTls(), ...detail.tls };
+    tenants.value = detail.tenants.map((t) => ({ ...t }));
+    formEnvId.value = envId;
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    const apiMessage = isAxiosError<{ error?: { message?: string } }>(err)
+      ? err.response?.data?.error?.message
+      : undefined;
+    loadError.value =
+      apiMessage ?? (err instanceof Error ? err.message : String(err));
+  } finally {
+    if (seq === loadSeq) loading.value = false;
+  }
+}
+
 watch(
-  envModalOpen,
-  async (open) => {
-    if (!open) return;
-    activeSubTab.value = "vars";
-    selectedTenantIdx.value = 0;
-    if (!editingEnvId.value) {
-      isGlobal.value = false;
-      form.value = { name: "", variables: [] };
-      gatewayUrl.value = "";
-      httpAuth.value = createDefaultHttpAuth("none");
-      tls.value = createDefaultTls();
-      tenants.value = [];
+  [envModalOpen, editingEnvId],
+  ([open]) => {
+    if (!open) {
+      // Invalidate any in-flight load.
+      loadSeq++;
       return;
     }
-    loading.value = true;
-    try {
-      const detail = await api.getEnvironment(editingEnvId.value);
-      isGlobal.value = detail.is_global;
-      form.value = {
-        name: detail.name,
-        variables: detail.variables.map((v) => ({ ...v })),
-      };
-      gatewayUrl.value = detail.gateway_base_url ?? "";
-      httpAuth.value = { ...createDefaultHttpAuth("none"), ...detail.http_auth };
-      tls.value = { ...createDefaultTls(), ...detail.tls };
-      tenants.value = detail.tenants.map((t) => ({ ...t }));
-    } finally {
-      loading.value = false;
-    }
+    void loadForm();
   },
   { immediate: true },
 );
+
+/** Stable identity for the tenant editor so its local state never leaks across tenants. */
+function tenantFormKey(idx: number): string {
+  const t = tenants.value[idx];
+  // Unsaved tenants have no id; include the count so add/remove remounts.
+  return t?.id ? `id:${t.id}` : `new:${idx}:${tenants.value.length}`;
+}
 
 function addVar(): void {
   form.value.variables.push({ key: "", value: "", secret: false, active: true });
@@ -502,10 +592,13 @@ function removeTenant(idx: number): void {
 }
 
 async function handleSave(): Promise<void> {
+  if (!formReady.value) return;
   if (!isGlobal.value && !form.value.name.trim()) {
-    toast.error("请输入环境名称");
+    nameError.value = "请输入环境名称";
     return;
   }
+  nameError.value = "";
+  const targetId = formEnvId.value;
   saving.value = true;
   try {
     const payload = {
@@ -526,8 +619,8 @@ async function handleSave(): Promise<void> {
         : tenants.value.map((t) => normalizeTenantForApi(t)),
     };
 
-    if (editingEnvId.value) {
-      await api.updateEnvironment(editingEnvId.value, payload);
+    if (targetId) {
+      await api.updateEnvironment(targetId, payload);
       toast.success(`环境「${isGlobal.value ? "全局变量" : payload.name}」已更新`);
     } else {
       const created = await api.createEnvironment(payload);
@@ -542,7 +635,8 @@ async function handleSave(): Promise<void> {
 }
 
 async function handleDelete(): Promise<void> {
-  if (!editingEnvId.value || isGlobal.value) return;
+  const targetId = formEnvId.value;
+  if (!formReady.value || !targetId || isGlobal.value) return;
   const confirmed = await askConfirm({
     title: "删除环境",
     description: `确定删除环境「${form.value.name}」吗？`,
@@ -550,8 +644,8 @@ async function handleDelete(): Promise<void> {
     variant: "destructive",
   });
   if (!confirmed) return;
-  await api.deleteEnvironment(editingEnvId.value);
-  if (activeEnvironmentId.value === editingEnvId.value) {
+  await api.deleteEnvironment(targetId);
+  if (activeEnvironmentId.value === targetId) {
     activeEnvironmentId.value = null;
   }
   await refreshEnvironments();

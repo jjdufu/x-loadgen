@@ -1,10 +1,10 @@
 <template>
   <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
-    <div class="mx-auto max-w-6xl space-y-6 p-6 lg:p-8">
+    <div class="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
       <!-- Balanced 2-Column Shadcn Card Grid -->
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <!-- Card 1: Light / Black Theme Switcher -->
-        <UiCard class="flex flex-col justify-between p-6 space-y-5">
+        <UiCard class="flex flex-col justify-between space-y-5 p-4 sm:p-6">
           <div class="space-y-1.5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
               外观模式
@@ -14,28 +14,63 @@
             </p>
           </div>
 
-          <!-- Visual Mini-Window Previews: Light & Black Only -->
-          <div class="grid grid-cols-2 gap-4">
+          <!-- Visual Mini-Window Previews: System, Light, & Black -->
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <!-- System Preview -->
+            <button
+              type="button"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              :class="
+                isFollowingSystem
+                  ? 'border-foreground bg-accent/35'
+                  : 'border-border hover:border-muted-foreground/50'
+              "
+              @click="resetToSystemTheme"
+            >
+              <div class="grid grid-cols-2 overflow-hidden rounded-lg border border-border shadow-sm">
+                <div class="bg-white p-2.5 space-y-1.5 border-r border-zinc-200">
+                  <div class="h-2 w-8 rounded bg-zinc-900" />
+                  <div class="h-2 w-10 rounded bg-zinc-200" />
+                  <div class="h-5 rounded border border-zinc-200 bg-zinc-50" />
+                </div>
+                <div class="bg-[#09090b] p-2.5 space-y-1.5">
+                  <div class="h-2 w-8 rounded bg-zinc-100" />
+                  <div class="h-2 w-10 rounded bg-zinc-800" />
+                  <div class="h-5 rounded border border-zinc-800 bg-zinc-900" />
+                </div>
+              </div>
+              <div class="mt-2.5 flex items-center justify-between px-0.5">
+                <span class="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <Monitor class="h-3.5 w-3.5" />
+                  <span>跟随系统</span>
+                </span>
+                <Check
+                  v-if="isFollowingSystem"
+                  class="h-4 w-4 text-foreground"
+                />
+              </div>
+            </button>
+
             <!-- Light Preview -->
             <button
               type="button"
               class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
-                effectiveTheme === 'light'
+                !isFollowingSystem && effectiveTheme === 'light'
                   ? 'border-foreground bg-accent/35'
                   : 'border-border hover:border-muted-foreground/50'
               "
               @click="setThemeMode('light')"
             >
-              <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white p-3 space-y-2 shadow-sm">
+              <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white p-2.5 space-y-1.5 shadow-sm">
                 <div class="flex items-center justify-between">
-                  <div class="h-2 w-12 rounded bg-zinc-900" />
-                  <div class="h-3.5 w-9 rounded bg-zinc-900" />
+                  <div class="h-2 w-10 rounded bg-zinc-900" />
+                  <div class="h-2 w-6 rounded bg-zinc-900" />
                 </div>
                 <div class="h-2 w-4/5 rounded bg-zinc-200" />
-                <div class="grid grid-cols-2 gap-1.5 pt-1">
-                  <div class="h-6 rounded border border-zinc-200 bg-zinc-50" />
-                  <div class="h-6 rounded border border-zinc-200 bg-zinc-50" />
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div class="h-5 rounded border border-zinc-200 bg-zinc-50" />
+                  <div class="h-5 rounded border border-zinc-200 bg-zinc-50" />
                 </div>
               </div>
               <div class="mt-2.5 flex items-center justify-between px-0.5">
@@ -44,7 +79,7 @@
                   <span>浅色</span>
                 </span>
                 <Check
-                  v-if="effectiveTheme === 'light'"
+                  v-if="!isFollowingSystem && effectiveTheme === 'light'"
                   class="h-4 w-4 text-foreground"
                 />
               </div>
@@ -55,21 +90,21 @@
               type="button"
               class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
-                effectiveTheme === 'black'
+                !isFollowingSystem && effectiveTheme === 'black'
                   ? 'border-foreground bg-accent/35'
                   : 'border-border hover:border-muted-foreground/50'
               "
               @click="setThemeMode('black')"
             >
-              <div class="overflow-hidden rounded-lg border border-zinc-800 bg-[#09090b] p-3 space-y-2 shadow-sm">
+              <div class="overflow-hidden rounded-lg border border-zinc-800 bg-[#09090b] p-2.5 space-y-1.5 shadow-sm">
                 <div class="flex items-center justify-between">
-                  <div class="h-2 w-12 rounded bg-zinc-100" />
-                  <div class="h-3.5 w-9 rounded bg-zinc-100" />
+                  <div class="h-2 w-10 rounded bg-zinc-100" />
+                  <div class="h-2 w-6 rounded bg-zinc-100" />
                 </div>
                 <div class="h-2 w-4/5 rounded bg-zinc-800" />
-                <div class="grid grid-cols-2 gap-1.5 pt-1">
-                  <div class="h-6 rounded border border-zinc-800 bg-zinc-900" />
-                  <div class="h-6 rounded border border-zinc-800 bg-zinc-900" />
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div class="h-5 rounded border border-zinc-800 bg-zinc-900" />
+                  <div class="h-5 rounded border border-zinc-800 bg-zinc-900" />
                 </div>
               </div>
               <div class="mt-2.5 flex items-center justify-between px-0.5">
@@ -78,7 +113,7 @@
                   <span>纯黑</span>
                 </span>
                 <Check
-                  v-if="effectiveTheme === 'black'"
+                  v-if="!isFollowingSystem && effectiveTheme === 'black'"
                   class="h-4 w-4 text-foreground"
                 />
               </div>
@@ -98,20 +133,11 @@
                 }}
               </strong>
             </span>
-            <UiButton
-              v-if="!isFollowingSystem"
-              variant="ghost"
-              size="xs"
-              @click="resetToSystemTheme"
-            >
-              <RotateCcw class="h-3 w-3" />
-              <span>跟随系统</span>
-            </UiButton>
           </div>
         </UiCard>
 
         <!-- Card 2: Instance Capacity -->
-        <UiCard class="flex flex-col justify-between p-6 space-y-5">
+        <UiCard class="flex flex-col justify-between space-y-5 p-4 sm:p-6">
           <div class="space-y-1.5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
               实例规格
@@ -151,7 +177,7 @@
       </div>
 
       <!-- Card 3: Keyboard Shortcut Management -->
-      <UiCard class="p-6 space-y-4">
+      <UiCard class="space-y-4 p-4 sm:p-6">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="space-y-1">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
@@ -218,7 +244,7 @@
       </UiCard>
 
       <!-- Card 4: Security / Admin Password Rotation Card -->
-      <UiCard class="p-6">
+      <UiCard class="p-4 sm:p-6">
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div class="space-y-1.5 lg:col-span-5">
             <h2 class="text-base font-semibold tracking-tight text-foreground">
@@ -241,32 +267,56 @@
               免密模式运行。生产或公网部署请移除该启动参数以启用口令保护。
             </div>
 
-            <form v-else class="space-y-4" autocomplete="off" @submit.prevent="changePwd">
+            <form v-else class="space-y-4" @submit.prevent="changePwd">
               <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div class="space-y-1.5">
-                  <div class="flex h-5 items-center justify-between gap-2">
-                    <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  <div class="flex h-6 items-center justify-between gap-2">
+                    <label
+                      :for="oldInputId"
+                      class="text-xs font-medium text-muted-foreground whitespace-nowrap"
+                    >
                       当前口令
                     </label>
                   </div>
-                  <UiInput
-                    v-model="oldToken"
-                    type="password"
-                    mono
-                    autocomplete="off"
-                    placeholder="输入当前口令"
-                  />
+                  <div class="flex items-center gap-1.5">
+                    <UiInput
+                      :id="oldInputId"
+                      v-model="oldToken"
+                      :type="showOld ? 'text' : 'password'"
+                      mono
+                      autocomplete="current-password"
+                      placeholder="输入当前口令"
+                      :aria-invalid="errorField === 'old'"
+                      class="flex-1"
+                      @update:model-value="clearFieldError('old')"
+                    />
+                    <UiButton
+                      variant="outline"
+                      size="icon"
+                      aria-label="切换当前口令显示"
+                      @click="showOld = !showOld"
+                    >
+                      <EyeOff v-if="showOld" class="h-4 w-4" />
+                      <Eye v-else class="h-4 w-4" />
+                    </UiButton>
+                  </div>
+                  <p v-if="errorField === 'old'" class="text-xs text-rose-600 dark:text-rose-400">
+                    {{ errorMessage }}
+                  </p>
                 </div>
 
                 <div class="space-y-1.5">
-                  <div class="flex h-5 items-center justify-between gap-2">
-                    <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  <div class="flex h-6 items-center justify-between gap-2">
+                    <label
+                      :for="newInputId"
+                      class="text-xs font-medium text-muted-foreground whitespace-nowrap"
+                    >
                       新口令（至少 24 位）
                     </label>
                     <button
                       type="button"
-                      class="inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      @click="generateStrongPassword"
+                      class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      @click="handleGenerate"
                     >
                       <Dices class="h-3 w-3" />
                       <span>随机生成</span>
@@ -274,12 +324,15 @@
                   </div>
                   <div class="flex items-center gap-1.5">
                     <UiInput
+                      :id="newInputId"
                       v-model="newToken"
                       :type="showNew ? 'text' : 'password'"
                       mono
-                      autocomplete="off"
+                      autocomplete="new-password"
                       placeholder="至少 24 位可打印 ASCII"
+                      :aria-invalid="errorField === 'new'"
                       class="flex-1"
+                      @update:model-value="clearFieldError('new')"
                     />
                     <UiButton
                       variant="outline"
@@ -291,7 +344,32 @@
                       <Eye v-else class="h-4 w-4" />
                     </UiButton>
                   </div>
+                  <p v-if="errorField === 'new'" class="text-xs text-rose-600 dark:text-rose-400">
+                    {{ errorMessage }}
+                  </p>
                 </div>
+              </div>
+
+              <div class="space-y-1.5">
+                <label
+                  :for="confirmInputId"
+                  class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+                >
+                  确认新口令
+                </label>
+                <UiInput
+                  :id="confirmInputId"
+                  v-model="confirmToken"
+                  :type="showNew ? 'text' : 'password'"
+                  mono
+                  autocomplete="new-password"
+                  placeholder="再次输入新口令以确认"
+                  :aria-invalid="errorField === 'confirm'"
+                  @update:model-value="clearFieldError('confirm')"
+                />
+                <p v-if="errorField === 'confirm'" class="text-xs text-rose-600 dark:text-rose-400">
+                  {{ errorMessage }}
+                </p>
               </div>
 
               <div class="flex justify-end">
@@ -312,12 +390,13 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, useId } from "vue";
 import {
   Check,
   Dices,
   Eye,
   EyeOff,
+  Monitor,
   Moon,
   RotateCcw,
   Sun,
@@ -327,6 +406,10 @@ import { api } from "../api/workspace";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiInput from "../components/ui/UiInput.vue";
+import {
+  generateStrongToken,
+  validateNewAdminToken,
+} from "../helpers/password";
 import { canProgrammaticallyFocus } from "../modules/activity";
 import {
   SHORTCUT_DEFINITIONS,
@@ -345,14 +428,30 @@ import {
   resetToSystemTheme,
   setThemeMode,
 } from "../modules/theme";
+import { getCachedMe, setCachedMe } from "../modules/auth";
 import { toast } from "../modules/toast";
 import { refreshMeta, serverMeta } from "../stores/workspace";
+
+const oldInputId = useId();
+const newInputId = useId();
+const confirmInputId = useId();
 
 const authRequired = ref(false);
 const oldToken = ref("");
 const newToken = ref("");
+const confirmToken = ref("");
+const showOld = ref(false);
 const showNew = ref(false);
 const saving = ref(false);
+const errorField = ref<"old" | "new" | "confirm" | null>(null);
+const errorMessage = ref("");
+
+function clearFieldError(field: "old" | "new" | "confirm"): void {
+  if (errorField.value === field) {
+    errorField.value = null;
+    errorMessage.value = "";
+  }
+}
 
 function toggleRecord(id: ShortcutId): void {
   recordingShortcutId.value = recordingShortcutId.value === id ? null : id;
@@ -418,7 +517,7 @@ function handleRecorderKeydown(e: KeyboardEvent): void {
 onMounted(async () => {
   window.addEventListener("keydown", handleRecorderKeydown, true);
   await refreshMeta();
-  const me = await api.me();
+  const me = await getCachedMe();
   authRequired.value = me.auth_required;
 });
 
@@ -427,31 +526,40 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleRecorderKeydown, true);
 });
 
-function generateStrongPassword(): void {
-  const alphabet =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_.~!*@#%^";
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  let out = "";
-  for (const b of bytes) {
-    out += alphabet[b % alphabet.length];
-  }
-  newToken.value = out;
+function handleGenerate(): void {
+  const generated = generateStrongToken(32);
+  newToken.value = generated;
+  confirmToken.value = generated;
   showNew.value = true;
+  errorField.value = null;
+  errorMessage.value = "";
   toast.info("已生成 32 位高强度随机口令，请妥善保存");
 }
 
 async function changePwd(): Promise<void> {
-  if (newToken.value.length < 24) {
-    toast.error("新口令至少需要 24 个字符");
+  const err = validateNewAdminToken(
+    newToken.value,
+    oldToken.value,
+    confirmToken.value,
+  );
+  if (err) {
+    errorField.value = err.field;
+    errorMessage.value = err.message;
     return;
   }
+  errorField.value = null;
+  errorMessage.value = "";
   saving.value = true;
   try {
     await api.changePassword(oldToken.value, newToken.value);
+    setCachedMe({
+      auth_required: true,
+      must_change_password: false,
+    });
     toast.success("口令已更新");
     oldToken.value = "";
     newToken.value = "";
+    confirmToken.value = "";
   } finally {
     saving.value = false;
   }

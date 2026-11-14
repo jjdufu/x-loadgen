@@ -187,3 +187,19 @@
   border: 2px solid transparent;
   background-clip: padding-box;
 }
+
+/* Backdrop fade for mobile drawers. */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 150ms ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
+}

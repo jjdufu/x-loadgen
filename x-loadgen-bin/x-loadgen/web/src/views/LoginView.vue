@@ -1,5 +1,5 @@
 <template>
-  <div class="relative flex min-h-screen w-screen items-center justify-center bg-background p-6 text-foreground">
+  <div class="relative flex min-h-dvh w-full items-center justify-center bg-background p-6 text-foreground">
     <!-- Top-Right Icon-Only Theme Toggle -->
     <div class="absolute right-6 top-6">
       <UiButton
@@ -40,17 +40,23 @@
 
       <form class="space-y-4" @submit.prevent="submit">
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          <label
+            :for="tokenInputId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
             管理员口令
           </label>
           <div class="flex items-center gap-1.5">
             <UiInput
+              :id="tokenInputId"
               v-model="token"
               :type="show ? 'text' : 'password'"
               mono
               autocomplete="current-password"
               placeholder="输入管理员口令..."
+              :aria-invalid="Boolean(fieldError)"
               class="flex-1"
+              @update:model-value="fieldError = ''"
             />
             <UiButton
               variant="outline"
@@ -62,6 +68,9 @@
               <Eye v-else class="h-4 w-4" />
             </UiButton>
           </div>
+          <p v-if="fieldError" class="text-xs text-rose-600 dark:text-rose-400">
+            {{ fieldError }}
+          </p>
         </div>
 
         <UiButton
@@ -78,29 +87,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, useId } from "vue";
 import { useRouter } from "vue-router";
 import { Eye, EyeOff, Moon, Sun } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiInput from "../components/ui/UiInput.vue";
+import { setCachedMe } from "../modules/auth";
 import { effectiveTheme, toggleTheme } from "../modules/theme";
-import { toast } from "../modules/toast";
 
 const router = useRouter();
+const tokenInputId = useId();
 const token = ref("");
 const show = ref(false);
 const loading = ref(false);
+const fieldError = ref("");
 
 async function submit(): Promise<void> {
-  if (!token.value.trim()) {
-    toast.error("请输入管理员口令");
+  if (!token.value) {
+    fieldError.value = "请输入管理员口令";
     return;
   }
+  fieldError.value = "";
   loading.value = true;
   try {
-    const res = await api.login(token.value.trim());
+    const res = await api.login(token.value);
+    setCachedMe({
+      auth_required: true,
+      must_change_password: res.must_change_password,
+    });
     if (res.must_change_password) {
       await router.push({ name: "password" });
     } else {

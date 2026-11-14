@@ -5,6 +5,7 @@
     />
     <UiInput
       v-bind="$attrs"
+      :aria-label="($attrs['aria-label'] as string | undefined) ?? placeholder"
       :model-value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"

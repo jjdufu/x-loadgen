@@ -390,6 +390,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { AlertTriangle, Copy, Download, Loader2, Send, X } from "lucide-vue-next";
+import { downloadBlob } from "../../helpers/download";
 import {
   formatBytes,
   formatLatencyUs,
@@ -490,11 +491,6 @@ function downloadResponse(): void {
   const blob = new Blob([prettyBodyText.value], {
     type: isJson ? "application/json" : "text/plain",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `response-${Date.now()}.${isJson ? "json" : "txt"}`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, `response-${Date.now()}.${isJson ? "json" : "txt"}`);
 }
 </script>

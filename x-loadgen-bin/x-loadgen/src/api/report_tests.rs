@@ -244,6 +244,21 @@ async fn report_and_run_detail_redact_secrets_but_environment_detail_does_not() 
     assert_no_secrets(&report.to_string());
     assert!(report.get("snapshot_json").is_none());
     assert_eq!(report["id"], id);
+    let report_series = report["timeseries"].as_array().expect("report timeseries");
+    assert!(
+        !report_series.is_empty() && report_series[0].get("unix_sec").is_some(),
+        "expected per-second unix_sec buckets in finished report: {report_series:?}"
+    );
+    let total_bucket_samples: u64 = report_series
+        .iter()
+        .filter_map(|p| p["samples"].as_u64())
+        .sum();
+    assert_eq!(total_bucket_samples, 4, "{report_series:?}");
+
+    let (code, ts_api) = get_json(&http, &format!("{base}/api/v1/runs/{id}/timeseries")).await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{ts_api}");
+    let ts_arr = ts_api["points"].as_array().expect("timeseries points");
+    assert_eq!(ts_arr, report_series);
 
     let response = http
         .get(format!("{base}/api/v1/runs/{id}/report.json"))
@@ -396,7 +411,101 @@ async fn samples_filter_and_keyset_pagination_are_stable() {
         assert!((10_000..=10_050).contains(&end), "{end}");
     }
 
+    assert_keyset_walk_and_new_filters(&http, &base, &id).await;
+
     let _ = shutdown.send(());
+}
+
+/// Full keyset walk plus `error_class` / `min_latency_us` filters and
+/// 400s for partial cursors and unknown params, on the `seed_pages` data.
+async fn assert_keyset_walk_and_new_filters(http: &reqwest::Client, base: &str, id: &str) {
+    // Full keyset walk with a filter: every page follows the previous one,
+    // no row is repeated or skipped, and the filter holds on every page.
+    let (_, all_ok) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?success=true&limit=1000"),
+    )
+    .await;
+    let expected: Vec<(i64, u64, i64)> = all_ok["items"]
+        .as_array()
+        .expect("all ok")
+        .iter()
+        .map(|r| {
+            (
+                r["end_unix_ms"].as_i64().unwrap(),
+                r["worker"].as_u64().unwrap(),
+                r["seq"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert!(expected.len() > 14, "{}", expected.len());
+    let mut walked = Vec::new();
+    let mut cursor = String::new();
+    for _ in 0..100 {
+        let (code, page) = get_json(
+            http,
+            &format!("{base}/api/v1/runs/{id}/samples?success=true&limit=7{cursor}"),
+        )
+        .await;
+        assert_eq!(code, reqwest::StatusCode::OK, "{page}");
+        for r in page["items"].as_array().expect("page") {
+            assert_eq!(r["success"], true);
+            walked.push((
+                r["end_unix_ms"].as_i64().unwrap(),
+                r["worker"].as_u64().unwrap(),
+                r["seq"].as_i64().unwrap(),
+            ));
+        }
+        let Some(next) = page["next"].as_object() else {
+            break;
+        };
+        cursor = format!(
+            "&after_end_unix_ms={}&after_worker={}&after_seq={}",
+            next["after_end_unix_ms"], next["after_worker"], next["after_seq"]
+        );
+    }
+    assert_eq!(
+        walked, expected,
+        "keyset walk must equal the unpaged result"
+    );
+
+    let (code, by_class) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?error_class=http&limit=1000"),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{by_class}");
+    let class_items = by_class["items"].as_array().expect("class");
+    assert_eq!(class_items.len(), 12, "seeded every 5th of 60 rows");
+    assert!(class_items.iter().all(|r| r["error_class"] == "http"));
+
+    let (code, slow) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?min_latency_us=100&limit=1000"),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{slow}");
+    let slow_items = slow["items"].as_array().expect("slow");
+    assert_eq!(
+        slow_items.len(),
+        10,
+        "latency 50+i for i in 0..60 => 100..=109"
+    );
+    assert!(
+        slow_items
+            .iter()
+            .all(|r| r["latency_us"].as_i64().unwrap() >= 100)
+    );
+
+    for bad in [
+        "after_worker=0&after_seq=3",
+        "after_end_unix_ms=10000",
+        "min_latency_us=-1",
+        "min_latency=5",
+    ] {
+        let (code, body) = get_json(http, &format!("{base}/api/v1/runs/{id}/samples?{bad}")).await;
+        assert_eq!(code, reqwest::StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
 }
 
 #[tokio::test]
@@ -431,6 +540,29 @@ async fn sse_sends_a_stats_event() {
     );
     assert_no_secrets(&text);
     let _ = wait_status(&http, &base, &id, &["finished", "stopped"]).await;
+
+    // A finished run's SSE stream must emit one final snapshot and then close (EOF).
+    let mut finished_sse = http
+        .get(format!("{base}/api/v1/runs/{id}/events"))
+        .send()
+        .await
+        .expect("finished sse");
+    assert_eq!(finished_sse.status(), reqwest::StatusCode::OK);
+    let first = tokio::time::timeout(Duration::from_secs(2), finished_sse.chunk())
+        .await
+        .expect("final sse event timeout")
+        .expect("final sse chunk")
+        .expect("final sse bytes");
+    assert!(String::from_utf8_lossy(&first).contains("event: stats"));
+    let eof = tokio::time::timeout(Duration::from_secs(2), finished_sse.chunk())
+        .await
+        .expect("sse should close without hanging")
+        .expect("eof check");
+    assert!(
+        eof.is_none(),
+        "expected SSE EOF on finished run, got {eof:?}"
+    );
+
     let _ = shutdown.send(());
 }
 

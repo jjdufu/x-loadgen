@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use axum::Json;
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -12,15 +13,44 @@ use serde_json::{Value, json};
 use super::error::ApiError;
 use super::report::load_verdict;
 use super::server::{AppState, require_ready_auth};
-use crate::db::runs::{CreateRunRequest, TrafficPatch, delete_run, list_timeline, list_windows};
+use crate::db::runs::{
+    ALL_STATUSES, CreateRunRequest, TrafficPatch, delete_run, list_timeline, list_windows,
+};
 use crate::engine::RING_CAPACITY;
 use crate::engine::StopKind;
 use crate::run_assert::{Verdict, VerdictResult, status_is_running};
 
 /// Query string for `GET /api/v1/runs`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListRunsQuery {
+    /// Comma-separated statuses, e.g. `running,stopping`. Omitted = all.
     pub status: Option<String>,
+}
+
+/// Parse `running,stopping` into known statuses (deduplicated, empty = all).
+fn parse_status_filter(raw: Option<&str>) -> Result<Vec<&'static str>, ApiError> {
+    let mut out = Vec::new();
+    for part in raw
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        let Some(&known) = ALL_STATUSES.iter().find(|s| **s == part) else {
+            return Err(ApiError::bad_request(
+                "invalid_request",
+                format!(
+                    "unknown status {part:?}; expected one of {}",
+                    ALL_STATUSES.join(", ")
+                ),
+            ));
+        };
+        if !out.contains(&known) {
+            out.push(known);
+        }
+    }
+    Ok(out)
 }
 
 /// Query string for `POST /api/v1/runs`.
@@ -50,6 +80,8 @@ pub struct RunView {
     pub template_id: String,
     pub target_id: String,
     pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub status: String,
     pub started_at: Option<i64>,
     pub ended_at: Option<i64>,
@@ -73,10 +105,12 @@ pub struct RunView {
 pub async fn list_runs(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListRunsQuery>,
+    query: Result<Query<ListRunsQuery>, QueryRejection>,
 ) -> Result<Json<Vec<RunView>>, ApiError> {
     require_ready_auth(&state, &headers)?;
-    let rows = state.supervisor.list(query.status.as_deref())?;
+    let Query(query) = query?;
+    let statuses = parse_status_filter(query.status.as_deref())?;
+    let rows = state.supervisor.list(&statuses)?;
     Ok(Json(
         rows.into_iter()
             .map(|row| view_from_record(&row, None, None))
@@ -216,6 +250,7 @@ pub async fn get_stats(
                     dropped_details: 0,
                     in_flight: 0,
                     peak_in_flight: 0,
+                    missed_sends: 0,
                 },
                 (None, None, None, None),
                 0,
@@ -252,6 +287,7 @@ pub async fn get_stats(
         "dropped_details": dropped,
         "in_flight": in_flight,
         "peak_in_flight": counters.peak_in_flight,
+        "missed_sends": counters.missed_sends,
         "p50_us": p50,
         "p95_us": p95,
         "p99_us": p99,
@@ -303,7 +339,7 @@ fn stopped_run_stats_fallback(
     Ok((totals, percentiles))
 }
 
-/// Second-level ring buffer for a live run (empty once the process has dropped it).
+/// Second-level throughput series for live (single or multiprocess) and finished runs.
 ///
 /// # Errors
 ///
@@ -315,26 +351,23 @@ pub async fn get_timeseries(
 ) -> Result<Json<Value>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let _ = state.supervisor.get_run(&id)?;
-    let slots = state
-        .supervisor
-        .get(&id)
-        .map(|task| task.metrics.ring_snapshot())
-        .unwrap_or_default();
-    let points: Vec<Value> = slots
-        .into_iter()
-        .filter(|slot| slot.unix_sec != 0)
-        .map(|slot| {
-            json!({
-                "unix_sec": slot.unix_sec,
-                "samples": slot.samples,
-                "success": slot.success,
-                "failure": slot.failure,
-                "expected": slot.expected,
-                "bytes": slot.bytes,
-                "warmup": slot.warmup,
-            })
-        })
-        .collect();
+    let mut slots = if let Some(task) = state.supervisor.get(&id) {
+        if task.processes() > 1 {
+            let snaps = crate::engine::load_live_snapshots(&state.paths, &id, task.processes());
+            crate::engine::merge_live(&snaps, 60_000_000)
+                .map(|m| m.timeseries)
+                .unwrap_or_default()
+        } else {
+            task.metrics.timeseries_slots()
+        }
+    } else {
+        Vec::new()
+    };
+    if slots.is_empty() {
+        let conn = state.lock_db()?;
+        slots = crate::report::load_persisted_timeseries(&state.paths, &conn, &id);
+    }
+    let points = crate::report::ring_slots_to_json(&slots);
     Ok(Json(json!({
         "capacity": RING_CAPACITY,
         "points": points,
@@ -369,9 +402,23 @@ pub async fn get_windows(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require_ready_auth(&state, &headers)?;
-    let _ = state.supervisor.get_run(&id)?;
+    let record = state.supervisor.get_run(&id)?;
+    let processes = u32::try_from(record.processes).unwrap_or(1);
+    if processes > 1 && crate::run_assert::status_is_running(&record.status) {
+        let live = crate::engine::merge_worker_windows(&state.paths, &id, processes, None);
+        if !live.is_empty() {
+            return Ok(Json(json!({ "windows": live })));
+        }
+    }
     let conn = state.lock_db()?;
     let windows = list_windows(&conn, &id)?;
+    if windows.is_empty() && processes > 1 {
+        let merged =
+            crate::engine::merge_worker_windows(&state.paths, &id, processes, record.ended_at);
+        if !merged.is_empty() {
+            return Ok(Json(json!({ "windows": merged })));
+        }
+    }
     Ok(Json(json!({ "windows": windows })))
 }
 
@@ -434,6 +481,11 @@ pub async fn delete_run_handler(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     require_ready_auth(&state, &headers)?;
+    if state.supervisor.get(&id).is_some() {
+        return Err(ApiError::conflict(
+            "the run is still active or finalizing; wait for it to stop before deleting",
+        ));
+    }
     {
         let conn = state.lock_db()?;
         delete_run(&conn, &id)?;
@@ -441,6 +493,7 @@ pub async fn delete_run_handler(
     let dir = state.paths.run_dir(&id);
     if dir.exists()
         && let Err(err) = std::fs::remove_dir_all(&dir)
+        && err.kind() != std::io::ErrorKind::NotFound
     {
         return Err(ApiError::internal(format!(
             "run record deleted but the run directory could not be removed: {err}"
@@ -469,6 +522,12 @@ fn view_from_record(
         .and_then(|v| v.get("title"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let model = parsed_meta
+        .as_ref()
+        .and_then(|v| v.get("template"))
+        .and_then(|t| t.get("model"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let source = parsed_meta.and_then(|v| v.get("source").cloned());
     RunView {
         id: record.id.clone(),
@@ -477,6 +536,7 @@ fn view_from_record(
         template_id: record.template_id.clone(),
         target_id: record.target_id.clone(),
         mode: record.mode.clone(),
+        model,
         status: record.status.clone(),
         started_at: record.started_at,
         ended_at: record.ended_at,
@@ -509,6 +569,11 @@ fn merged_live_stats(
         return None;
     }
     let merged = crate::engine::merge_live(&snaps, 60_000_000).ok()?;
+    let window_index = match (merged.window_index, state.supervisor.get(id)) {
+        (Some(w), Some(task)) => Some(w.max(task.window_index())),
+        (None, Some(task)) => Some(task.window_index()),
+        (w, None) => w,
+    };
     Some(json!({
         "id": record.id,
         "status": record.status,
@@ -526,6 +591,6 @@ fn merged_live_stats(
         "p95_us": merged.p95_us,
         "p99_us": merged.p99_us,
         "max_us": merged.max_us,
-        "window_index": merged.window_index,
+        "window_index": window_index,
     }))
 }

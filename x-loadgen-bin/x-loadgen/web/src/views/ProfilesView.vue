@@ -1,12 +1,13 @@
 <template>
   <div class="min-h-0 w-full flex-1 overflow-y-auto bg-background">
-    <div class="mx-auto max-w-7xl space-y-5 p-6 lg:p-8">
+    <div class="mx-auto max-w-7xl space-y-5 p-4 sm:p-6 lg:p-8">
       <!-- Top Shared Search & Action Toolbar -->
       <div class="flex flex-wrap items-center justify-between gap-3">
         <UiSearchInput
           v-model="searchQuery"
           placeholder="搜索预设名称或备注..."
-          wrapper-class="w-64 sm:w-72"
+          aria-label="搜索负载预设"
+          wrapper-class="min-w-0 flex-1 sm:w-72 sm:flex-none"
         />
 
         <UiButton variant="default" size="sm" @click="openEditor(null)">
@@ -103,6 +104,7 @@
                 variant="ghost"
                 size="icon-sm"
                 title="删除预设"
+                :aria-label="`删除预设 ${item.name}`"
                 class="hover:text-rose-600 dark:hover:text-rose-400"
                 @click="removeProfile(item)"
               >
@@ -125,19 +127,35 @@
       <div class="space-y-5">
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
-            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            <label
+              :for="nameInputId"
+              class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+            >
               预设名称 *
             </label>
             <UiInput
+              :id="nameInputId"
               v-model="name"
               placeholder="例如 基准冒烟 50QPS / 峰值冲击 500QPS"
+              :aria-invalid="Boolean(nameError)"
+              @update:model-value="nameError = ''"
             />
+            <p v-if="nameError" class="text-xs text-rose-600 dark:text-rose-400">
+              {{ nameError }}
+            </p>
           </div>
           <div class="space-y-1.5">
-            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+            <label
+              :for="noteInputId"
+              class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+            >
               备注说明
             </label>
-            <UiInput v-model="note" placeholder="适用场景说明（可选）" />
+            <UiInput
+              :id="noteInputId"
+              v-model="note"
+              placeholder="适用场景说明（可选）"
+            />
           </div>
         </div>
 
@@ -159,7 +177,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, useId } from "vue";
 import { Edit3, Gauge, Plus, Trash2 } from "lucide-vue-next";
 import { api } from "../api/workspace";
 import type { AssertSpec, LoadConfig, LoadProfile } from "../api/types";
@@ -179,11 +197,14 @@ import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
 import { loadProfiles, refreshLoadProfiles } from "../stores/workspace";
 
+const nameInputId = useId();
+const noteInputId = useId();
 const searchQuery = ref("");
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const name = ref("");
 const note = ref("");
+const nameError = ref("");
 const config = ref<LoadConfig>(createDefaultLoadConfig());
 const assertSpec = ref<AssertSpec | null>(null);
 const saving = ref(false);
@@ -203,6 +224,7 @@ onMounted(() => {
 });
 
 function openEditor(profile: LoadProfile | null): void {
+  nameError.value = "";
   if (!profile) {
     editingId.value = null;
     name.value = "";
@@ -242,9 +264,10 @@ function openEditor(profile: LoadProfile | null): void {
 
 async function saveProfile(): Promise<void> {
   if (!name.value.trim()) {
-    toast.error("请输入预设名称");
+    nameError.value = "请输入预设名称";
     return;
   }
+  nameError.value = "";
   saving.value = true;
   try {
     const payload = {

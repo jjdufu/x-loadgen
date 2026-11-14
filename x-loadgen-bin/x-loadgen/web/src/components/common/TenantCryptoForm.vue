@@ -359,7 +359,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
+import { isAxiosError } from "axios";
 import {
   Copy,
   Dices,
@@ -468,6 +469,19 @@ function fillRandomBase64Key(
   toast.info("已生成随机 Base64 密钥");
 }
 
+// The parent remounts this form per tenant (`:key`), so once unmounted any
+// pending result belongs to a tenant that is no longer being edited.
+let disposed = false;
+onBeforeUnmount(() => {
+  disposed = true;
+});
+
+function droppedAfterSwitch(): boolean {
+  if (!disposed) return false;
+  toast.info("已切换租户，生成的密钥对未写入表单");
+  return true;
+}
+
 async function generateKeypair(): Promise<void> {
   const alg = tenant.value.binding_alg?.trim();
   if (!alg) return;
@@ -482,6 +496,7 @@ async function generateKeypair(): Promise<void> {
           alg,
           kid,
         );
+        if (droppedAfterSwitch()) return;
         patch({
           binding_kid: res.binding_kid,
           binding_alg: res.binding_alg,
@@ -490,11 +505,14 @@ async function generateKeypair(): Promise<void> {
         });
         toast.success(`已为租户生成并持久化 ${alg} 密钥对`);
         return;
-      } catch {
-        // Fall through to stateless generation if tenant row isn't saved yet
+      } catch (err) {
+        // Fall through to stateless generation only if the tenant row isn't
+        // saved yet; other failures were already reported by the interceptor.
+        if (!(isAxiosError(err) && err.response?.status === 404)) return;
       }
     }
     const res = await api.generateStatelessKeypair(alg, kid);
+    if (droppedAfterSwitch()) return;
     patch({
       binding_kid: res.binding_kid,
       binding_alg: res.binding_alg,

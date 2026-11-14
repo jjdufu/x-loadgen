@@ -4,10 +4,22 @@
   >
     <!-- Minimalist Mark & Unified Breadcrumb -->
     <div class="flex min-w-0 items-center gap-2.5">
+      <UiButton
+        v-if="isMobile"
+        variant="ghost"
+        size="icon-sm"
+        class="-ml-1.5"
+        aria-label="打开导航菜单"
+        aria-controls="app-mobile-nav"
+        :aria-expanded="mobileNavOpen"
+        @click="mobileNavOpen = !mobileNavOpen"
+      >
+        <Menu class="h-4 w-4" />
+      </UiButton>
       <RouterLink
         :to="{ name: 'workspace' }"
         title="返回工作台"
-        aria-label="返回工作台"
+        aria-label="XL 返回工作台"
         class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold tracking-tighter text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         XL
@@ -74,11 +86,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { LogOut, Moon, Settings, Sun } from "lucide-vue-next";
+import { LogOut, Menu, Moon, Settings, Sun } from "lucide-vue-next";
 import { api } from "../../api/workspace";
+import { invalidateCachedMe } from "../../modules/auth";
 import { effectiveTheme, toggleTheme } from "../../modules/theme";
+import { isMobile, mobileNavOpen } from "../../modules/viewport";
 import { toast } from "../../modules/toast";
-import { serverMeta } from "../../stores/workspace";
+import { clearWorkspaceSession, serverMeta } from "../../stores/workspace";
 import UiButton from "../ui/UiButton.vue";
 
 const route = useRoute();
@@ -93,6 +107,8 @@ const sectionTitle = computed(() => {
 
 async function handleLogout(): Promise<void> {
   await api.logout();
+  invalidateCachedMe();
+  clearWorkspaceSession();
   toast.info("已退出登录");
   await router.push({ name: "login" });
 }

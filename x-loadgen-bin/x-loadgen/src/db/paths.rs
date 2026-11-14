@@ -67,6 +67,13 @@ impl DataPaths {
             .join(format!("w{worker_index:02}-live.json"))
     }
 
+    /// Per-window timing/counters `<data-dir>/runs/<run_id>/wNN-windows.json`.
+    #[must_use]
+    pub fn worker_windows(&self, run_id: &str, worker_index: u32) -> PathBuf {
+        self.run_dir(run_id)
+            .join(format!("w{worker_index:02}-windows.json"))
+    }
+
     /// Pending dump path `pending-wNN-<unix_ms>.bin` under the run directory.
     #[must_use]
     pub fn pending_dump(&self, run_id: &str, worker_index: u32, unix_ms: u64) -> PathBuf {

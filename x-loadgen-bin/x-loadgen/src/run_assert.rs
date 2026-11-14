@@ -32,8 +32,9 @@ pub struct AssertSpec {
     pub max_error_rate: Option<f64>,
     /// Lower bound on `achieved_qps / configured_qps`.
     ///
-    /// Achieved QPS is `samples / elapsed_seconds` over the wall-clock interval
-    /// from `started_at` to `ended_at` (or now, while the run is still going).
+    /// Achieved QPS is `samples / effective_seconds`, where effective time is
+    /// the sum of window durations minus warmup, with an open-loop ramp counted
+    /// at its average (half) rate; gaps between loop windows are excluded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_qps_ratio: Option<f64>,
 }

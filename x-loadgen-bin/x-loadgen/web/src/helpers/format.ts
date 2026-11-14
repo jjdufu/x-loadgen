@@ -239,6 +239,126 @@ export function formatVerdictResult(result: string | null | undefined): string {
   }
 }
 
+export function runStatusBadgeVariant(
+  status: string | null | undefined,
+): "success" | "warning" | "destructive" | "secondary" | "outline" {
+  switch (status) {
+    case "running":
+      return "success";
+    case "stopping":
+    case "stopped":
+      return "warning";
+    case "failed":
+    case "interrupted":
+      return "destructive";
+    case "finished":
+      return "outline";
+    default:
+      return "secondary";
+  }
+}
+
+export function formatTimelineEvent(
+  event: string,
+  rawPayload?: unknown,
+): { label: string; detail: string } {
+  const p: Record<string, unknown> =
+    rawPayload !== null &&
+    typeof rawPayload === "object" &&
+    !Array.isArray(rawPayload)
+      ? (rawPayload as Record<string, unknown>)
+      : {};
+  switch (event) {
+    case "start": {
+      const mode = typeof p.mode === "string" ? formatRunMode(p.mode) : "";
+      return {
+        label: "启动压测",
+        detail: mode ? `执行模式：${mode}` : "",
+      };
+    }
+    case "workers": {
+      const count = p.value;
+      return {
+        label: "拉起工作进程",
+        detail: count !== undefined ? `并发工作进程数：${String(count)}` : "",
+      };
+    }
+    case "worker_exit": {
+      const idx = p.value;
+      return {
+        label: "工作进程异常退出",
+        detail: idx !== undefined ? `进程编号：w${String(idx)}` : "",
+      };
+    }
+    case "traffic": {
+      const fmtQps = (v: unknown) =>
+        v === null || v === undefined ? "不限速" : `${String(v)} QPS`;
+      const parts = [
+        `速率 ${fmtQps(p.old_qps)} → ${fmtQps(p.qps)}`,
+        `并发 ${String(p.old_concurrency ?? "-")} → ${String(p.concurrency ?? "-")}`,
+      ];
+      return {
+        label: "动态调整流量",
+        detail: parts.join("，"),
+      };
+    }
+    case "window": {
+      const idx = p.window_index !== undefined ? `#${String(p.window_index)}` : "-";
+      const missed = Number(p.missed_sends ?? 0);
+      return {
+        label: "完成循环窗口",
+        detail:
+          missed > 0
+            ? `轮次 ${idx}（过载漏发 ${missed} 次）`
+            : `轮次 ${idx}`,
+      };
+    }
+    case "stop": {
+      const kindMap: Record<string, string> = {
+        user: "手动停止",
+        signal: "系统信号",
+      };
+      const kind = typeof p.kind === "string" ? (kindMap[p.kind] ?? p.kind) : "";
+      return {
+        label: "收到停止指令",
+        detail: kind ? `触发方式：${kind}` : "",
+      };
+    }
+    case "resume":
+      return { label: "恢复续跑", detail: "" };
+    case "interrupted": {
+      const reason =
+        p.reason === "process restarted"
+          ? "服务进程重启，未完成任务转为中断状态"
+          : typeof p.reason === "string"
+            ? p.reason
+            : "";
+      return {
+        label: "任务中断",
+        detail: reason,
+      };
+    }
+    case "end": {
+      const st = typeof p.status === "string" ? formatRunStatus(p.status) : "-";
+      const err = typeof p.error === "string" && p.error ? ` · 错误：${p.error}` : "";
+      return {
+        label: "任务结束",
+        detail: `最终状态：${st}${err}`,
+      };
+    }
+    default: {
+      const hasValue =
+        rawPayload !== undefined &&
+        rawPayload !== null &&
+        (typeof rawPayload !== "object" || Object.keys(p).length > 0);
+      return {
+        label: event,
+        detail: hasValue ? JSON.stringify(rawPayload) : "",
+      };
+    }
+  }
+}
+
 export function createEmptyKvRow(): KeyValueRow {
   return { key: "", value: "", active: true, description: "" };
 }

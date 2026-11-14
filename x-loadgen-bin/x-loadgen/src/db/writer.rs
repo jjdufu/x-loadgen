@@ -82,6 +82,7 @@ pub struct CheckpointUpdate {
     pub window_index: Option<i64>,
     pub counters_json: String,
     pub histogram_blob: Option<Vec<u8>>,
+    pub timeseries_json: Option<String>,
 }
 
 /// Cloneable enqueue handle. Dropping a handle does not stop the write thread;
@@ -325,13 +326,37 @@ impl LoopState {
             if !batch.is_empty()
                 && let Err(err) = self.commit_batch(&mut batch)
             {
-                result = Err(err);
-                break;
+                if self.config.fail_commits || disconnected {
+                    result = Err(err);
+                    break;
+                }
+                tracing::warn!(
+                    run_id = %self.run_id,
+                    worker = self.worker_index,
+                    rows = batch.len(),
+                    error = %err,
+                    "sample batch commit failed after retries; spilling batch to pending dump and continuing"
+                );
+                if let Err(dump_err) =
+                    write_pending(&self.paths, &self.run_id, self.worker_index, &batch)
+                {
+                    result = Err(err.context(format!("pending dump also failed: {dump_err:#}")));
+                    break;
+                }
+                batch.clear();
             }
             if last_checkpoint.elapsed() >= self.config.checkpoint_interval || disconnected {
                 if let Err(err) = self.write_checkpoint() {
-                    result = Err(err);
-                    break;
+                    if disconnected {
+                        result = Err(err);
+                        break;
+                    }
+                    tracing::warn!(
+                        run_id = %self.run_id,
+                        worker = self.worker_index,
+                        error = %err,
+                        "periodic worker checkpoint failed; will retry on next interval"
+                    );
                 }
                 last_checkpoint = Instant::now();
             }
@@ -359,6 +384,25 @@ impl LoopState {
     }
 
     fn commit_batch(&mut self, batch: &mut Vec<Sample>) -> Result<()> {
+        const BACKOFFS_MS: [u64; 3] = [20, 60, 150];
+        let mut attempt = 0_usize;
+        loop {
+            match self.commit_batch_once(batch) {
+                Ok(()) => return Ok(()),
+                Err(err)
+                    if !self.config.fail_commits
+                        && attempt < BACKOFFS_MS.len()
+                        && is_transient_sqlite_error(&err) =>
+                {
+                    thread::sleep(Duration::from_millis(BACKOFFS_MS[attempt]));
+                    attempt += 1;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    fn commit_batch_once(&mut self, batch: &mut Vec<Sample>) -> Result<()> {
         let tx = self
             .conn
             .transaction()
@@ -377,6 +421,21 @@ impl LoopState {
     }
 
     fn write_checkpoint(&self) -> Result<()> {
+        const BACKOFFS_MS: [u64; 3] = [20, 60, 150];
+        let mut attempt = 0_usize;
+        loop {
+            match self.write_checkpoint_once() {
+                Ok(()) => return Ok(()),
+                Err(err) if attempt < BACKOFFS_MS.len() && is_transient_sqlite_error(&err) => {
+                    thread::sleep(Duration::from_millis(BACKOFFS_MS[attempt]));
+                    attempt += 1;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    fn write_checkpoint_once(&self) -> Result<()> {
         let update = {
             let guard = self
                 .checkpoint
@@ -384,38 +443,65 @@ impl LoopState {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
-        let (window_index, counters_json, histogram_blob) = if let Some(update) = update {
-            (
-                update.window_index,
-                update.counters_json,
-                update.histogram_blob,
-            )
-        } else {
-            let written = self.written.load(Ordering::Relaxed);
-            let dropped = self.dropped.load(Ordering::Relaxed);
-            let json = serde_json::json!({
-                "written": written,
-                "dropped_details": dropped,
-            })
-            .to_string();
-            (None, json, None)
-        };
+        let (window_index, counters_json, histogram_blob, timeseries_json) =
+            if let Some(update) = update {
+                (
+                    update.window_index,
+                    update.counters_json,
+                    update.histogram_blob,
+                    update.timeseries_json,
+                )
+            } else {
+                let written = self.written.load(Ordering::Relaxed);
+                let dropped = self.dropped.load(Ordering::Relaxed);
+                let json = serde_json::json!({
+                    "written": written,
+                    "dropped_details": dropped,
+                })
+                .to_string();
+                (None, json, None, None)
+            };
         let ts = i64::try_from(unix_now_ms()?).unwrap_or(i64::MAX);
         let dropped = i64::try_from(self.dropped.load(Ordering::Relaxed)).unwrap_or(i64::MAX);
         self.conn
             .execute(
-                "INSERT INTO worker_checkpoints (ts, window_index, counters_json, histogram_blob, dropped_details)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO worker_checkpoints (ts, window_index, counters_json, histogram_blob, timeseries_json, dropped_details)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(ts) DO UPDATE SET
                     window_index = excluded.window_index,
                     counters_json = excluded.counters_json,
                     histogram_blob = excluded.histogram_blob,
+                    timeseries_json = COALESCE(excluded.timeseries_json, worker_checkpoints.timeseries_json),
                     dropped_details = excluded.dropped_details",
-                rusqlite::params![ts, window_index, counters_json, histogram_blob, dropped],
+                rusqlite::params![
+                    ts,
+                    window_index,
+                    counters_json,
+                    histogram_blob,
+                    timeseries_json,
+                    dropped
+                ],
             )
             .context("insert worker checkpoint")?;
+        let _ = self.conn.execute(
+            "DELETE FROM worker_checkpoints WHERE ts < ?1",
+            rusqlite::params![ts],
+        );
         Ok(())
     }
+}
+
+fn is_transient_sqlite_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(code, _))
+                if matches!(
+                    code.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+        )
+    })
 }
 
 enum RecvOutcome {

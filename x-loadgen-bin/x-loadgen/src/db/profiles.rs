@@ -144,8 +144,10 @@ impl LoadConfig {
                 )));
             }
         }
-        if self.concurrency < 1 {
-            return Err(StoreError::invalid("concurrency must be >= 1"));
+        if !(1..=65_536).contains(&self.concurrency) {
+            return Err(StoreError::invalid(
+                "concurrency must be between 1 and 65536",
+            ));
         }
         match (self.requests, self.duration_secs) {
             (Some(r), None) => {
@@ -154,8 +156,10 @@ impl LoadConfig {
                 }
             }
             (None, Some(d)) => {
-                if d < 1 {
-                    return Err(StoreError::invalid("duration_secs must be >= 1"));
+                if !(1..=604_800).contains(&d) {
+                    return Err(StoreError::invalid(
+                        "duration_secs must be between 1 and 604800 (7 days)",
+                    ));
                 }
             }
             (None, None) => {
@@ -169,23 +173,31 @@ impl LoadConfig {
                 ));
             }
         }
-        if self.warmup_secs < 0 {
-            return Err(StoreError::invalid("warmup_secs must be >= 0"));
+        if !(0..=3_600).contains(&self.warmup_secs) {
+            return Err(StoreError::invalid(
+                "warmup_secs must be between 0 and 3600",
+            ));
         }
-        if self.ramp_secs < 0 {
-            return Err(StoreError::invalid("ramp_secs must be >= 0"));
+        if !(0..=86_400).contains(&self.ramp_secs) {
+            return Err(StoreError::invalid("ramp_secs must be between 0 and 86400"));
         }
-        if self.timeout_secs < 1 {
-            return Err(StoreError::invalid("timeout_secs must be >= 1"));
+        if !(1..=3_600).contains(&self.timeout_secs) {
+            return Err(StoreError::invalid(
+                "timeout_secs must be between 1 and 3600",
+            ));
         }
-        if self.connect_timeout_secs < 1 {
-            return Err(StoreError::invalid("connect_timeout_secs must be >= 1"));
+        if !(1..=300).contains(&self.connect_timeout_secs) {
+            return Err(StoreError::invalid(
+                "connect_timeout_secs must be between 1 and 300",
+            ));
         }
-        if self.token_refresh_skew_secs < 0 {
-            return Err(StoreError::invalid("token_refresh_skew_secs must be >= 0"));
+        if !(0..=86_400).contains(&self.token_refresh_skew_secs) {
+            return Err(StoreError::invalid(
+                "token_refresh_skew_secs must be between 0 and 86400",
+            ));
         }
-        if self.processes < 1 {
-            return Err(StoreError::invalid("processes must be >= 1"));
+        if !(1..=64).contains(&self.processes) {
+            return Err(StoreError::invalid("processes must be between 1 and 64"));
         }
         if !matches!(self.qps_mode.trim(), MODE_TOTAL | MODE_PER_PROCESS) {
             return Err(StoreError::invalid(
@@ -198,12 +210,16 @@ impl LoadConfig {
             ));
         }
         if let Some(rounds) = self.rounds
-            && rounds < 1
+            && !(1..=1_000_000).contains(&rounds)
         {
-            return Err(StoreError::invalid("rounds must be >= 1 when set"));
+            return Err(StoreError::invalid(
+                "rounds must be between 1 and 1000000 when set",
+            ));
         }
-        if self.loop_interval_secs < 0 {
-            return Err(StoreError::invalid("loop_interval_secs must be >= 0"));
+        if !(0..=86_400).contains(&self.loop_interval_secs) {
+            return Err(StoreError::invalid(
+                "loop_interval_secs must be between 0 and 86400",
+            ));
         }
         self.validate_retention_and_caps(max_qps, max_concurrency)
     }
@@ -576,4 +592,34 @@ fn map_unique_err(err: rusqlite::Error, name: &str) -> StoreError {
         return StoreError::conflict(format!("load profile '{name}' already exists"));
     }
     StoreError::from(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoadConfig;
+
+    #[test]
+    fn validate_rejects_excessive_processes_concurrency_and_durations() {
+        let cfg = LoadConfig {
+            duration_secs: Some(10),
+            ..LoadConfig::default()
+        };
+        cfg.validate(None, None).expect("baseline valid");
+
+        let mut bad_procs = cfg.clone();
+        bad_procs.processes = 65;
+        assert!(bad_procs.validate(None, None).is_err());
+
+        let mut bad_conc = cfg.clone();
+        bad_conc.concurrency = 100_000;
+        assert!(bad_conc.validate(None, None).is_err());
+
+        let mut bad_timeout = cfg.clone();
+        bad_timeout.timeout_secs = 7_200;
+        assert!(bad_timeout.validate(None, None).is_err());
+
+        let mut bad_dur = cfg;
+        bad_dur.duration_secs = Some(604_801);
+        assert!(bad_dur.validate(None, None).is_err());
+    }
 }

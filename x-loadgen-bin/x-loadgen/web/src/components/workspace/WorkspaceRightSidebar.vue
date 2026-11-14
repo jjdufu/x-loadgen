@@ -299,6 +299,7 @@
 </template>
 
 <script setup lang="ts">
+import { isAxiosError } from "axios";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
@@ -314,6 +315,7 @@ import {
 } from "lucide-vue-next";
 import { api } from "../../api/workspace";
 import type { CollectionNode, SavedRequest } from "../../api/types";
+import { downloadBlob } from "../../helpers/download";
 import { createDefaultRequestDraft } from "../../helpers/format";
 import { askConfirm } from "../../modules/confirm";
 import { toast } from "../../modules/toast";
@@ -492,6 +494,7 @@ async function onFileSelected(ev: Event): Promise<void> {
       toast.success("环境导入成功");
     }
   } catch (err) {
+    if (isAxiosError(err)) return; // already toasted by the HTTP interceptor
     toast.error(
       `导入失败：${err instanceof Error ? err.message : String(err)}`,
     );
@@ -510,12 +513,7 @@ async function exportData(kind: "collections" | "environments"): Promise<void> {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `x-loadgen-${kind}-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, `x-loadgen-${kind}-${Date.now()}.json`);
   toast.success(`已导出${kind === "collections" ? "集合" : "环境"}配置`);
 }
 </script>

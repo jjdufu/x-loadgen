@@ -1,10 +1,15 @@
 <template>
-  <div class="select-none">
+  <div class="select-none" role="group">
     <!-- Collection / Folder Header Row -->
     <div
-      class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-accent/60"
+      role="treeitem"
+      tabindex="0"
+      :aria-expanded="expanded"
+      class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       :style="{ paddingLeft: `${depth * 14 + 8}px` }"
       @click="!renaming && (expanded = !expanded)"
+      @keydown.enter.self="!renaming && (expanded = !expanded)"
+      @keydown.space.prevent.self="!renaming && (expanded = !expanded)"
     >
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <component
@@ -36,7 +41,7 @@
 
       <div
         v-if="!renaming"
-        class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+        class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
         @click.stop
       >
         <button
@@ -104,7 +109,10 @@
       <div
         v-for="req in node.requests"
         :key="req.id"
-        class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors"
+        role="treeitem"
+        tabindex="0"
+        :aria-selected="activeTab.draft.id === req.id"
+        class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         :class="
           activeTab.draft.id === req.id
             ? 'bg-accent text-accent-foreground font-medium'
@@ -112,6 +120,8 @@
         "
         :style="{ paddingLeft: `${(depth + 1) * 14 + 14}px` }"
         @click="openSavedRequestInTab(req)"
+        @keydown.enter.self="openSavedRequestInTab(req)"
+        @keydown.space.prevent.self="openSavedRequestInTab(req)"
       >
         <div class="flex min-w-0 flex-1 items-center gap-2">
           <span
@@ -130,7 +140,7 @@
         </div>
 
         <div
-          class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+          class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
           @click.stop
         >
           <button

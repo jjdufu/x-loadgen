@@ -48,5 +48,6 @@ COPY --from=builder /src/x-loadgen/target/release/x-loadgen /usr/local/bin/x-loa
 USER 10001:10001
 VOLUME ["/data"]
 EXPOSE 8757
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 CMD ["x-loadgen", "health"]
 ENTRYPOINT ["tini", "--", "x-loadgen"]
 CMD ["serve", "--listen", "0.0.0.0:8757", "--data-dir", "/data"]

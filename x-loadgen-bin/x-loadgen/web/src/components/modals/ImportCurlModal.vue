@@ -26,7 +26,12 @@
 import { ref } from "vue";
 import { parseCurlToDraft } from "../../helpers/curl";
 import { toast } from "../../modules/toast";
-import { activeTab, curlModalOpen } from "../../stores/workspace";
+import {
+  activeTab,
+  curlModalOpen,
+  isTabDirty,
+  openDraftInNewTab,
+} from "../../stores/workspace";
 import UiButton from "../ui/UiButton.vue";
 import UiDialog from "../ui/UiDialog.vue";
 import UiTextarea from "../ui/UiTextarea.vue";
@@ -39,11 +44,19 @@ function applyCurl(): void {
     return;
   }
   const parsed = parseCurlToDraft(curlText.value);
-  parsed.id = activeTab.value.draft.id;
-  parsed.collection_id = activeTab.value.draft.collection_id;
-  activeTab.value.draft = parsed;
+  const tab = activeTab.value;
+  // Only reuse a blank, never-saved tab; otherwise open a new tab so an
+  // existing draft (or the saved request it points at) is never overwritten.
+  const reuse = !tab.draft.id && !tab.savedSnapshotJson && !isTabDirty(tab);
+  if (reuse) {
+    tab.draft = parsed;
+    tab.response = null;
+    tab.protocolStash = {};
+  } else {
+    openDraftInNewTab(parsed);
+  }
   curlModalOpen.value = false;
   curlText.value = "";
-  toast.success("已从 cURL 导入到当前请求标签页");
+  toast.success(reuse ? "已从 cURL 导入到当前标签页" : "已从 cURL 导入到新标签页");
 }
 </script>

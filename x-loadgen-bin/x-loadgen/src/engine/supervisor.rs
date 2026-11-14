@@ -12,18 +12,18 @@ use tracing::{error, info, warn};
 use crate::db::runs::{
     NewRun, RunRecord, STATUS_FAILED, STATUS_FINISHED, STATUS_INTERRUPTED, STATUS_RUNNING,
     STATUS_STOPPED, STATUS_STOPPING, append_interrupt_range, append_timeline, get_run, insert_run,
-    last_window_index, latest_worker_checkpoint, list_runs, list_windows, reopen_for_resume,
-    set_current_traffic, set_status, set_stop_flag,
+    latest_worker_checkpoint, list_runs, list_windows, reopen_for_resume, set_current_traffic,
+    set_status, set_stop_flag,
 };
 use crate::db::{
     CheckpointUpdate, DataPaths, DetailWriter, StoreError, WriterConfig, import_pending_dir,
     open_existing_worker, open_worker_connection,
 };
-use crate::engine::cluster::merge_percentiles;
+use crate::engine::cluster::{ClusterResumePlan, seal_worker_windows};
 use crate::engine::limits::{self, TrafficShare};
 use crate::engine::metrics::{CounterSnapshot, Metrics, unix_now_ms};
 use crate::engine::snapshot::{RunSnapshot, compile_run_snapshot};
-use crate::engine::windows::{WindowRecord, write_window};
+use crate::engine::windows::{WindowRecord, open_window, seal_open_db_windows, write_window};
 use crate::engine::{
     EngineConfig, EngineHandle, EngineModel, ExecutePlan, HttpExecutor, LiveTraffic, ProductChoice,
     TenantChoice, Weighted,
@@ -241,8 +241,11 @@ impl Supervisor {
                 .clone()
                 .unwrap_or_else(|| "adhoc".to_string());
             let snapshot_json = serde_json::to_string(&snapshot)?;
-            let qps_i = snapshot.template.qps;
-            let concurrency_i = snapshot.template.concurrency.max(1);
+            // Always persist run-wide totals (`per_process` multiplied out), the
+            // same values the in-memory task, caps, live patches and verdict
+            // use. Workers split these evenly.
+            let qps_i = snapshot.template.effective_total_qps();
+            let concurrency_i = snapshot.template.effective_total_concurrency().max(1);
             let processes = snapshot.template.processes.max(1);
             let record = insert_run(
                 &conn,
@@ -258,7 +261,7 @@ impl Supervisor {
             )?;
             (record, snapshot)
         };
-        self.spawn_for(&record, snapshot, false);
+        self.spawn_for(&record, snapshot, None);
         Ok(record)
     }
 
@@ -307,12 +310,12 @@ impl Supervisor {
             let record = get_run(&conn, id)?;
             (record, snapshot, ended_at)
         };
+        let now_ms = i64::try_from(crate::db::unix_now_ms().unwrap_or(0)).unwrap_or(0);
         if let Some(start_ms) = ended_at {
-            let end_ms = i64::try_from(crate::db::unix_now_ms().unwrap_or(0)).unwrap_or(0);
             let conn = self.lock_db();
-            append_interrupt_range(&conn, id, start_ms, end_ms.max(start_ms))?;
+            append_interrupt_range(&conn, id, start_ms, now_ms.max(start_ms))?;
         }
-        self.spawn_for(&record, snapshot, true);
+        self.spawn_for(&record, snapshot, Some(ended_at.unwrap_or(now_ms)));
         let conn = self.lock_db();
         get_run(&conn, id)
     }
@@ -432,9 +435,9 @@ impl Supervisor {
     /// # Errors
     ///
     /// Returns a storage error if the query fails.
-    pub fn list(&self, status: Option<&str>) -> Result<Vec<RunRecord>, StoreError> {
+    pub fn list(&self, statuses: &[&str]) -> Result<Vec<RunRecord>, StoreError> {
         let conn = self.lock_db();
-        list_runs(&conn, status)
+        list_runs(&conn, statuses)
     }
 
     /// Load one run.
@@ -447,16 +450,33 @@ impl Supervisor {
         get_run(&conn, id)
     }
 
-    fn spawn_for(&self, record: &RunRecord, snapshot: RunSnapshot, resume: bool) {
+    fn spawn_for(&self, record: &RunRecord, snapshot: RunSnapshot, resume_end_ms: Option<i64>) {
         if record.processes > 1 {
-            self.spawn_cluster(record.id.clone(), snapshot, record.processes);
+            self.spawn_cluster(record, snapshot, resume_end_ms);
         } else {
-            self.spawn_driver(record.id.clone(), snapshot, resume);
+            self.spawn_driver(record.id.clone(), snapshot, resume_end_ms);
         }
     }
 
-    fn spawn_cluster(&self, run_id: String, snapshot: RunSnapshot, processes: i64) {
-        let processes = u32::try_from(processes.max(1)).unwrap_or(1);
+    fn spawn_cluster(&self, record: &RunRecord, snapshot: RunSnapshot, resume_end_ms: Option<i64>) {
+        let run_id = record.id.clone();
+        let processes = u32::try_from(record.processes.max(1)).unwrap_or(1);
+        let resume_plan = if let Some(fallback_end_ms) = resume_end_ms {
+            seal_worker_windows(&self.paths, &run_id, processes, fallback_end_ms);
+            let mut merged = crate::engine::cluster::merge_worker_windows(
+                &self.paths,
+                &run_id,
+                processes,
+                Some(fallback_end_ms),
+            );
+            if merged.is_empty() {
+                let conn = self.lock_db();
+                merged = list_windows(&conn, &run_id).unwrap_or_default();
+            }
+            ClusterResumePlan::from_windows(&merged, fallback_end_ms)
+        } else {
+            ClusterResumePlan::default()
+        };
         let timeout_us = u64::try_from(snapshot.template.timeout_secs.max(0))
             .unwrap_or(0)
             .saturating_mul(1_000_000)
@@ -466,8 +486,16 @@ impl Supervisor {
                 .unwrap_or_else(|_| Metrics::new(2).expect("fallback histogram")),
         );
         let cancel = CancellationToken::new();
-        let qps = opt_u64(snapshot.template.effective_total_qps());
-        let concurrency = as_u64(snapshot.template.effective_total_concurrency()).max(1);
+        let qps = record
+            .current_qps
+            .map_or_else(|| opt_u64(snapshot.template.effective_total_qps()), as_u64);
+        let concurrency = record
+            .current_concurrency
+            .map_or_else(
+                || as_u64(snapshot.template.effective_total_concurrency()),
+                as_u64,
+            )
+            .max(1);
         let traffic = Arc::new(LiveTraffic {
             qps: AtomicU64::new(qps),
             concurrency: AtomicU64::new(concurrency),
@@ -478,7 +506,7 @@ impl Supervisor {
             metrics,
             current_qps: AtomicU64::new(qps),
             current_concurrency: AtomicU64::new(concurrency),
-            window_index: AtomicI64::new(0),
+            window_index: AtomicI64::new(resume_plan.start_window),
             stop_kind: Mutex::new(StopKind::None),
             cluster_status: Mutex::new(None),
             processes,
@@ -491,6 +519,7 @@ impl Supervisor {
                 run_id.clone(),
                 snapshot,
                 Arc::clone(&task),
+                resume_plan,
             )
             .await;
             supervisor.consolidate_cluster_checkpoints(&run_id, processes);
@@ -502,85 +531,59 @@ impl Supervisor {
         });
     }
 
-    /// Copy latest worker checkpoints from `wNN.sqlite` into central `run_checkpoints`
-    /// and synthesize a summary `run_windows` row so multiprocess reports, verdicts,
-    /// and post-completion stats match single-process runs.
+    /// Copy latest worker checkpoints from `wNN.sqlite` into central
+    /// `run_checkpoints`, and write one `run_windows` row per loop window
+    /// merged from every worker's `wNN-windows.json`, so multiprocess reports,
+    /// verdicts (including the effective-duration denominator) and stats match
+    /// single-process runs.
     fn consolidate_cluster_checkpoints(&self, run_id: &str, processes: u32) {
-        let mut total_samples = 0_i64;
-        let mut total_success = 0_i64;
-        let mut total_failure = 0_i64;
-        let mut total_expected = 0_i64;
-        let mut total_dropped = 0_i64;
-        let mut total_bytes = 0_i64;
-        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        let now = unix_now_ms();
+        seal_worker_windows(&self.paths, run_id, processes, now);
         let mut checkpoints = Vec::new();
-
         for idx in 0..processes {
             let Ok(Some(wconn)) = open_existing_worker(&self.paths, run_id, idx, true) else {
                 continue;
             };
             if let Ok(Some(cp)) = latest_worker_checkpoint(&wconn) {
-                if let Ok(cnt) = serde_json::from_str::<CounterSnapshot>(&cp.counters_json) {
-                    total_samples =
-                        total_samples.saturating_add(i64::try_from(cnt.samples).unwrap_or(0));
-                    total_success =
-                        total_success.saturating_add(i64::try_from(cnt.success).unwrap_or(0));
-                    total_failure =
-                        total_failure.saturating_add(i64::try_from(cnt.failure).unwrap_or(0));
-                    total_expected =
-                        total_expected.saturating_add(i64::try_from(cnt.expected).unwrap_or(0));
-                    total_dropped = total_dropped
-                        .saturating_add(i64::try_from(cnt.dropped_details).unwrap_or(0));
-                    total_bytes = total_bytes.saturating_add(i64::try_from(cnt.bytes).unwrap_or(0));
-                }
-                if let Some(blob) = cp.histogram_blob.as_ref().filter(|b| !b.is_empty()) {
-                    blobs.push(blob.clone());
-                }
                 checkpoints.push((idx, cp));
             }
         }
-
-        if checkpoints.is_empty() {
-            return;
-        }
-
-        let (p50, p95, p99, max) =
-            merge_percentiles(&blobs, 60_000_000).unwrap_or((None, None, None, None));
+        let windows =
+            crate::engine::cluster::merge_worker_windows(&self.paths, run_id, processes, Some(now));
 
         let conn = self.lock_db();
         for (idx, cp) in checkpoints {
             let _ = conn.execute(
-                "INSERT INTO run_checkpoints (run_id, worker_index, ts, window_index, counters_json, histogram_blob)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(run_id, worker_index, ts) DO UPDATE SET
+                "INSERT INTO run_checkpoints (run_id, worker_index, ts, window_index, counters_json, histogram_blob, timeseries_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(run_id, worker_index) DO UPDATE SET
+                    ts = excluded.ts,
                     window_index = excluded.window_index,
                     counters_json = excluded.counters_json,
-                    histogram_blob = excluded.histogram_blob",
+                    histogram_blob = excluded.histogram_blob,
+                    timeseries_json = COALESCE(excluded.timeseries_json, run_checkpoints.timeseries_json)",
                 rusqlite::params![
                     run_id,
                     i64::from(idx),
                     cp.ts,
                     cp.window_index,
                     cp.counters_json,
-                    cp.histogram_blob
+                    cp.histogram_blob,
+                    cp.timeseries_json
                 ],
             );
         }
-
-        let existing_windows = list_windows(&conn, run_id).unwrap_or_default();
-        if existing_windows.is_empty() {
-            let now = unix_now_ms();
-            let started_at = get_run(&conn, run_id)
-                .ok()
-                .and_then(|r| r.started_at)
-                .unwrap_or(now);
-            let next_idx = next_window_index(&conn, run_id).unwrap_or(0);
+        for window in &windows {
+            let int = |key: &str| window[key].as_i64();
+            let completed = i64::from(window["completed"].as_bool().unwrap_or(false));
             let _ = conn.execute(
                 "INSERT INTO run_windows (
                     run_id, window_index, started_at, ended_at, samples, success, failure,
-                    expected, dropped_details, p50_us, p95_us, p99_us, max_us, bytes
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    expected, dropped_details, p50_us, p95_us, p99_us, max_us, bytes, missed_sends,
+                    completed
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(run_id, window_index) DO UPDATE SET
+                    started_at = excluded.started_at,
                     ended_at = excluded.ended_at,
                     samples = excluded.samples,
                     success = excluded.success,
@@ -591,31 +594,38 @@ impl Supervisor {
                     p95_us = excluded.p95_us,
                     p99_us = excluded.p99_us,
                     max_us = excluded.max_us,
-                    bytes = excluded.bytes",
+                    bytes = excluded.bytes,
+                    missed_sends = excluded.missed_sends,
+                    completed = excluded.completed",
                 rusqlite::params![
                     run_id,
-                    next_idx,
-                    started_at,
-                    now,
-                    total_samples,
-                    total_success,
-                    total_failure,
-                    total_expected,
-                    total_dropped,
-                    p50.and_then(|v| i64::try_from(v).ok()),
-                    p95.and_then(|v| i64::try_from(v).ok()),
-                    p99.and_then(|v| i64::try_from(v).ok()),
-                    max.and_then(|v| i64::try_from(v).ok()),
-                    total_bytes,
+                    int("window_index"),
+                    int("started_at"),
+                    int("ended_at"),
+                    int("samples"),
+                    int("success"),
+                    int("failure"),
+                    int("expected"),
+                    int("dropped_details"),
+                    int("p50_us"),
+                    int("p95_us"),
+                    int("p99_us"),
+                    int("max_us"),
+                    int("bytes"),
+                    int("missed_sends"),
+                    completed,
                 ],
             );
         }
     }
 
-    fn spawn_driver(&self, run_id: String, snapshot: RunSnapshot, resume: bool) {
+    fn spawn_driver(&self, run_id: String, snapshot: RunSnapshot, resume_end_ms: Option<i64>) {
         let supervisor = self.clone();
         tokio::spawn(async move {
-            if let Err(err) = supervisor.drive(run_id.clone(), snapshot, resume).await {
+            if let Err(err) = supervisor
+                .drive(run_id.clone(), snapshot, resume_end_ms)
+                .await
+            {
                 error!(run_id = %run_id, error = %err, "run driver failed");
             }
         });
@@ -625,9 +635,9 @@ impl Supervisor {
         &self,
         run_id: String,
         snapshot: RunSnapshot,
-        resume: bool,
+        resume_end_ms: Option<i64>,
     ) -> Result<(), StoreError> {
-        match self.drive_inner(&run_id, &snapshot, resume).await {
+        match self.drive_inner(&run_id, &snapshot, resume_end_ms).await {
             Ok(status) => {
                 self.finish_run(&run_id, &status, None);
                 Ok(())
@@ -649,7 +659,7 @@ impl Supervisor {
         &self,
         run_id: &str,
         snapshot: &RunSnapshot,
-        resume: bool,
+        resume_end_ms: Option<i64>,
     ) -> Result<String, StoreError> {
         let executor = HttpExecutor::from_snapshot(&snapshot.target, &snapshot.template)
             .map_err(|err| StoreError::invalid(format!("cannot build HTTP executor: {err}")))?;
@@ -659,13 +669,8 @@ impl Supervisor {
             Metrics::new(timeout_us)
                 .map_err(|err| StoreError::Other(err.context("create metrics")))?,
         );
-        let start_window = if resume {
-            restore_resume(&self.paths, run_id, &metrics)?;
-            let conn = self.lock_db();
-            next_window_index(&conn, run_id)?
-        } else {
-            0
-        };
+        let (resume_plan, partial_samples) =
+            self.prepare_single_resume(run_id, &metrics, resume_end_ms)?;
         let writer = DetailWriter::start(&self.paths, run_id, 0, WriterConfig::default())
             .map_err(|err| StoreError::Other(err.context("start detail writer")))?;
         let sink: Arc<dyn crate::engine::SampleSink> = Arc::new(writer.handle());
@@ -693,7 +698,7 @@ impl Supervisor {
             metrics: Arc::clone(&metrics),
             current_qps: AtomicU64::new(qps),
             current_concurrency: AtomicU64::new(concurrency),
-            window_index: AtomicI64::new(start_window),
+            window_index: AtomicI64::new(resume_plan.start_window),
             stop_kind: Mutex::new(StopKind::None),
             cluster_status: Mutex::new(None),
             processes: 1,
@@ -738,7 +743,8 @@ impl Supervisor {
                     executor,
                     sink,
                 },
-                start_window,
+                resume_plan,
+                partial_samples,
             )
             .await?;
 
@@ -750,35 +756,83 @@ impl Supervisor {
         Ok(terminal)
     }
 
+    fn prepare_single_resume(
+        &self,
+        run_id: &str,
+        metrics: &Metrics,
+        resume_end_ms: Option<i64>,
+    ) -> Result<(ClusterResumePlan, u64), StoreError> {
+        let Some(fallback_end_ms) = resume_end_ms else {
+            return Ok((ClusterResumePlan::default(), 0));
+        };
+        let restored = restore_resume(&self.paths, run_id, metrics)?;
+        let cp_ts = restored.as_ref().map(|(ts, _)| *ts);
+        let cp_cnt = restored.as_ref().map(|(_, cnt)| cnt);
+        let conn = self.lock_db();
+        seal_open_db_windows(&conn, run_id, cp_ts, cp_cnt, fallback_end_ms)?;
+        let windows = list_windows(&conn, run_id)?;
+        let plan = ClusterResumePlan::from_windows(&windows, fallback_end_ms);
+        let samples = windows
+            .iter()
+            .filter(|w| {
+                w["window_index"]
+                    .as_i64()
+                    .is_some_and(|idx| idx > plan.last_completed_window)
+            })
+            .filter_map(|w| w["samples"].as_i64())
+            .map(as_u64)
+            .fold(0_u64, u64::saturating_add);
+        Ok((plan, samples))
+    }
+
     async fn run_window_loop(
         &self,
         ctx: WindowLoop<'_>,
-        start_window: i64,
+        resume_plan: ClusterResumePlan,
+        partial_samples: u64,
     ) -> Result<String, StoreError> {
         let mode = {
             let conn = self.lock_db();
             get_run(&conn, ctx.run_id)?.mode == "loop"
         };
-        let rounds = if mode {
+        let total_rounds = if mode {
             ctx.snapshot.template.rounds.map(as_u64)
         } else {
             Some(1)
         };
+        let remaining_rounds = total_rounds.map(|r| r.saturating_sub(resume_plan.completed_rounds));
         let interval = Duration::from_secs(as_u64(ctx.snapshot.template.loop_interval_secs));
-        let mut window_index = start_window;
+        let mut window_index = resume_plan.start_window;
+        let mut session_round = 0_u64;
         let mut terminal = STATUS_FINISHED.to_string();
         loop {
             if ctx.task.cancel.is_cancelled() {
                 terminal = terminal_status(ctx.task);
                 break;
             }
-            if let Some(limit) = rounds
-                && as_u64(window_index) >= limit
+            if let Some(limit) = remaining_rounds
+                && session_round >= limit
             {
                 break;
             }
             ctx.task.window_index.store(window_index, Ordering::Relaxed);
-            match self.run_one_window(&ctx, window_index).await? {
+            let (round_partial_samples, round_partial_elapsed) = if session_round == 0 {
+                (
+                    partial_samples,
+                    Duration::from_millis(resume_plan.partial_elapsed_ms),
+                )
+            } else {
+                (0, Duration::ZERO)
+            };
+            match self
+                .run_one_window(
+                    &ctx,
+                    window_index,
+                    round_partial_samples,
+                    round_partial_elapsed,
+                )
+                .await?
+            {
                 WindowOutcome::Interrupted => {
                     terminal = STATUS_INTERRUPTED.to_string();
                     break;
@@ -786,12 +840,13 @@ impl Supervisor {
                 WindowOutcome::Completed => {}
             }
             window_index = window_index.saturating_add(1);
+            session_round = session_round.saturating_add(1);
             if ctx.task.cancel.is_cancelled() {
                 terminal = terminal_status(ctx.task);
                 break;
             }
-            if let Some(limit) = rounds
-                && as_u64(window_index) >= limit
+            if let Some(limit) = remaining_rounds
+                && session_round >= limit
             {
                 break;
             }
@@ -812,10 +867,19 @@ impl Supervisor {
         &self,
         ctx: &WindowLoop<'_>,
         window_index: i64,
+        partial_samples: u64,
+        partial_elapsed: Duration,
     ) -> Result<WindowOutcome, StoreError> {
         let started_at = unix_now_ms();
         let before = ctx.task.metrics.counters();
-        let config = window_config(ctx.snapshot, ctx.plan, ctx.task);
+        open_window(&self.lock_db(), ctx.run_id, window_index, started_at)?;
+        let config = window_config(
+            ctx.snapshot,
+            ctx.plan,
+            ctx.task,
+            partial_samples,
+            partial_elapsed,
+        );
         let handle = EngineHandle::start_with(
             config,
             Arc::clone(&ctx.executor),
@@ -824,10 +888,8 @@ impl Supervisor {
             Arc::clone(&ctx.task.metrics),
             ctx.task.cancel.child_token(),
         );
-        if let Err(err) = handle.join().await {
-            warn!(run_id = ctx.run_id, error = %err, "engine window join failed");
-            return Ok(WindowOutcome::Interrupted);
-        }
+        let join_res = handle.join().await;
+        let completed = join_res.is_ok() && !ctx.task.cancel.is_cancelled();
         let after = ctx.task.metrics.counters();
         let ended_at = unix_now_ms();
         {
@@ -845,6 +907,8 @@ impl Supervisor {
                     expected: delta(after.expected, before.expected),
                     dropped: delta(after.dropped_details, before.dropped_details),
                     bytes: delta(after.bytes, before.bytes),
+                    missed_sends: delta(after.missed_sends, before.missed_sends),
+                    completed,
                 },
                 &ctx.task.metrics,
             )?;
@@ -852,10 +916,17 @@ impl Supervisor {
                 &conn,
                 ctx.run_id,
                 "window",
-                Some(serde_json::json!({ "window_index": window_index })),
+                Some(serde_json::json!({
+                    "window_index": window_index,
+                    "missed_sends": delta(after.missed_sends, before.missed_sends),
+                })),
             )?;
         }
         ctx.task.metrics.reset_window_histogram();
+        if let Err(err) = join_res {
+            warn!(run_id = ctx.run_id, error = %err, "engine window join failed");
+            return Ok(WindowOutcome::Interrupted);
+        }
         Ok(WindowOutcome::Completed)
     }
 
@@ -968,6 +1039,8 @@ fn window_config(
     snapshot: &RunSnapshot,
     plan: &Arc<ExecutePlan>,
     task: &RunningTask,
+    partial_samples: u64,
+    partial_elapsed: Duration,
 ) -> EngineConfig {
     let template = &snapshot.template;
     let model = if template.model == "closed_loop" {
@@ -979,29 +1052,37 @@ fn window_config(
         model,
         qps: Some(task.current_qps()),
         concurrency: task.current_concurrency(),
-        requests: template.requests.map(as_u64),
+        requests: template
+            .requests
+            .map(|r| as_u64(r).saturating_sub(partial_samples)),
         duration: template
             .duration_secs
             .filter(|secs| *secs > 0)
-            .map(|secs| Duration::from_secs(as_u64(secs))),
-        warmup: Duration::from_secs(as_u64(template.warmup_secs)),
-        ramp: Duration::from_secs(as_u64(template.ramp_secs)),
+            .map(|secs| Duration::from_secs(as_u64(secs)).saturating_sub(partial_elapsed)),
+        warmup: Duration::from_secs(as_u64(template.warmup_secs)).saturating_sub(partial_elapsed),
+        ramp: Duration::from_secs(as_u64(template.ramp_secs)).saturating_sub(partial_elapsed),
         timeout: Duration::from_secs(as_u64(template.timeout_secs).max(1)),
         plan: Arc::clone(plan),
     }
 }
 
-fn restore_resume(paths: &DataPaths, run_id: &str, metrics: &Metrics) -> Result<i64, StoreError> {
+fn restore_resume(
+    paths: &DataPaths,
+    run_id: &str,
+    metrics: &Metrics,
+) -> Result<Option<(i64, CounterSnapshot)>, StoreError> {
     let conn = open_worker_connection(paths, run_id, 0).map_err(StoreError::Other)?;
     let imported = import_pending_dir(&conn, paths, run_id, 0).map_err(StoreError::Other)?;
     if imported > 0 {
         info!(run_id, imported, "imported pending dump samples");
     }
+    let mut restored = None;
     if let Some(checkpoint) = latest_worker_checkpoint(&conn)? {
         if let Ok(mut snapshot) = serde_json::from_str::<CounterSnapshot>(&checkpoint.counters_json)
         {
             snapshot.in_flight = 0;
             metrics.restore_counters(snapshot);
+            restored = Some((checkpoint.ts, snapshot));
         }
         if let Some(blob) = checkpoint.histogram_blob.as_deref()
             && !blob.is_empty()
@@ -1010,9 +1091,14 @@ fn restore_resume(paths: &DataPaths, run_id: &str, metrics: &Metrics) -> Result<
                 .restore_histogram(blob)
                 .map_err(|err| StoreError::Other(err.context("restore histogram")))?;
         }
+        if let Some(raw_ts) = checkpoint.timeseries_json.as_deref()
+            && let Ok(slots) = serde_json::from_str::<Vec<crate::engine::RingSlot>>(raw_ts)
+        {
+            metrics.restore_timeseries(&slots);
+        }
     }
     drop(conn);
-    Ok(0)
+    Ok(restored)
 }
 
 fn publish_checkpoint(
@@ -1025,6 +1111,7 @@ fn publish_checkpoint(
     let blob = metrics.histogram_blob().ok();
     let counters = metrics.counters();
     let counters_json = serde_json::to_string(&counters).unwrap_or_else(|_| "{}".into());
+    let timeseries_json = serde_json::to_string(&metrics.timeseries_slots()).ok();
     if let Some(writer) = writer
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1034,18 +1121,21 @@ fn publish_checkpoint(
             window_index: Some(window_index),
             counters_json: counters_json.clone(),
             histogram_blob: blob.clone(),
+            timeseries_json: timeseries_json.clone(),
         });
     }
     let conn = db.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let ts = unix_now_ms();
     let _ = conn.execute(
-        "INSERT INTO run_checkpoints (run_id, worker_index, ts, window_index, counters_json, histogram_blob)
-         VALUES (?1, 0, ?2, ?3, ?4, ?5)
-         ON CONFLICT(run_id, worker_index, ts) DO UPDATE SET
+        "INSERT INTO run_checkpoints (run_id, worker_index, ts, window_index, counters_json, histogram_blob, timeseries_json)
+         VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(run_id, worker_index) DO UPDATE SET
+            ts = excluded.ts,
             window_index = excluded.window_index,
             counters_json = excluded.counters_json,
-            histogram_blob = excluded.histogram_blob",
-        rusqlite::params![run_id, ts, window_index, counters_json, blob],
+            histogram_blob = excluded.histogram_blob,
+            timeseries_json = COALESCE(excluded.timeseries_json, run_checkpoints.timeseries_json)",
+        rusqlite::params![run_id, ts, window_index, counters_json, blob, timeseries_json],
     );
 }
 
@@ -1058,13 +1148,4 @@ fn close_writer(writer: &Mutex<Option<DetailWriter>>) {
     {
         warn!(error = %err, "detail writer close reported an error");
     }
-}
-
-/// Look up the next window index from the central database (0 if none).
-///
-/// # Errors
-///
-/// Returns a storage error if the query fails.
-pub fn next_window_index(conn: &Connection, run_id: &str) -> Result<i64, StoreError> {
-    Ok(last_window_index(conn, run_id)?.map_or(0, |index| index.saturating_add(1)))
 }

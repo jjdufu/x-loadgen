@@ -54,8 +54,19 @@ impl ApiError {
     }
 
     #[must_use]
-    pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", message)
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message)
+    }
+
+    #[must_use]
+    pub fn internal(detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        tracing::error!(detail = %detail, "internal server error");
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal server error",
+        )
     }
 }
 
@@ -74,6 +85,12 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
         Self::internal(err.to_string())
+    }
+}
+
+impl From<axum::extract::rejection::QueryRejection> for ApiError {
+    fn from(err: axum::extract::rejection::QueryRejection) -> Self {
+        Self::bad_request("invalid_request", err.body_text())
     }
 }
 

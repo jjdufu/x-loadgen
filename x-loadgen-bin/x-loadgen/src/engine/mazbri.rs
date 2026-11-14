@@ -34,6 +34,8 @@ use crate::vars::{RuntimeVars, render_str};
 
 /// Shortest token lifetime used after subtracting the refresh skew.
 const MIN_TOKEN_LIFETIME: Duration = Duration::from_secs(1);
+/// Upper bound on a cached token lifetime (guards `Instant` overflow).
+const MAX_TOKEN_LIFETIME: Duration = Duration::from_hours(24);
 
 /// Credentials and codec for one mazbri tenant against one gateway URL.
 pub struct MazbriTenant {
@@ -88,6 +90,7 @@ impl MazbriTenant {
         request_id: Option<String>,
         customer_name: Option<String>,
     ) -> ExecOutcome {
+        let token_wait = Instant::now();
         let token = match self.broker.get().await {
             Ok(token) => token,
             Err(TokenError(message)) => {
@@ -104,6 +107,43 @@ impl MazbriTenant {
                 );
             }
         };
+        // A single-flight refresh can stall every caller; charge that wait as
+        // queueing delay (it is not part of the wire latency itself).
+        let pre_send_wait_us = u64::try_from(token_wait.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let mut outcome = self
+            .execute_with_token(client, ctx, req, &token, request_id, customer_name)
+            .await;
+        outcome.pre_send_wait_us = pre_send_wait_us;
+        outcome
+    }
+
+    async fn execute_with_token(
+        &self,
+        client: &Client,
+        ctx: &RequestCtx,
+        req: &PreparedRequest,
+        token: &str,
+        request_id: Option<String>,
+        customer_name: Option<String>,
+    ) -> ExecOutcome {
+        let started = unix_now_ms();
+        let request = match self.build_call(client, ctx, req, token, request_id.as_deref()) {
+            Ok(request) => request,
+            // Never reached the wire: latency 0 keeps it out of the histogram.
+            Err((class, message)) => {
+                return failed_outcome(
+                    started,
+                    unix_now_ms(),
+                    0,
+                    request_id,
+                    Some(class.into()),
+                    Some(message),
+                    None,
+                    customer_name,
+                );
+            }
+        };
+        // Start the clock after sealing/signing (client-side CPU work).
         let started = unix_now_ms();
         let sent = Instant::now();
         let fail = |class: &str, message: String, status: Option<i64>| {
@@ -118,17 +158,13 @@ impl MazbriTenant {
                 customer_name.clone(),
             )
         };
-        let request = match self.build_call(client, ctx, req, &token, request_id.as_deref()) {
-            Ok(request) => request,
-            Err((class, message)) => return fail(class, message, None),
-        };
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) => return fail("transport", error.to_string(), None),
         };
         let http_status = response.status().as_u16();
         if http_status == 401 {
-            self.broker.invalidate(&token).await;
+            self.broker.invalidate(token).await;
         }
         let raw = match response.bytes().await {
             Ok(raw) => raw,
@@ -136,11 +172,14 @@ impl MazbriTenant {
                 return fail("transport", error.to_string(), Some(i64::from(http_status)));
             }
         };
+        // Stop the clock before decrypting/decoding the response.
+        let latency_us = elapsed_us(sent);
+        let end_unix_ms = unix_now_ms();
         let decoded = self.session.decode_response(http_status, &raw);
         let mut outcome = ExecOutcome {
             start_unix_ms: started,
-            end_unix_ms: unix_now_ms(),
-            latency_us: elapsed_us(sent),
+            end_unix_ms,
+            latency_us,
             http_status: Some(i64::from(http_status)),
             transport_ok: false,
             expected: false,
@@ -151,6 +190,7 @@ impl MazbriTenant {
             request_id,
             body: None,
             customer_name,
+            pre_send_wait_us: 0,
         };
         judge_decoded(&mut outcome, decoded, http_status, req);
         outcome
@@ -333,7 +373,9 @@ fn token_refresher(client: Client, url: String, api_key: String, skew: Duration)
                 .map_err(|error| TokenError(error.to_string()))?;
             let lifetime = Duration::from_secs(issued.expires_in)
                 .saturating_sub(skew)
-                .max(MIN_TOKEN_LIFETIME);
+                .max(MIN_TOKEN_LIFETIME)
+                // A huge `expires_in` would overflow `Instant + Duration` and panic.
+                .min(MAX_TOKEN_LIFETIME);
             Ok(CachedToken {
                 value: issued.access_token,
                 expires_at: Instant::now() + lifetime,

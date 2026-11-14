@@ -24,12 +24,6 @@
         class="min-w-[140px] max-w-xs rounded bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
         @input="draft.name = ($event.target as HTMLInputElement).value"
       />
-
-      <span
-        v-if="dirty"
-        title="当前标签页存在未保存更改"
-        class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
-      />
     </div>
 
     <!-- Subtle Collection Weight Pill -->
@@ -58,12 +52,10 @@ import {
   activeTab,
   collections,
   findCollectionBreadcrumb,
-  isTabDirty,
 } from "../../stores/workspace";
 import UiInput from "../ui/UiInput.vue";
 
 const draft = computed(() => activeTab.value.draft);
-const dirty = computed(() => isTabDirty(activeTab.value));
 const breadcrumb = computed(() =>
   findCollectionBreadcrumb(collections.value, draft.value.collection_id),
 );

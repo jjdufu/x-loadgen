@@ -484,6 +484,43 @@ pub struct SealEnvelopeParams<'a> {
     pub timestamp: i64,
 }
 
+/// Canonical AEAD additional authenticated data (AAD) binding all envelope
+/// metadata fields (`tenant_id`, `http_path`, `key_version`, `data_alg`,
+/// `timestamp`, and `nonce`) so none of them can be modified without breaking
+/// AEAD tag verification.
+#[must_use]
+pub fn canonical_aead_aad(
+    tenant_id: &str,
+    http_path: &str,
+    key_version: &str,
+    data_alg: &str,
+    timestamp: i64,
+    nonce: &str,
+) -> Vec<u8> {
+    let ts_str = timestamp.to_string();
+    let mut aad = String::with_capacity(
+        tenant_id.len()
+            + http_path.len()
+            + key_version.len()
+            + data_alg.len()
+            + ts_str.len()
+            + nonce.len()
+            + 5,
+    );
+    aad.push_str(tenant_id);
+    aad.push('\n');
+    aad.push_str(http_path);
+    aad.push('\n');
+    aad.push_str(key_version);
+    aad.push('\n');
+    aad.push_str(data_alg);
+    aad.push('\n');
+    aad.push_str(&ts_str);
+    aad.push('\n');
+    aad.push_str(nonce);
+    aad.into_bytes()
+}
+
 /// 按 Profile 密封传输信封。
 ///
 /// # Errors
@@ -523,8 +560,16 @@ pub fn seal_envelope(
 
     let data_key = data_key_prefix(data_alg, data_key)?;
     let cipher = TransportCipher::for_profile(registry, profile);
-    let parts = encrypt_with_alg(cipher, data_alg, data_key, plaintext, tenant_id.as_bytes())?;
     let nonce = generate_nonce_base64url();
+    let aad = canonical_aead_aad(
+        tenant_id,
+        http_path,
+        key_version,
+        data_alg.as_str(),
+        timestamp,
+        &nonce,
+    );
+    let parts = encrypt_with_alg(cipher, data_alg, data_key, plaintext, &aad)?;
     let mut envelope = TransportEnvelope {
         encrypted: true,
         key_version: key_version.to_owned(),
@@ -574,6 +619,14 @@ pub fn open_envelope(
         ));
     }
     let data_key = data_key_prefix(data_alg, data_key)?;
+    let aad = canonical_aead_aad(
+        tenant_id,
+        http_path,
+        &envelope.key_version,
+        &envelope.data_alg,
+        envelope.timestamp,
+        &envelope.nonce,
+    );
     decrypt_with_alg(
         cipher,
         data_alg,
@@ -581,7 +634,7 @@ pub fn open_envelope(
         &envelope.iv,
         &envelope.ciphertext,
         &envelope.tag,
-        tenant_id.as_bytes(),
+        &aad,
     )
 }
 
@@ -911,5 +964,82 @@ mod tests {
     fn default_suite_resolves_aes_256_gcm() {
         assert_eq!(default_data_alg(), AlgorithmId::Aes256Gcm);
         assert_eq!(default_suite(), SUITE_TENANT_DEFAULT_2026_11);
+    }
+
+    #[test]
+    fn aead_envelope_authenticates_metadata_fields() {
+        let registry = registry();
+        let profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
+        let key = [0x42u8; 32];
+        let sealed = seal_envelope(SealEnvelopeParams {
+            profile: &profile,
+            registry: &registry,
+            data_key: &key,
+            mac_key: None,
+            key_version: "v1",
+            tenant_id: "tenant-1",
+            http_path: "/api/v1/gateway",
+            plaintext: b"secret-payload",
+            timestamp: 1_710_000_000,
+        })
+        .expect("seal");
+
+        let mut bad_ts = sealed.clone();
+        bad_ts.timestamp += 1;
+        assert!(matches!(
+            open_envelope(
+                &profile,
+                &registry,
+                &key,
+                None,
+                "tenant-1",
+                "/api/v1/gateway",
+                &bad_ts
+            ),
+            Err(TransportCryptoError::DecryptFailed)
+        ));
+
+        let mut bad_nonce = sealed.clone();
+        bad_nonce.nonce = generate_nonce_base64url();
+        assert!(matches!(
+            open_envelope(
+                &profile,
+                &registry,
+                &key,
+                None,
+                "tenant-1",
+                "/api/v1/gateway",
+                &bad_nonce
+            ),
+            Err(TransportCryptoError::DecryptFailed)
+        ));
+
+        let mut bad_kv = sealed.clone();
+        bad_kv.key_version = "v2".into();
+        assert!(matches!(
+            open_envelope(
+                &profile,
+                &registry,
+                &key,
+                None,
+                "tenant-1",
+                "/api/v1/gateway",
+                &bad_kv
+            ),
+            Err(TransportCryptoError::DecryptFailed)
+        ));
+
+        assert!(matches!(
+            open_envelope(
+                &profile,
+                &registry,
+                &key,
+                None,
+                "tenant-1",
+                "/api/v1/other",
+                &sealed
+            ),
+            Err(TransportCryptoError::DecryptFailed)
+        ));
     }
 }

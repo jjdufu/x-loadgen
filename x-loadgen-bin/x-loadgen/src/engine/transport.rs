@@ -69,6 +69,10 @@ pub struct ExecOutcome {
     pub request_id: Option<String>,
     pub body: Option<Value>,
     pub customer_name: Option<String>,
+    /// Time spent waiting before the request could be sent (for example on a
+    /// single-flight token refresh). Not part of `latency_us`; the scheduler
+    /// charges it to the latency histogram as queueing delay.
+    pub pre_send_wait_us: u64,
 }
 
 /// Executes one request (HTTP, mazbri gateway, or a test mock).
@@ -776,12 +780,16 @@ async fn classify_response(
             );
         }
     };
+    // Stop the clock once the last body byte arrived: JSON parsing below is
+    // client-side CPU work and must not be charged to the target.
+    let latency_us = elapsed_us(sent);
+    let end_unix_ms = unix_now_ms();
     let bytes = i64::try_from(raw_bytes.len()).ok();
     let body = serde_json::from_slice::<Value>(&raw_bytes).ok();
     let mut outcome = ExecOutcome {
         start_unix_ms: started,
-        end_unix_ms: unix_now_ms(),
-        latency_us: elapsed_us(sent),
+        end_unix_ms,
+        latency_us,
         http_status: Some(status),
         transport_ok,
         expected: false,
@@ -792,6 +800,7 @@ async fn classify_response(
         request_id,
         body,
         customer_name,
+        pre_send_wait_us: 0,
     };
     let judgement = judge(
         transport_ok,
@@ -828,6 +837,7 @@ pub(super) fn failed_outcome(
         request_id,
         body: None,
         customer_name,
+        pre_send_wait_us: 0,
     }
 }
 

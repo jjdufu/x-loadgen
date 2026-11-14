@@ -54,16 +54,7 @@ pub enum Command {
     },
     /// Internal worker process started by `serve` (hidden from `--help`).
     #[command(hide = true)]
-    Worker {
-        #[arg(long)]
-        data_dir: PathBuf,
-        #[arg(long)]
-        run_id: String,
-        #[arg(long)]
-        worker_index: u32,
-        #[arg(long)]
-        worker_count: u32,
-    },
+    Worker(crate::engine::worker::WorkerArgs),
 }
 
 /// Parsed `serve` arguments.
@@ -126,12 +117,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Health { url } => health(&url),
-        Command::Worker {
-            data_dir,
-            run_id,
-            worker_index,
-            worker_count,
-        } => crate::engine::worker::run(data_dir, &run_id, worker_index, worker_count),
+        Command::Worker(args) => crate::engine::worker::run(args),
     }
 }
 

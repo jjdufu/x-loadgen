@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
+  <div class="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
     <AppHeader />
 
     <div class="flex min-h-0 flex-1 overflow-hidden">
@@ -48,6 +48,7 @@ import {
 
 const route = useRoute();
 let metaTimer: number | null = null;
+let disposed = false;
 
 function handleGlobalKeydown(e: KeyboardEvent): void {
   if (!canProgrammaticallyFocus()) return;
@@ -87,6 +88,7 @@ watch(isPageVisible, (visible) => {
 onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
   await bootstrapWorkspace();
+  if (disposed) return;
   metaTimer = window.setInterval(() => {
     if (isPageVisible.value) {
       void refreshMeta();
@@ -95,6 +97,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   window.removeEventListener("keydown", handleGlobalKeydown);
   if (metaTimer !== null) {
     window.clearInterval(metaTimer);

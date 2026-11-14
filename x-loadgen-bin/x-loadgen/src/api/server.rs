@@ -1,17 +1,19 @@
 //! HTTP listener and shared application state.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::auth::{login, logout, me, password};
 use super::collections::{
@@ -44,6 +46,7 @@ use crate::db::{DataPaths, open_central};
 
 /// Build the router used by `serve` and by tests.
 pub fn router(state: AppState) -> Router {
+    let guard_state = state.clone();
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/openapi.json", get(openapi))
@@ -133,7 +136,96 @@ pub fn router(state: AppState) -> Router {
             get(super::report::list_samples),
         )
         .fallback(super::static_files::static_handler)
+        .layer(middleware::from_fn_with_state(
+            guard_state,
+            origin_and_host_guard,
+        ))
         .with_state(state)
+}
+
+async fn origin_and_host_guard(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let headers = request.headers();
+    if state.loopback_only
+        && request.uri().path().starts_with("/api/")
+        && let Some(host_val) = headers.get(header::HOST).and_then(|v| v.to_str().ok())
+        && !is_loopback_host_header(host_val)
+    {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "invalid_host",
+            "non-loopback Host header rejected on loopback listener",
+        ));
+    }
+
+    if matches!(
+        *request.method(),
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    ) {
+        if let Some(fetch_site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok())
+            && fetch_site.trim().eq_ignore_ascii_case("cross-site")
+        {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "cross_origin_forbidden",
+                "cross-site state-changing request rejected",
+            ));
+        }
+
+        if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+            let host = headers
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if !origin_matches_host(origin, host) {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "cross_origin_forbidden",
+                    "request Origin does not match Host",
+                ));
+            }
+        }
+    }
+
+    Ok(next.run(request).await)
+}
+
+fn is_loopback_host_header(host: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(&format!("http://{}", host.trim())) else {
+        return false;
+    };
+    let Some(host_str) = parsed.host_str() else {
+        return false;
+    };
+    if host_str.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let bare = host_str
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host_str);
+    bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+fn origin_matches_host(origin: &str, host: &str) -> bool {
+    if host.trim().is_empty() {
+        return false;
+    }
+    let Ok(origin_url) = reqwest::Url::parse(origin.trim()) else {
+        return false;
+    };
+    if !matches!(origin_url.scheme(), "http" | "https") {
+        return false;
+    }
+    let Ok(host_url) = reqwest::Url::parse(&format!("{}://{}", origin_url.scheme(), host.trim()))
+    else {
+        return false;
+    };
+    origin_url.host_str() == host_url.host_str()
+        && origin_url.port_or_known_default() == host_url.port_or_known_default()
 }
 
 /// Open the data directory, optionally create `admin.passwd`, and listen.
@@ -151,8 +243,15 @@ pub async fn run(args: ServeArgs) -> Result<()> {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
-            if let Err(err) = crate::db::janitor::sweep(&janitor_paths) {
-                tracing::warn!(error = %err, "detail retention sweep failed");
+            let paths = janitor_paths.clone();
+            match tokio::task::spawn_blocking(move || crate::db::janitor::sweep(&paths)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    tracing::warn!(error = %err, "detail retention sweep failed");
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "detail retention sweep task panicked");
+                }
             }
         }
     });
@@ -189,12 +288,19 @@ pub struct PreparedServer {
 ///
 /// Returns an error if the data directory or password file cannot be prepared.
 pub fn prepare(args: ServeArgs) -> Result<PreparedServer> {
-    let _addr = parse_listen(&args.listen)?;
+    let addr = parse_listen(&args.listen)?;
     let paths = DataPaths::new(args.data_dir);
     require_writable_data_dir(&paths)?;
     let conn = open_central(&paths)?;
     if args.no_auth {
-        info!("authentication disabled (--no-auth)");
+        if addr.ip().is_loopback() {
+            info!("authentication disabled (--no-auth on loopback)");
+        } else {
+            warn!(
+                %addr,
+                "SECURITY WARNING: authentication disabled (--no-auth) while listening on a non-loopback address; any host reaching this port has full access"
+            );
+        }
     } else if load_auth_state(&conn)?.password_hash.is_some() {
         // The bootstrap file is deleted on password change; a restart must not
         // bring it back. `reset-passwd` is the only way to issue a new one.
@@ -211,7 +317,8 @@ pub fn prepare(args: ServeArgs) -> Result<PreparedServer> {
         args.no_auth,
         args.max_qps,
         args.max_concurrency,
-    );
+    )
+    .with_loopback_only(addr.ip().is_loopback());
     Ok(PreparedServer {
         listen: args.listen,
         state,

@@ -393,13 +393,14 @@
         <div v-else class="divide-y divide-border overflow-hidden rounded-lg border border-border">
           <div
             v-for="(chk, idx) in draft.assertions.checks"
-            :key="idx"
+            :key="rowObjectKey(chk)"
             class="flex items-center divide-x divide-border bg-background"
           >
             <div class="flex-1 min-w-0">
               <input
                 v-model="chk.path"
                 type="text"
+                :aria-label="`断言 ${idx + 1} 字段路径`"
                 placeholder="JSON 字段路径，如 status 或 result.ok"
                 class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
               />
@@ -422,6 +423,7 @@
                 v-if="chk.eq !== undefined"
                 :value="formatEqInput(chk.eq)"
                 type="text"
+                :aria-label="`断言 ${idx + 1} 期望值`"
                 placeholder="例如 &quot;ok&quot;、200、true"
                 class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
                 @change="updateCheckEq(idx, ($event.target as HTMLInputElement).value)"
@@ -448,7 +450,10 @@
       <div v-else class="p-5 space-y-5">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
-            <UiSwitch v-model="draft.tls.insecure_skip_verify" />
+            <UiSwitch
+              v-model="draft.tls.insecure_skip_verify"
+              aria-label="跳过服务端 TLS 证书校验"
+            />
             <span>跳过服务端 TLS 证书校验 (覆盖环境默认设置)</span>
           </label>
 
@@ -461,6 +466,7 @@
               type="number"
               min="1"
               mono
+              aria-label="单请求独立超时（秒）"
               placeholder="跟随压测配置"
               class="w-36"
               @update:model-value="
@@ -479,6 +485,7 @@
               :model-value="draft.tls.ca_cert ?? ''"
               :rows="3"
               mono
+              aria-label="自定义 CA PEM"
               placeholder="留空则继承环境 TLS"
               @update:model-value="(v) => (draft.tls.ca_cert = v)"
             />
@@ -491,6 +498,7 @@
               :model-value="draft.tls.client_cert ?? ''"
               :rows="3"
               mono
+              aria-label="mTLS 客户端证书"
               @update:model-value="(v) => (draft.tls.client_cert = v)"
             />
           </div>
@@ -502,6 +510,7 @@
               :model-value="draft.tls.client_key ?? ''"
               :rows="3"
               mono
+              aria-label="mTLS 客户端私钥"
               @update:model-value="(v) => (draft.tls.client_key = v)"
             />
           </div>
@@ -516,6 +525,7 @@ import { computed } from "vue";
 import { Plus, Trash2 } from "lucide-vue-next";
 import type { TenantSpec } from "../../api/types";
 import { BODY_CONTENT_TYPES, createDefaultTenant } from "../../helpers/format";
+import { rowObjectKey } from "../../helpers/rowKey";
 import {
   activeEnvironmentDetail,
   activeEnvironmentId,
@@ -634,7 +644,6 @@ function toggleCheckOp(idx: number, op: string): void {
 }
 
 function formatEqInput(val: unknown): string {
-  if (typeof val === "string") return JSON.stringify(val);
   return JSON.stringify(val);
 }
 

@@ -30,7 +30,7 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
 
-use crate::db::schema::{CENTRAL_SCHEMA_V2, DROP_LEGACY_V1_CATALOG, WORKER_SCHEMA_V1};
+use crate::db::schema::{CENTRAL_SCHEMA_V2, WORKER_SCHEMA_V1};
 
 /// Open (or create) the central database, apply PRAGMAs, and migrate to v2.
 ///
@@ -46,7 +46,6 @@ pub fn open_central(paths: &DataPaths) -> Result<Connection> {
         .with_context(|| format!("open central database {}", path.display()))?;
     apply_pragmas(&conn)?;
     migrate_central(&conn)?;
-    drop_legacy_sessions(&conn)?;
     let _ = environments::ensure_global_environment(&conn)
         .map_err(|err| anyhow::anyhow!("ensure global environment: {err}"))?;
     Ok(conn)
@@ -155,12 +154,6 @@ pub fn unix_now_ms() -> Result<u64, SystemTimeError> {
     )
 }
 
-fn drop_legacy_sessions(conn: &Connection) -> Result<()> {
-    conn.execute_batch("DROP TABLE IF EXISTS sessions")
-        .context("drop leftover sessions table")?;
-    Ok(())
-}
-
 fn migrate_central(conn: &Connection) -> Result<()> {
     let version = user_version(conn)?;
     if version == 0 {
@@ -168,15 +161,6 @@ fn migrate_central(conn: &Connection) -> Result<()> {
             .context("apply central schema v2")?;
         conn.pragma_update(None, "user_version", USER_VERSION)
             .context("set central user_version")?;
-        return Ok(());
-    }
-    if version == 1 {
-        conn.execute_batch(DROP_LEGACY_V1_CATALOG)
-            .context("drop legacy v1 catalog tables")?;
-        conn.execute_batch(CENTRAL_SCHEMA_V2)
-            .context("apply central schema v2 upgrade")?;
-        conn.pragma_update(None, "user_version", USER_VERSION)
-            .context("set central user_version to 2")?;
         return Ok(());
     }
     if version == USER_VERSION {
@@ -240,8 +224,8 @@ mod tests {
 
     use super::dump::list_pending;
     use super::{
-        DataPaths, DetailWriter, Sample, USER_VERSION, WriterConfig, import_pending_dir,
-        journal_mode, open_central, open_worker_connection, synchronous, write_pending,
+        DataPaths, DetailWriter, Sample, WriterConfig, import_pending_dir, journal_mode,
+        open_central, open_worker_connection, synchronous, write_pending,
     };
 
     fn sample_count(conn: &Connection) -> i64 {
@@ -484,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn write_and_parse_pending_roundtrip() {
+    fn write_and_parse_pending_roundtrip_is_mode_600_and_ignores_duplicate_seq() {
         let tmp = TempDir::new("roundtrip");
         let paths = tmp.paths();
         paths.ensure_run("run-e").expect("run dir");
@@ -496,7 +480,11 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("pending-w03-")
         );
+        let mode = fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         let conn = open_worker_connection(&paths, "run-e", 3).expect("open");
+        // Pre-insert seq=7 to simulate a partially committed batch before crash.
+        super::dump::insert_samples(&conn, &[sample(7, "delta")]).expect("pre-insert");
         let n = import_pending_dir(&conn, &paths, "run-e", 3).expect("import");
         assert_eq!(n, 2);
         assert_eq!(sample_count(&conn), 2);
@@ -504,56 +492,32 @@ mod tests {
     }
 
     #[test]
-    fn v1_database_upgrades_to_v2_keeping_auth_and_dropping_legacy_tables() {
-        let tmp = TempDir::new("legacy-v1-upgrade");
+    fn collection_import_rolls_back_all_nodes_when_later_item_is_invalid() {
+        let tmp = TempDir::new("import-tx");
         let paths = tmp.paths();
-        paths.ensure().expect("data dir");
-        {
-            let conn = Connection::open(paths.central_db()).expect("open raw");
-            conn.execute_batch(
-                "CREATE TABLE sessions (
-                    id TEXT PRIMARY KEY,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    created_at INTEGER NOT NULL,
-                    last_seen_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL
-                );
-                CREATE TABLE targets (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-                CREATE TABLE auth_state (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    password_hash TEXT,
-                    must_change INTEGER NOT NULL DEFAULT 1,
-                    updated_at INTEGER NOT NULL
-                );
-                INSERT INTO auth_state (id, password_hash, must_change, updated_at)
-                    VALUES (1, 'kept', 0, 1);
-                INSERT INTO sessions (id, token_hash, created_at, last_seen_at, expires_at)
-                    VALUES ('s', 'h', 1, 1, 1);",
-            )
-            .expect("seed v1 schema");
-            conn.pragma_update(None, "user_version", 1)
-                .expect("set user_version");
-        }
-        let conn = open_central(&paths).expect("open_central");
-        let version: i32 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .expect("user_version");
-        assert_eq!(version, USER_VERSION);
-        let legacy: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('sessions', 'targets')",
-                [],
-                |row| row.get(0),
-            )
-            .expect("count legacy tables");
-        assert_eq!(legacy, 0, "legacy v1 tables must be dropped");
-        let hash: String = conn
-            .query_row(
-                "SELECT password_hash FROM auth_state WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("auth_state kept");
-        assert_eq!(hash, "kept");
+        let conn = open_central(&paths).expect("central");
+        let payload = serde_json::json!([
+            { "name": "valid-first", "default_protocol": "http" },
+            { "name": "invalid-second", "default_protocol": "bogus-proto" }
+        ]);
+        let err = super::collections::import_collections_json(&conn, &payload, None);
+        assert!(err.is_err());
+        let tree = super::collections::list_collection_tree(&conn).expect("tree");
+        assert!(
+            tree.is_empty(),
+            "partial collection import must roll back completely, got {tree:?}"
+        );
+
+        let env_payload = serde_json::json!([
+            { "name": "env-valid-1", "gateway_base_url": "https://example.com" },
+            { "name": "env-bad-2", "gateway_base_url": "ftp://invalid.example.com" }
+        ]);
+        let env_err = super::environments::import_environments_json(&conn, &env_payload);
+        assert!(env_err.is_err());
+        let envs = super::environments::list_environments(&conn).expect("envs");
+        assert!(
+            envs.iter().all(|e| e.is_global),
+            "partial environment import must roll back non-global envs, got {envs:?}"
+        );
     }
 }

@@ -12,10 +12,13 @@
         class="grid grid-cols-1 gap-4 rounded-lg border border-border bg-surface/50 p-4 md:grid-cols-2"
       >
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          <label
+            :for="envSelectId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
             运行环境
           </label>
-          <UiSelect v-model="selectedEnvId">
+          <UiSelect :id="envSelectId" v-model="selectedEnvId" aria-label="运行环境">
             <option value="">无环境（仅全局变量）</option>
             <option v-for="env in selectableEnvironments" :key="env.id" :value="env.id">
               {{ env.name }}
@@ -25,11 +28,16 @@
         </div>
 
         <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+          <label
+            :for="profileSelectId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
             负载预设（可选）
           </label>
           <UiSelect
+            :id="profileSelectId"
             :model-value="selectedProfileId"
+            aria-label="负载预设"
             @update:model-value="applyProfilePreset"
           >
             <option value="">自定义参数</option>
@@ -43,7 +51,8 @@
       <!-- Single Request Summary OR Collection Weighted Request Selector -->
       <div
         v-if="runnerContext.mode === 'single' && runnerContext.draft"
-        class="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
+        class="flex items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"
+        :class="launchBlockReason ? 'border-rose-500/60' : 'border-border'"
       >
         <div class="flex min-w-0 items-center gap-2.5">
           <UiBadge variant="outline" class="uppercase font-mono">
@@ -55,8 +64,15 @@
           >
             {{ runnerContext.draft.method }}
           </span>
-          <span class="truncate font-mono text-sm text-foreground">
-            {{ runnerContext.draft.endpoint || "(未填写请求地址)" }}
+          <span
+            class="truncate font-mono text-sm"
+            :class="
+              runnerContext.draft.endpoint.trim()
+                ? 'text-foreground'
+                : 'text-rose-600 dark:text-rose-400'
+            "
+          >
+            {{ runnerContext.draft.endpoint.trim() || "(未填写请求地址)" }}
           </span>
         </div>
         <span class="shrink-0 text-xs text-muted-foreground">
@@ -66,7 +82,8 @@
 
       <div
         v-else-if="runnerContext.mode === 'collection'"
-        class="overflow-hidden rounded-lg border border-border bg-card"
+        class="overflow-hidden rounded-lg border bg-card"
+        :class="launchBlockReason ? 'border-rose-500/60' : 'border-border'"
       >
         <div
           class="flex items-center justify-between border-b border-border bg-muted/40 px-4 py-2.5"
@@ -131,6 +148,7 @@
                 min="1"
                 size="sm"
                 mono
+                :aria-label="`${item.request.name} 权重`"
                 :disabled="!item.enabled"
                 class="w-20 text-right text-xs tabular-nums"
                 @update:model-value="
@@ -141,6 +159,14 @@
           </div>
         </div>
       </div>
+
+      <p
+        v-if="launchBlockReason"
+        role="alert"
+        class="rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+      >
+        {{ launchBlockReason }}
+      </p>
 
       <!-- Load Shaping Config -->
       <LoadConfigForm
@@ -159,7 +185,12 @@
           <UiButton variant="outline" @click="runnerModalOpen = false">
             取消
           </UiButton>
-          <UiButton variant="default" :loading="launching" @click="launchRun">
+          <UiButton
+            variant="default"
+            :loading="launching"
+            :disabled="Boolean(launchBlockReason)"
+            @click="launchRun"
+          >
             <Play v-if="!launching" class="h-3.5 w-3.5" />
             <span>启动压测</span>
           </UiButton>
@@ -170,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Play } from "lucide-vue-next";
 import { api } from "../../api/workspace";
@@ -213,6 +244,8 @@ interface SelectableRequestRow {
 }
 
 const router = useRouter();
+const envSelectId = useId();
+const profileSelectId = useId();
 const selectedEnvId = ref("");
 const selectedProfileId = ref("");
 const loadConfig = ref<LoadConfig>(createDefaultLoadConfig());
@@ -230,6 +263,22 @@ const modalTitle = computed(() => {
 const enabledCount = computed(
   () => collectionRows.value.filter((r) => r.enabled).length,
 );
+
+const launchBlockReason = computed<string | null>(() => {
+  if (runnerContext.value.mode === "collection") {
+    if (collectionRows.value.length === 0) {
+      return "当前集合暂无已保存请求，无法启动混合压测。";
+    }
+    if (enabledCount.value === 0) {
+      return "请至少勾选一个参与压测的请求。";
+    }
+    return null;
+  }
+  if (!runnerContext.value.draft?.endpoint.trim()) {
+    return "当前请求尚未填写请求地址或网关路径，请先返回工作台补充地址后再发起压测。";
+  }
+  return null;
+});
 
 watch(runnerModalOpen, (open) => {
   if (!open) return;

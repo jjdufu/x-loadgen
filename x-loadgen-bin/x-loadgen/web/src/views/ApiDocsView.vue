@@ -83,11 +83,11 @@
         <UiButton variant="outline" size="sm" @click="fetchSpec">重试</UiButton>
       </div>
 
-      <div v-else class="mx-auto max-w-5xl space-y-8 p-6 lg:p-8">
+      <div v-else class="mx-auto max-w-5xl space-y-8 p-4 sm:p-6 lg:p-8">
         <!-- Hero Specification Header -->
-        <UiCard class="p-6 space-y-4">
+        <UiCard class="space-y-4 p-4 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-4">
-            <div class="space-y-1.5">
+            <div class="min-w-0 space-y-1.5">
               <div class="flex flex-wrap items-center gap-2">
                 <h1 class="text-xl font-semibold tracking-tight text-foreground">
                   {{ spec?.info?.title || "x-loadgen API" }}
@@ -126,13 +126,13 @@
             </div>
             <div class="space-y-1">
               <div class="font-semibold text-foreground">脚本鉴权</div>
-              <div class="font-mono text-muted-foreground">
+              <div class="break-all font-mono text-muted-foreground">
                 Authorization: Bearer &lt;token&gt;
               </div>
             </div>
             <div class="space-y-1">
               <div class="font-semibold text-foreground">会话鉴权</div>
-              <div class="font-mono text-muted-foreground">
+              <div class="break-all font-mono text-muted-foreground">
                 Cookie: x_loadgen_token=&lt;token&gt;
               </div>
             </div>
@@ -467,6 +467,7 @@ import {
   methodBadgeClass,
   methodColorClass,
 } from "../helpers/format";
+import { downloadBlob } from "../helpers/download";
 import { toast } from "../modules/toast";
 import { openDraftInNewTab } from "../stores/workspace";
 import { copyText as writeClipboard } from "../utils/clipboard";
@@ -930,9 +931,21 @@ function openInStudio(op: ParsedOperation): void {
   const draft = createDefaultRequestDraft("http");
   draft.name = op.summary || `${op.method} ${op.path}`;
   draft.method = op.method;
-  draft.endpoint = `${originUrl.value}${op.path}`;
+  const templatedPath = op.path.replace(
+    /\{([^}]+)\}/g,
+    (_, paramName: string) => `<<${paramName.trim()}>>`,
+  );
+  draft.endpoint = `${originUrl.value}${templatedPath}`;
   draft.params = op.parameters
     .filter((p) => p.in === "query")
+    .map((p) => ({
+      key: p.name,
+      value: "",
+      active: p.required,
+      description: p.description,
+    }));
+  draft.headers = op.parameters
+    .filter((p) => p.in === "header")
     .map((p) => ({
       key: p.name,
       value: "",
@@ -965,12 +978,7 @@ function downloadOpenApiJson(): void {
   const blob = new Blob([JSON.stringify(spec.value, null, 2)], {
     type: "application/json",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "x-loadgen-openapi.json";
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, "x-loadgen-openapi.json");
   toast.success("已下载 openapi.json");
 }
 

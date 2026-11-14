@@ -30,7 +30,7 @@ pub fn apply_for_run(paths: &DataPaths, run: &RunRecord) -> Result<()> {
 /// are logged and skipped so one bad worker file does not stop the sweep.
 pub fn sweep(paths: &DataPaths) -> Result<()> {
     let conn = super::open_central(paths)?;
-    let runs = super::runs::list_runs(&conn, None)?;
+    let runs = super::runs::list_runs(&conn, &[])?;
     drop(conn);
     for run in runs {
         if let Err(err) = apply_for_run(paths, &run) {
@@ -76,15 +76,25 @@ fn retain_limits(snapshot_json: &str) -> (Option<i64>, Option<i64>) {
     )
 }
 
+const DELETE_BATCH_ROWS: i64 = 5_000;
+
 fn delete_older_than(paths: &DataPaths, run_id: &str, index: u32, cutoff_ms: i64) -> Result<()> {
     let Some(conn) = open_existing_worker(paths, run_id, index, false)? else {
         return Ok(());
     };
-    conn.execute(
-        "DELETE FROM samples WHERE end_unix_ms < ?1",
-        params![cutoff_ms],
-    )
-    .with_context(|| format!("delete expired samples in w{index:02} of {run_id}"))?;
+    loop {
+        let deleted = conn
+            .execute(
+                "DELETE FROM samples WHERE seq IN (
+                    SELECT seq FROM samples WHERE end_unix_ms < ?1 LIMIT ?2
+                 )",
+                params![cutoff_ms, DELETE_BATCH_ROWS],
+            )
+            .with_context(|| format!("delete expired samples in w{index:02} of {run_id}"))?;
+        if i64::try_from(deleted).unwrap_or(0) < DELETE_BATCH_ROWS {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -95,9 +105,48 @@ struct SampleKey {
 }
 
 fn trim_to_latest(paths: &DataPaths, run_id: &str, indexes: &[u32], limit: i64) -> Result<()> {
+    if indexes.is_empty() {
+        return Ok(());
+    }
+    let mut total_rows: i64 = 0;
+    let mut existing = Vec::with_capacity(indexes.len());
+    for &index in indexes {
+        let Some(conn) = open_existing_worker(paths, run_id, index, true)? else {
+            continue;
+        };
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM samples", [], |row| row.get(0))?;
+        total_rows = total_rows.saturating_add(count);
+        existing.push(index);
+    }
+    if total_rows <= limit {
+        return Ok(());
+    }
+
+    if let [single] = existing.as_slice() {
+        let Some(conn) = open_existing_worker(paths, run_id, *single, false)? else {
+            return Ok(());
+        };
+        loop {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM samples WHERE seq IN (
+                        SELECT seq FROM samples
+                        ORDER BY end_unix_ms DESC, seq DESC
+                        LIMIT ?1 OFFSET ?2
+                     )",
+                    params![DELETE_BATCH_ROWS, limit],
+                )
+                .with_context(|| format!("trim samples in w{single:02} of {run_id}"))?;
+            if i64::try_from(deleted).unwrap_or(0) < DELETE_BATCH_ROWS {
+                break;
+            }
+        }
+        return Ok(());
+    }
+
     let keep = usize::try_from(limit).unwrap_or(usize::MAX);
-    let mut keys = Vec::new();
-    for index in indexes {
+    let mut keys = Vec::with_capacity(usize::try_from(total_rows).unwrap_or(0));
+    for index in &existing {
         let Some(conn) = open_existing_worker(paths, run_id, *index, true)? else {
             continue;
         };
@@ -140,15 +189,18 @@ fn delete_seqs(paths: &DataPaths, run_id: &str, index: u32, seqs: &[i64]) -> Res
     let Some(conn) = open_existing_worker(paths, run_id, index, false)? else {
         return Ok(());
     };
-    let tx = conn.unchecked_transaction()?;
-    {
-        let mut stmt = tx.prepare("DELETE FROM samples WHERE seq = ?1")?;
-        for seq in seqs {
-            stmt.execute(params![seq])?;
+    let chunk_size = usize::try_from(DELETE_BATCH_ROWS).unwrap_or(5_000);
+    for chunk in seqs.chunks(chunk_size) {
+        let tx = conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("DELETE FROM samples WHERE seq = ?1")?;
+            for seq in chunk {
+                stmt.execute(params![seq])?;
+            }
         }
+        tx.commit()
+            .with_context(|| format!("trim samples in w{index:02} of {run_id}"))?;
     }
-    tx.commit()
-        .with_context(|| format!("trim samples in w{index:02} of {run_id}"))?;
     Ok(())
 }
 

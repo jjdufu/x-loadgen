@@ -2,8 +2,6 @@
 
 use anyhow::{Context, Result};
 use reqwest::Client;
-use std::fs;
-use std::path::Path;
 use std::time::Duration;
 
 /// Options used to build a [`reqwest::Client`].
@@ -19,11 +17,11 @@ pub struct HttpClientOptions {
     pub disable_connection_pool: bool,
     /// Optional idle timeout for pooled connections, in seconds.
     pub pool_idle_timeout_secs: Option<u64>,
-    /// PEM client certificate path for mTLS.
+    /// Inline PEM client certificate for mTLS.
     pub client_cert: Option<String>,
-    /// PEM client key path for mTLS (used together with [`Self::client_cert`]).
+    /// Inline PEM client private key for mTLS (used together with [`Self::client_cert`]).
     pub client_key: Option<String>,
-    /// Additional PEM CA certificate path.
+    /// Additional inline PEM CA certificate.
     pub ca_cert: Option<String>,
     /// When true, accept invalid TLS certificates.
     pub insecure_skip_verify: bool,
@@ -108,12 +106,13 @@ pub fn build_http_client(options: &HttpClientOptions) -> Result<Client> {
     builder.build().context("failed to build HTTP client")
 }
 
-/// Load PEM bytes either from inline PEM text (`-----BEGIN ...`) or from a filesystem path.
+/// Load inline PEM bytes (`-----BEGIN ...`). Server filesystem paths are rejected
+/// so API callers cannot probe or exfiltrate host files via TLS configuration.
 fn load_pem_bytes(source: &str, label: &str) -> Result<Vec<u8>> {
     if source.contains("-----BEGIN ") {
         Ok(source.as_bytes().to_vec())
     } else {
-        fs::read(Path::new(source)).with_context(|| format!("read {label} {source}"))
+        anyhow::bail!("{label} must be an inline PEM block (server filesystem paths are disabled)")
     }
 }
 
@@ -132,6 +131,15 @@ mod tests {
         let pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
         let bytes = load_pem_bytes(pem, "CA certificate").expect("inline pem");
         assert_eq!(bytes, pem.as_bytes());
+    }
+
+    #[test]
+    fn filesystem_path_is_rejected_without_leaking_path() {
+        let secret_path = "/etc/shadow";
+        let err = load_pem_bytes(secret_path, "CA certificate").expect_err("must reject path");
+        let msg = err.to_string();
+        assert!(msg.contains("inline PEM block"), "{msg}");
+        assert!(!msg.contains(secret_path), "must not echo path: {msg}");
     }
 
     #[test]

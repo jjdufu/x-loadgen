@@ -318,7 +318,12 @@ pub fn create_collection(
     }
     let parent_id = non_empty_owned(input.parent_id.as_deref());
     if let Some(pid) = parent_id.as_deref() {
-        let _ = get_collection(conn, pid)?;
+        let ancestors = ancestor_chain(conn, pid)?;
+        if ancestors.len() >= 64 {
+            return Err(StoreError::invalid(
+                "collection nesting depth exceeds maximum (64)",
+            ));
+        }
     }
     let default_protocol = validate_protocol(&input.default_protocol)?;
     input.auth.validate()?;
@@ -374,6 +379,11 @@ pub fn update_collection(
             return Err(StoreError::invalid("a collection cannot be its own parent"));
         }
         let ancestors = ancestor_chain(conn, pid)?;
+        if ancestors.len() >= 64 {
+            return Err(StoreError::invalid(
+                "collection nesting depth exceeds maximum (64)",
+            ));
+        }
         if ancestors.iter().any(|c| c.id == id) {
             return Err(StoreError::invalid(
                 "moving collection under its own descendant is not allowed",
@@ -444,7 +454,7 @@ pub fn get_collection(conn: &Connection, id: &str) -> Result<CollectionRecord, S
 ///
 /// # Errors
 ///
-/// Returns not-found if `collection_id` does not exist.
+/// Returns not-found if `collection_id` does not exist, or invalid if depth > 64.
 pub fn ancestor_chain(
     conn: &Connection,
     collection_id: &str,
@@ -455,7 +465,9 @@ pub fn ancestor_chain(
     while let Some(cid) = cursor.take() {
         guard += 1;
         if guard > 64 {
-            break;
+            return Err(StoreError::invalid(
+                "collection nesting depth exceeds maximum (64)",
+            ));
         }
         let rec = get_collection(conn, &cid)?;
         cursor.clone_from(&rec.parent_id);
@@ -854,15 +866,17 @@ pub fn import_collections_json(
         ));
     };
 
+    let tx = conn.unchecked_transaction()?;
     let mut created_ids = Vec::new();
     for item in items {
-        let id = import_one_node(conn, item, parent_id)?;
+        let id = import_one_node(&tx, item, parent_id)?;
         created_ids.push(id);
     }
     let mut out = Vec::new();
     for id in created_ids {
-        out.push(get_collection_subtree(conn, &id)?);
+        out.push(get_collection_subtree(&tx, &id)?);
     }
+    tx.commit()?;
     Ok(out)
 }
 

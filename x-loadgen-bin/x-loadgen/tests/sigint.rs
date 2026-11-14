@@ -106,6 +106,17 @@ async fn wait_until_healthy(http: &reqwest::Client, base: &str, log: &Path) {
     }
 }
 
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
 fn wait_for_exit(child: &mut Child) {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
@@ -133,17 +144,19 @@ async fn sigint_stops_running_tasks_and_exits() {
     assert!(bin.exists(), "missing binary {}", bin.display());
     let log_path = tmp.path.join("serve.log");
     let log = fs::File::create(&log_path).expect("serve log");
-    let mut child = Command::new(&bin)
-        .arg("serve")
-        .arg("--no-auth")
-        .arg("--listen")
-        .arg(&listen)
-        .arg("--data-dir")
-        .arg(&tmp.path)
-        .stdout(Stdio::from(log.try_clone().expect("clone log")))
-        .stderr(Stdio::from(log))
-        .spawn()
-        .expect("spawn serve");
+    let mut child = ChildGuard(
+        Command::new(&bin)
+            .arg("serve")
+            .arg("--no-auth")
+            .arg("--listen")
+            .arg(&listen)
+            .arg("--data-dir")
+            .arg(&tmp.path)
+            .stdout(Stdio::from(log.try_clone().expect("clone log")))
+            .stderr(Stdio::from(log))
+            .spawn()
+            .expect("spawn serve"),
+    );
 
     let base = format!("http://{listen}");
     let http = client();
@@ -177,11 +190,11 @@ async fn sigint_stops_running_tasks_and_exits() {
     assert_eq!(run["status"], "running");
 
     let killed = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
+        .args(["-INT", &child.0.id().to_string()])
         .status()
         .expect("send SIGINT");
     assert!(killed.success(), "kill -INT failed: {killed}");
-    wait_for_exit(&mut child);
+    wait_for_exit(&mut child.0);
 
     let conn = Connection::open(tmp.path.join("loadgen.sqlite")).expect("open central");
     let status: String = conn

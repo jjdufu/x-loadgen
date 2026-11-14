@@ -7,7 +7,7 @@
         type="button"
         :title="leftSidebarExpanded ? '收起侧栏' : '展开侧栏'"
         aria-label="切换左侧导航栏"
-        class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="hidden lg:inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
         @click="leftSidebarExpanded = !leftSidebarExpanded"
       >
         <PanelLeft class="h-3.5 w-3.5" />
@@ -86,7 +86,7 @@
         type="button"
         :title="horizontalSplit ? '切换为上下分栏' : '切换为左右分栏'"
         aria-label="切换分栏方向"
-        class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="hidden md:inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
         @click="horizontalSplit = !horizontalSplit"
       >
         <Columns2
@@ -100,8 +100,8 @@
         :title="rightSidebarOpen ? '收起右侧栏' : '展开右侧栏'"
         aria-label="切换右侧栏"
         class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
-        :class="rightSidebarOpen ? 'text-foreground' : 'text-muted-foreground'"
-        @click="rightSidebarOpen = !rightSidebarOpen"
+        :class="rightPanelShown ? 'text-foreground' : 'text-muted-foreground'"
+        @click="toggleRightPanel"
       >
         <PanelRight class="h-3.5 w-3.5" />
       </button>
@@ -119,6 +119,7 @@ import {
   PanelRight,
 } from "lucide-vue-next";
 import { formatLatencyUs } from "../../helpers/format";
+import { compactRightPanelOpen, isCompact } from "../../modules/viewport";
 import {
   activeEnvironmentDetail,
   activeTab,
@@ -132,6 +133,18 @@ import {
 const route = useRoute();
 const router = useRouter();
 const isWorkspaceRoute = computed(() => route.name === "workspace");
+
+const rightPanelShown = computed(() =>
+  isCompact.value ? compactRightPanelOpen.value : rightSidebarOpen.value,
+);
+
+function toggleRightPanel(): void {
+  if (isCompact.value) {
+    compactRightPanelOpen.value = !compactRightPanelOpen.value;
+  } else {
+    rightSidebarOpen.value = !rightSidebarOpen.value;
+  }
+}
 
 const statusDotClass = computed(() => {
   if (!serverMeta.value) {

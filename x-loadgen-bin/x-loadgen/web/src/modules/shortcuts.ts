@@ -50,13 +50,11 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
 const STORAGE_KEY = "x-loadgen.shortcuts.v1";
 
 function getDefaultBindings(): Record<ShortcutId, string> {
-  return {
-    sendRequest: "Mod+Enter",
-    saveRequest: "Mod+S",
-    newRequest: "Alt+N",
-    switchProtocol: "Alt+M",
-    toggleResponse: "Alt+R",
-  };
+  const out = {} as Record<ShortcutId, string>;
+  for (const def of SHORTCUT_DEFINITIONS) {
+    out[def.id] = def.defaultBinding;
+  }
+  return out;
 }
 
 function loadBindings(): Record<ShortcutId, string> {
@@ -99,6 +97,24 @@ function normalizeEventKey(rawKey: string): string {
   return rawKey;
 }
 
+/**
+ * Resolve a physical key name from `KeyboardEvent`, preferring `e.code` for
+ * letters, digits, Space, and Enter so macOS `Option+N/M/R` (where `e.key`
+ * becomes `"˜"` / `"µ"` / `"®"` or `"Dead"`) matches `Alt+N/M/R`.
+ */
+function resolveEventKey(e: KeyboardEvent): string {
+  const code = e.code || "";
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) return letter[1]!;
+  const digit = /^Digit([0-9])$/.exec(code);
+  if (digit) return digit[1]!;
+  if (code === "Space") return "Space";
+  if (code === "Enter" || code === "NumpadEnter") return "Enter";
+  const fnKey = /^F([1-9]|1[0-2])$/.exec(code);
+  if (fnKey) return `F${fnKey[1]!}`;
+  return normalizeEventKey(e.key);
+}
+
 export function formatBindingDisplay(binding: string): string {
   if (!binding) return "未绑定";
   return binding
@@ -124,7 +140,10 @@ export function captureBindingFromEvent(e: KeyboardEvent): {
     return { binding: null, reason: "modifier_only" };
   }
 
-  const key = normalizeEventKey(e.key);
+  const key = resolveEventKey(e);
+  if (!key || key === "Dead" || key === "Unidentified") {
+    return { binding: null, reason: "modifier_only" };
+  }
   const isFunctionKey = /^F([1-9]|1[0-2])$/i.test(key);
   const hasPrimaryModifier = e.ctrlKey || e.metaKey || e.altKey;
 
@@ -154,7 +173,11 @@ export function matchShortcut(e: KeyboardEvent, binding: string): boolean {
   if (e.altKey !== wantAlt) return false;
   if (e.shiftKey !== wantShift) return false;
 
-  return normalizeEventKey(e.key).toLowerCase() === targetKey.toLowerCase();
+  const targetLower = targetKey.toLowerCase();
+  return (
+    resolveEventKey(e).toLowerCase() === targetLower ||
+    normalizeEventKey(e.key).toLowerCase() === targetLower
+  );
 }
 
 export function setShortcutBinding(
