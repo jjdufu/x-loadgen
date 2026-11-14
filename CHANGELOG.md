@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/jjdufu/x-loadgen/compare/v0.4.2...v0.5.0) (2026-11-14)
+
+### ⚠ BREAKING CHANGES
+
+* 全面加固压测引擎精度、密码学信封绑定、会话安全、数据库事务与前端体验 ([f0c36a0](https://github.com/jjdufu/x-loadgen/commit/f0c36a0e9cc3a01fbd1f6c92a0a9267462985066))
+
+### Features
+
+* 全面加固压测引擎精度、密码学信封绑定、会话安全、数据库事务与前端体验 ([f0c36a0](https://github.com/jjdufu/x-loadgen/commit/f0c36a0e9cc3a01fbd1f6c92a0a9267462985066))
+
 ## [0.4.2](https://github.com/jjdufu/x-loadgen/compare/v0.4.1...v0.4.2) (2026-11-13)
 
 ### Bug Fixes
