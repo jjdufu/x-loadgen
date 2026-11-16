@@ -484,43 +484,6 @@ pub struct SealEnvelopeParams<'a> {
     pub timestamp: i64,
 }
 
-/// Canonical AEAD additional authenticated data (AAD) binding all envelope
-/// metadata fields (`tenant_id`, `http_path`, `key_version`, `data_alg`,
-/// `timestamp`, and `nonce`) so none of them can be modified without breaking
-/// AEAD tag verification.
-#[must_use]
-pub fn canonical_aead_aad(
-    tenant_id: &str,
-    http_path: &str,
-    key_version: &str,
-    data_alg: &str,
-    timestamp: i64,
-    nonce: &str,
-) -> Vec<u8> {
-    let ts_str = timestamp.to_string();
-    let mut aad = String::with_capacity(
-        tenant_id.len()
-            + http_path.len()
-            + key_version.len()
-            + data_alg.len()
-            + ts_str.len()
-            + nonce.len()
-            + 5,
-    );
-    aad.push_str(tenant_id);
-    aad.push('\n');
-    aad.push_str(http_path);
-    aad.push('\n');
-    aad.push_str(key_version);
-    aad.push('\n');
-    aad.push_str(data_alg);
-    aad.push('\n');
-    aad.push_str(&ts_str);
-    aad.push('\n');
-    aad.push_str(nonce);
-    aad.into_bytes()
-}
-
 /// 按 Profile 密封传输信封。
 ///
 /// # Errors
@@ -528,6 +491,19 @@ pub fn canonical_aead_aad(
 /// Profile 非法、算法/密钥不合要求或加密失败时返回错误。
 pub fn seal_envelope(
     params: SealEnvelopeParams<'_>,
+) -> Result<TransportEnvelope, TransportCryptoError> {
+    seal_envelope_with(params, random_bytes, generate_nonce_base64url())
+}
+
+/// [`seal_envelope`] 的确定性内核：IV 由 `make_iv(iv_len)` 产生、nonce 由调用方给定。
+///
+/// 生产路径传随机源；单测传 mazbri 真实实现产出的 IV / nonce，
+/// 断言逐字节复现 mazbri 的密文、tag 与签名（见 `golden_tests`）。
+/// AEAD AAD 与 mazbri 网关 `open_envelope` 完全一致：仅 `tenant_id` 字节。
+fn seal_envelope_with(
+    params: SealEnvelopeParams<'_>,
+    make_iv: impl FnOnce(usize) -> Vec<u8>,
+    nonce: String,
 ) -> Result<TransportEnvelope, TransportCryptoError> {
     let SealEnvelopeParams {
         profile,
@@ -560,16 +536,15 @@ pub fn seal_envelope(
 
     let data_key = data_key_prefix(data_alg, data_key)?;
     let cipher = TransportCipher::for_profile(registry, profile);
-    let nonce = generate_nonce_base64url();
-    let aad = canonical_aead_aad(
-        tenant_id,
-        http_path,
-        key_version,
-        data_alg.as_str(),
-        timestamp,
-        &nonce,
-    );
-    let parts = encrypt_with_alg(cipher, data_alg, data_key, plaintext, &aad)?;
+    let iv = make_iv(iv_len_for(data_alg)?);
+    let parts = encrypt_with_alg_iv(
+        cipher,
+        data_alg,
+        data_key,
+        &iv,
+        plaintext,
+        tenant_id.as_bytes(),
+    )?;
     let mut envelope = TransportEnvelope {
         encrypted: true,
         key_version: key_version.to_owned(),
@@ -619,14 +594,6 @@ pub fn open_envelope(
         ));
     }
     let data_key = data_key_prefix(data_alg, data_key)?;
-    let aad = canonical_aead_aad(
-        tenant_id,
-        http_path,
-        &envelope.key_version,
-        &envelope.data_alg,
-        envelope.timestamp,
-        &envelope.nonce,
-    );
     decrypt_with_alg(
         cipher,
         data_alg,
@@ -634,7 +601,7 @@ pub fn open_envelope(
         &envelope.iv,
         &envelope.ciphertext,
         &envelope.tag,
-        &aad,
+        tenant_id.as_bytes(),
     )
 }
 
@@ -967,7 +934,9 @@ mod tests {
     }
 
     #[test]
-    fn aead_envelope_authenticates_metadata_fields() {
+    fn aead_aad_binds_tenant_id_only() {
+        // 与 mazbri 网关一致：AAD 只绑 tenant_id；路径 / 时间戳 / nonce / 版本由 MAC
+        // 签名与网关时间窗、nonce 防重放负责，不进 AAD。
         let registry = registry();
         let profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
         let key = [0x42u8; 32];
@@ -983,63 +952,35 @@ mod tests {
             timestamp: 1_710_000_000,
         })
         .expect("seal");
-
-        let mut bad_ts = sealed.clone();
-        bad_ts.timestamp += 1;
+        let mut other_meta = sealed.clone();
+        other_meta.timestamp += 1;
+        other_meta.nonce = generate_nonce_base64url();
+        other_meta.key_version = "v2".into();
+        let opened = open_envelope(
+            &profile,
+            &registry,
+            &key,
+            None,
+            "tenant-1",
+            "/api/v1/other",
+            &other_meta,
+        )
+        .expect("aad must not bind metadata");
+        assert_eq!(opened, b"secret-payload");
         assert!(matches!(
             open_envelope(
                 &profile,
                 &registry,
                 &key,
                 None,
-                "tenant-1",
+                "tenant-2",
                 "/api/v1/gateway",
-                &bad_ts
-            ),
-            Err(TransportCryptoError::DecryptFailed)
-        ));
-
-        let mut bad_nonce = sealed.clone();
-        bad_nonce.nonce = generate_nonce_base64url();
-        assert!(matches!(
-            open_envelope(
-                &profile,
-                &registry,
-                &key,
-                None,
-                "tenant-1",
-                "/api/v1/gateway",
-                &bad_nonce
-            ),
-            Err(TransportCryptoError::DecryptFailed)
-        ));
-
-        let mut bad_kv = sealed.clone();
-        bad_kv.key_version = "v2".into();
-        assert!(matches!(
-            open_envelope(
-                &profile,
-                &registry,
-                &key,
-                None,
-                "tenant-1",
-                "/api/v1/gateway",
-                &bad_kv
-            ),
-            Err(TransportCryptoError::DecryptFailed)
-        ));
-
-        assert!(matches!(
-            open_envelope(
-                &profile,
-                &registry,
-                &key,
-                None,
-                "tenant-1",
-                "/api/v1/other",
                 &sealed
             ),
             Err(TransportCryptoError::DecryptFailed)
         ));
     }
 }
+
+#[cfg(test)]
+mod golden_tests;

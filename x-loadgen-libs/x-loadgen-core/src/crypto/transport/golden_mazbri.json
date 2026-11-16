@@ -1,0 +1,209 @@
+{
+  "source": "mazbri a67f8c5 (v0.5.4) mazbri-core::crypto::transport::seal_envelope；每条均已用 mazbri open_envelope 回解通过、换 tenant_id 回解失败",
+  "tenant_id": "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5",
+  "http_path": "/api/v1/gateway/REST-POSTS-SEARCH-POST",
+  "key_version": "v3",
+  "timestamp": 1763280000,
+  "secret_hex": "11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3ea",
+  "plaintext": "{\"keyword\":\"x-loadgen golden vector\",\"page\":1}",
+  "cases": [
+    {
+      "envelope": {
+        "ciphertext": "TNE23uP5fKuI8tqb+YO3mruaxr3M9adWWGOIbWjZRJiIRpWcwQbHgBILuiBoOg==",
+        "dataAlg": "aes-256-gcm",
+        "encrypted": true,
+        "iv": "mSFlrf0N4UMY2cXX",
+        "keyVersion": "v3",
+        "nonce": "E2mGGaRCwynJmsE11egy_g",
+        "signature": "",
+        "tag": "9ICjcD6c3j8fzOUawXv8mg==",
+        "timestamp": 1763280000
+      },
+      "name": "suite-default-aes-256-gcm",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "aes-256-gcm",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": false,
+        "suite": "suite/tenant-default-2026-11",
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "WSISiKxXWa+XyAqBWcv5x9NKYe51HWO7n93UDDcej225FBL5FizARgpVKRG8eg==",
+        "dataAlg": "chacha20-poly1305",
+        "encrypted": true,
+        "iv": "0GMHRuetckZIUj3U",
+        "keyVersion": "v3",
+        "nonce": "qujGcZjj6hUIxS8q811QvA",
+        "signature": "",
+        "tag": "6iNo77AtGbYCTGQoovgdrw==",
+        "timestamp": 1763280000
+      },
+      "name": "suite-chacha20-poly1305",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "chacha20-poly1305",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": false,
+        "suite": "suite/tenant-chacha20",
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "86IqPWbRjGmf8qHS6FEpwAF4z4ksDmSezKNweoxAEV/batR88CfUhKivIqG1QA==",
+        "dataAlg": "aes-128-gcm",
+        "encrypted": true,
+        "iv": "txuEOH2Y+tPwZXma",
+        "keyVersion": "v3",
+        "nonce": "NPYx9ySyBCXbYwuXZ2E7xw",
+        "signature": "",
+        "tag": "VIunjiVy+H19NXOqeJOARw==",
+        "timestamp": 1763280000
+      },
+      "name": "aes-128-gcm",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "aes-128-gcm",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": false,
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "SLs7MgT0BAMznCylBc7hERLwPpZ/s4PJQUHzoj3M/tL0Z6FJTrOzyupDL3Rbyg==",
+        "dataAlg": "aes-192-gcm",
+        "encrypted": true,
+        "iv": "Cn6bl4P3GXgFhsEU",
+        "keyVersion": "v3",
+        "nonce": "-PCxiywqMHImJTm2lchAow",
+        "signature": "",
+        "tag": "z1l+MtIMdySPHk5B4u0p8A==",
+        "timestamp": 1763280000
+      },
+      "name": "aes-192-gcm",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "aes-192-gcm",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": false,
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "Uy54zPfXuMgOAOhua339zfQSC1plZl7AIIo4z5k1osRgK9QEdoEjTHqMvGAGhg==",
+        "dataAlg": "aes-256-gcm",
+        "encrypted": true,
+        "iv": "wOmWq6PrZ+EK6vHQ",
+        "keyVersion": "v3",
+        "macAlg": "hmac-sha256",
+        "nonce": "b2ARi8NRDz2QSCUPn7I25g",
+        "signature": "f53854c4a64f7fa593a479984a7b58dcd699c7732af9d4bb0b44c14f085635a5",
+        "tag": "+WqJWvk7qteahAtc/vhjrA==",
+        "timestamp": 1763280000
+      },
+      "name": "aes-256-gcm+hmac-sha256",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "aes-256-gcm",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mac_alg": "hmac-sha256",
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": true,
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "DJ7V/B722zo88mfjiAsKhnDY2pNFEll2eYyw4fboWuQImngehYp2f4y/o0/hvpNl",
+        "dataAlg": "sm4-cbc-pkcs7",
+        "encrypted": true,
+        "iv": "PSlf0LEPe3yxLDialxUNvQ==",
+        "keyVersion": "v3",
+        "macAlg": "hmac-sm3",
+        "nonce": "8ubIJsjv4gxuq9vdqZIfQw",
+        "signature": "cbb5c049d72953f76033d5ad18af7b08a78752e1e8c20708f0b5160f1a59b3c7",
+        "tag": "",
+        "timestamp": 1763280000
+      },
+      "name": "suite-gm-sm4-cbc+hmac-sm3",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "sm4-cbc-pkcs7",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mac_alg": "hmac-sm3",
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": true,
+        "suite": "suite/gm-sm4-hmac-sm3",
+        "version": 1
+      }
+    },
+    {
+      "envelope": {
+        "ciphertext": "Ds53XRMp65p9mP6xKDhBaX3rnpj91ijZxiulNqDp1igA9dfz++pJC1qz99djrVYM",
+        "dataAlg": "aes-256-cbc",
+        "encrypted": true,
+        "iv": "yqPuKXbZpLb2mH7l/2k74g==",
+        "keyVersion": "v3",
+        "macAlg": "hmac-sha512",
+        "nonce": "LNquzZuaMybk436PSIx4RQ",
+        "signature": "5ec60bae8af83c4b67914d5613694e65621c1141586739a112ae4e06c48a5db42f227d807bbf797106cdf4acc9ca00d9436aac0aef87498fc147f6e035871bf6",
+        "tag": "",
+        "timestamp": 1763280000
+      },
+      "name": "aes-256-cbc+hmac-sha512",
+      "profile": {
+        "allow_insecure": false,
+        "clock_skew_secs": 300,
+        "data_alg": "aes-256-cbc",
+        "key": {
+          "key_id": "tenant-default",
+          "strategy": "latest"
+        },
+        "mac_alg": "hmac-sha512",
+        "mode": "full",
+        "nonce_ttl_secs": 300,
+        "require_signature": true,
+        "version": 1
+      }
+    }
+  ]
+}
