@@ -247,6 +247,7 @@ function openEditor(profile: LoadProfile | null): void {
       connect_timeout_secs: profile.connect_timeout_secs,
       token_refresh_skew_secs: profile.token_refresh_skew_secs,
       include_request_id: profile.include_request_id,
+      trace_sampled: profile.trace_sampled,
       processes: profile.processes,
       qps_mode: profile.qps_mode,
       requests_mode: profile.requests_mode,

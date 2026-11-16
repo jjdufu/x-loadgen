@@ -108,6 +108,9 @@ fn classify(
         error: outcome.error,
         response_bytes: outcome.response_bytes,
         customer_name,
+        trace_id: outcome.trace_id,
+        trace_echo: outcome.trace_echo,
+        warmup: false,
     };
     let _ = outcome.body;
     Executed {

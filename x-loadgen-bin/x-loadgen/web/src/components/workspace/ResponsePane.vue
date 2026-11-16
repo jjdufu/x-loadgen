@@ -114,6 +114,34 @@
         </div>
       </div>
 
+      <!-- Request identity: X-Request-Id + traceparent (click to copy) -->
+      <div
+        v-if="resp.request_id || resp.trace_id"
+        class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 font-mono text-[11px] text-muted-foreground shrink-0"
+      >
+        <button
+          v-if="resp.request_id"
+          type="button"
+          class="hover:text-foreground"
+          title="复制 X-Request-Id"
+          @click="copyId(resp.request_id, 'X-Request-Id')"
+        >
+          X-Request-Id <span class="text-foreground">{{ resp.request_id }}</span>
+        </button>
+        <button
+          type="button"
+          class="hover:text-foreground"
+          title="复制 trace_id"
+          @click="copyId(resp.trace_id, 'trace_id')"
+        >
+          trace_id <span class="text-foreground">{{ resp.trace_id }}</span>
+        </button>
+        <span>{{ resp.traceparent.endsWith("-01") ? "采样 01" : "不采样 00" }}</span>
+        <UiBadge :variant="traceEchoVariant(resp.trace_echo)">
+          {{ traceEchoLabel(resp.trace_echo) }}
+        </UiBadge>
+      </div>
+
       <!-- Unresolved <<var>> Warning Banner -->
       <div
         v-if="resp.request_preview.unresolved_variables.length > 0"
@@ -396,6 +424,8 @@ import {
   formatLatencyUs,
   methodColorClass,
   statusCategoryClass,
+  traceEchoLabel,
+  traceEchoVariant,
 } from "../../helpers/format";
 import { toast } from "../../modules/toast";
 import { copyText } from "../../utils/clipboard";
@@ -409,6 +439,10 @@ import UiBadge from "../ui/UiBadge.vue";
 import UiButton from "../ui/UiButton.vue";
 
 const resp = computed(() => activeTab.value.response);
+
+async function copyId(value: string, label: string): Promise<void> {
+  if (await copyText(value)) toast.success(`已复制 ${label}`);
+}
 
 const responseTabs = computed<
   {

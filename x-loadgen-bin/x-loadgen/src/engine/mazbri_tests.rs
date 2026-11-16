@@ -477,3 +477,54 @@ async fn every_custom_data_algorithm_round_trips_under_full_encryption() {
         assert_all_succeed(&format!("legacy {data_alg}"), &case).await;
     }
 }
+
+#[tokio::test]
+async fn every_request_sends_uuid_v7_request_id_and_unsampled_traceparent() {
+    let (outcomes, stats) = run(&Case::plain(), None).await;
+    let mut ids = std::collections::HashSet::new();
+    let mut traces = std::collections::HashSet::new();
+    for outcome in &outcomes {
+        assert!(outcome.transport_ok, "{:?}", outcome.error);
+        let rid = outcome.request_id.as_deref().expect("request id");
+        let parsed = uuid::Uuid::parse_str(rid).expect("uuid request id");
+        assert_eq!(parsed.get_version_num(), 7, "{rid}");
+        assert!(ids.insert(rid.to_string()), "request ids are unique");
+        let trace_id = outcome.trace_id.as_deref().expect("trace id");
+        assert_eq!(trace_id.len(), 32);
+        assert!(traces.insert(trace_id.to_string()), "trace ids are unique");
+        assert_eq!(outcome.trace_echo, crate::db::TraceEcho::Match);
+    }
+    assert_eq!(stats.traces_continued, REQUESTS);
+    assert_eq!(stats.traces_sampled, 0, "load runs default to flags 00");
+}
+
+#[tokio::test]
+async fn sampled_flag_and_request_id_switch_follow_the_template() {
+    let config = MockConfig {
+        tenants: vec![Case::plain().gateway],
+        ..MockConfig::default()
+    };
+    let gateway = MockGateway::start("127.0.0.1:0", &config)
+        .await
+        .expect("mock gateway");
+    let (target, mut template) = snapshot(&gateway.base_url(), &Case::plain());
+    template.trace_sampled = true;
+    template.include_request_id = false;
+    let executor = HttpExecutor::from_snapshot(&target, &template).expect("executor");
+    let ctx = RequestCtx {
+        index: 0,
+        request_key: "req-1".into(),
+        product_id: "P-ECHO".into(),
+        product_name: Some("echo".into()),
+        tenant_name: Some("t".into()),
+    };
+    let outcome = executor.execute(&ctx).await;
+    assert!(outcome.transport_ok, "{:?}", outcome.error);
+    assert!(
+        outcome.request_id.is_some(),
+        "without X-Request-Id the gateway's id is recorded"
+    );
+    let stats = gateway.stats();
+    gateway.stop().await;
+    assert_eq!((stats.traces_continued, stats.traces_sampled), (1, 1));
+}

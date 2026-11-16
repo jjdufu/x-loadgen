@@ -8,9 +8,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use reqwest::header::HeaderMap;
 use reqwest::{Client, Method};
 use serde_json::Value;
+use x_loadgen_sdk::{REQUEST_ID_HEADER, TRACEPARENT_HEADER, TraceParent, new_request_id};
 
+use crate::db::TraceEcho;
 use crate::db::profiles::LoadConfig;
 use crate::db::workspace::{
     HttpAuthSpec, KeyValueRow, PROTOCOL_HTTP, PROTOCOL_MAZBRI, RequestBodySpec, TlsSpec,
@@ -53,8 +56,89 @@ pub struct RequestCtx {
     pub tenant_name: Option<String>,
 }
 
-/// Result of a single executed request (no scheduling or metrics).
+/// Prefix of the `X-Request-Id` sent by an interactive single probe.
+pub const PROBE_REQUEST_ID_PREFIX: &str = "probe-";
+
+/// Identity of one outgoing request, fixed before anything is sent so a
+/// timeout or a dropped connection still has both ids recorded.
+///
+/// `X-Request-Id` is a `UUIDv7` (`probe-<UUIDv7>` for single probes) and may be
+/// switched off for load runs; a W3C `traceparent` with a fresh trace-id is
+/// always sent (mazbri protocol: request identity and tracing).
 #[derive(Debug, Clone)]
+pub struct RequestIds {
+    pub request_id: Option<String>,
+    pub trace: TraceParent,
+}
+
+impl RequestIds {
+    /// Ids for one load-run request.
+    #[must_use]
+    pub fn for_load(include_request_id: bool, sampled: bool) -> Self {
+        Self {
+            request_id: include_request_id.then(new_request_id),
+            trace: TraceParent::generate(sampled),
+        }
+    }
+
+    /// Ids for one interactive single probe (`probe-<UUIDv7>`).
+    #[must_use]
+    pub fn for_probe(sampled: bool) -> Self {
+        Self {
+            request_id: Some(format!("{PROBE_REQUEST_ID_PREFIX}{}", new_request_id())),
+            trace: TraceParent::generate(sampled),
+        }
+    }
+
+    /// Lowercase trace-id recorded with the sample.
+    #[must_use]
+    pub fn trace_id(&self) -> String {
+        self.trace.trace_id()
+    }
+
+    /// Request headers carrying the ids (`X-Request-Id` only when enabled).
+    #[must_use]
+    pub fn headers(&self) -> Vec<(String, String)> {
+        let mut out = Vec::with_capacity(2);
+        if let Some(rid) = self.request_id.as_deref() {
+            out.push(("X-Request-Id".to_string(), rid.to_string()));
+        }
+        out.push((TRACEPARENT_HEADER.to_string(), self.trace.to_string()));
+        out
+    }
+
+    /// Compare the response `traceparent` with the one sent.
+    #[must_use]
+    pub fn trace_echo(&self, response: &HeaderMap) -> TraceEcho {
+        let Some(value) = response.get(TRACEPARENT_HEADER) else {
+            return TraceEcho::Absent;
+        };
+        self.compare_traceparent(value.to_str().ok())
+    }
+
+    /// Compare a returned `traceparent` value (`None`: not valid text) with the one sent.
+    #[must_use]
+    pub fn compare_traceparent(&self, value: Option<&str>) -> TraceEcho {
+        match value.and_then(TraceParent::parse) {
+            Some(echoed) if echoed.same_trace(&self.trace) => TraceEcho::Match,
+            _ => TraceEcho::Mismatch,
+        }
+    }
+}
+
+/// Response `X-Request-Id`, used when no id was sent.
+#[must_use]
+pub fn response_request_id(response: &HeaderMap) -> Option<String> {
+    response
+        .get(REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Result of a single executed request (no scheduling or metrics).
+#[derive(Debug, Clone, Default)]
 pub struct ExecOutcome {
     pub start_unix_ms: i64,
     pub end_unix_ms: i64,
@@ -67,6 +151,10 @@ pub struct ExecOutcome {
     pub error: Option<String>,
     pub response_bytes: Option<i64>,
     pub request_id: Option<String>,
+    /// Trace-id of the `traceparent` sent with this request.
+    pub trace_id: Option<String>,
+    /// How the response `traceparent` compared with the one sent.
+    pub trace_echo: TraceEcho,
     pub body: Option<Value>,
     pub customer_name: Option<String>,
     /// Time spent waiting before the request could be sent (for example on a
@@ -111,6 +199,7 @@ pub struct HttpExecutor {
     pub(crate) client: Client,
     pub(crate) base_url: Option<String>,
     pub(crate) include_request_id: bool,
+    pub(crate) trace_sampled: bool,
     requests: HashMap<String, PreparedRequest>,
     http_tenants: HashMap<String, Option<String>>,
     mazbri_tenants: HashMap<(String, String), Arc<MazbriTenant>>,
@@ -191,6 +280,7 @@ impl HttpExecutor {
             client,
             base_url: target.gateway_base_url.clone(),
             include_request_id: template.include_request_id,
+            trace_sampled: template.trace_sampled,
             requests,
             http_tenants,
             mazbri_tenants,
@@ -383,7 +473,7 @@ pub(crate) fn render_http_call(
     req: &PreparedRequest,
     runtime: &RuntimeVars,
     tenant_api_key: Option<&str>,
-    request_id: Option<&str>,
+    ids: &RequestIds,
 ) -> RenderedHttpCall {
     let rendered_ep = render_str(&req.endpoint_template, &req.variables, runtime);
     let mut url = if rendered_ep.starts_with("http://") || rendered_ep.starts_with("https://") {
@@ -427,9 +517,7 @@ pub(crate) fn render_http_call(
         &mut query_items,
     );
 
-    if let Some(rid) = request_id {
-        headers.push(("X-Request-Id".into(), rid.to_string()));
-    }
+    headers.extend(ids.headers());
 
     if !query_items.is_empty() {
         let encoded = query_items
@@ -600,6 +688,7 @@ impl RequestExecutor for HttpExecutor {
 impl HttpExecutor {
     async fn execute_one(&self, ctx: &RequestCtx) -> ExecOutcome {
         let started = unix_now_ms();
+        let ids = RequestIds::for_load(self.include_request_id, self.trace_sampled);
         let lookup_key = if self.requests.contains_key(&ctx.request_key) {
             &ctx.request_key
         } else {
@@ -610,7 +699,7 @@ impl HttpExecutor {
                 started,
                 started,
                 0,
-                None,
+                &ids,
                 Some("config".into()),
                 Some(format!("unknown request_key {}", ctx.request_key)),
                 None,
@@ -618,12 +707,11 @@ impl HttpExecutor {
             );
         };
 
-        let request_id = request_id_for(self.include_request_id, ctx);
         let client = req.custom_client.as_ref().unwrap_or(&self.client);
 
         if let Some(mazbri_mode) = req.mazbri_mode.as_ref() {
             return self
-                .execute_mazbri_mode(started, ctx, req, mazbri_mode, client, request_id)
+                .execute_mazbri_mode(started, ctx, req, mazbri_mode, client, &ids)
                 .await;
         }
 
@@ -639,7 +727,7 @@ impl HttpExecutor {
             req,
             &runtime,
             tenant_api_key,
-            request_id.as_deref(),
+            &ids,
         );
 
         let mut builder = client.request(req.method.clone(), &call.url);
@@ -662,21 +750,13 @@ impl HttpExecutor {
         let sent = Instant::now();
         match builder.send().await {
             Ok(response) => {
-                classify_response(
-                    started,
-                    sent,
-                    request_id,
-                    req,
-                    response,
-                    ctx.tenant_name.clone(),
-                )
-                .await
+                classify_response(started, sent, &ids, req, response, ctx.tenant_name.clone()).await
             }
             Err(err) => failed_outcome(
                 started,
                 unix_now_ms(),
                 elapsed_us(sent),
-                request_id,
+                &ids,
                 Some("transport".into()),
                 Some(err.to_string()),
                 None,
@@ -692,7 +772,7 @@ impl HttpExecutor {
         req: &PreparedRequest,
         mazbri_mode: &PreparedMazbriMode,
         client: &reqwest::Client,
-        request_id: Option<String>,
+        ids: &RequestIds,
     ) -> ExecOutcome {
         let (actual_tenant_name, mazbri_tenant) = match mazbri_mode {
             PreparedMazbriMode::Inline {
@@ -709,7 +789,7 @@ impl HttpExecutor {
                         started,
                         started,
                         0,
-                        request_id,
+                        ids,
                         Some("config".into()),
                         Some("no mazbri tenant selected for this request".into()),
                         None,
@@ -722,7 +802,7 @@ impl HttpExecutor {
                         started,
                         started,
                         0,
-                        request_id,
+                        ids,
                         Some("config".into()),
                         Some(format!("mazbri tenant '{name}' not prepared")),
                         None,
@@ -733,51 +813,42 @@ impl HttpExecutor {
             }
         };
         mazbri_tenant
-            .execute(client, ctx, req, request_id, Some(actual_tenant_name))
+            .execute(client, ctx, req, ids, Some(actual_tenant_name))
             .await
     }
-}
-
-fn request_id_for(include: bool, ctx: &RequestCtx) -> Option<String> {
-    include.then(|| {
-        let slug: String = ctx
-            .product_id
-            .chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                    ch
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        format!("{slug}-{}", ctx.index)
-    })
 }
 
 async fn classify_response(
     started: i64,
     sent: Instant,
-    request_id: Option<String>,
+    ids: &RequestIds,
     req: &PreparedRequest,
     response: reqwest::Response,
     customer_name: Option<String>,
 ) -> ExecOutcome {
     let status = i64::from(response.status().as_u16());
     let transport_ok = response.status().is_success();
+    let trace_echo = ids.trace_echo(response.headers());
+    let request_id = ids
+        .request_id
+        .clone()
+        .or_else(|| response_request_id(response.headers()));
     let raw_bytes = match response.bytes().await {
         Ok(b) => b,
         Err(err) => {
-            return failed_outcome(
+            let mut failed = failed_outcome(
                 started,
                 unix_now_ms(),
                 elapsed_us(sent),
-                request_id,
+                ids,
                 Some("transport".into()),
                 Some(err.to_string()),
                 Some(status),
                 customer_name,
             );
+            failed.request_id = request_id;
+            failed.trace_echo = trace_echo;
+            return failed;
         }
     };
     // Stop the clock once the last body byte arrived: JSON parsing below is
@@ -798,6 +869,8 @@ async fn classify_response(
         error: None,
         response_bytes: bytes,
         request_id,
+        trace_id: Some(ids.trace_id()),
+        trace_echo,
         body,
         customer_name,
         pre_send_wait_us: 0,
@@ -817,7 +890,7 @@ pub(super) fn failed_outcome(
     start_unix_ms: i64,
     end_unix_ms: i64,
     latency_us: i64,
-    request_id: Option<String>,
+    ids: &RequestIds,
     error_class: Option<String>,
     error: Option<String>,
     http_status: Option<i64>,
@@ -828,16 +901,12 @@ pub(super) fn failed_outcome(
         end_unix_ms,
         latency_us,
         http_status,
-        transport_ok: false,
-        expected: false,
-        reason: None,
         error_class,
         error,
-        response_bytes: None,
-        request_id,
-        body: None,
+        request_id: ids.request_id.clone(),
+        trace_id: Some(ids.trace_id()),
         customer_name,
-        pre_send_wait_us: 0,
+        ..ExecOutcome::default()
     }
 }
 

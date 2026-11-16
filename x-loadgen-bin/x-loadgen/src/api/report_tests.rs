@@ -595,6 +595,7 @@ fn seed_pages(paths: &DataPaths, run_id: &str) {
             },
             response_bytes: Some(8),
             customer_name: None,
+            ..Sample::default()
         };
         if i % 2 == 0 {
             left.push(sample);

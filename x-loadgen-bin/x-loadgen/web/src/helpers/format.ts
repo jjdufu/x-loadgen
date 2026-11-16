@@ -473,6 +473,7 @@ export function createDefaultLoadConfig(): LoadConfig {
     connect_timeout_secs: 5,
     token_refresh_skew_secs: 60,
     include_request_id: true,
+    trace_sampled: false,
     processes: 1,
     qps_mode: "total",
     requests_mode: "total",
@@ -564,4 +565,21 @@ export function normalizeDraftForApi(draft: RequestDraft): RequestDraft {
 
 export function cloneJson<T>(val: T): T {
   return JSON.parse(JSON.stringify(val)) as T;
+}
+
+/** How the target's response `traceparent` compared with the one x-loadgen sent. */
+export type TraceEcho = "absent" | "match" | "mismatch";
+
+export function traceEchoLabel(echo: TraceEcho | string | null | undefined): string {
+  if (echo === "match") return "链路已接续";
+  if (echo === "mismatch") return "链路未接续";
+  return "未回 traceparent";
+}
+
+export function traceEchoVariant(
+  echo: TraceEcho | string | null | undefined,
+): "success" | "destructive" | "muted" {
+  if (echo === "match") return "success";
+  if (echo === "mismatch") return "destructive";
+  return "muted";
 }

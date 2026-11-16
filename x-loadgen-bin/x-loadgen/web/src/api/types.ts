@@ -244,10 +244,18 @@ export interface ProbeRequest {
   environment_id?: string | null;
   variables_override?: Record<string, string> | null;
   seq?: number | null;
+  /** `traceparent` sampled flag; probes default to sampled (`01`). */
+  trace_sampled?: boolean;
 }
 
 export interface ProbeResponse {
   protocol: RequestProtocol | string;
+  /** `X-Request-Id` sent (`probe-<UUIDv7>`). */
+  request_id: string;
+  trace_id: string;
+  traceparent: string;
+  response_traceparent?: string | null;
+  trace_echo: "absent" | "match" | "mismatch" | string;
   transport_ok: boolean;
   passed_assertions: boolean;
   http_status?: number | null;
@@ -285,6 +293,7 @@ export interface LoadConfig {
   connect_timeout_secs: number;
   token_refresh_skew_secs: number;
   include_request_id: boolean;
+  trace_sampled: boolean;
   processes: number;
   qps_mode: "total" | "per_process" | string;
   requests_mode: "total" | "per_process" | string;
@@ -338,6 +347,7 @@ export interface CreateRunRequest {
   connect_timeout_secs?: number | null;
   token_refresh_skew_secs?: number | null;
   include_request_id?: boolean | null;
+  trace_sampled?: boolean | null;
   processes?: number | null;
   qps_mode?: "total" | "per_process" | string | null;
   requests_mode?: "total" | "per_process" | string | null;

@@ -121,6 +121,21 @@ gunzip -c x-loadgen-<版本>.tar.gz | docker load
 
 部署到其它主机时，把本目录整个拷过去（不带 `data/ logs/ backups/` 和 `config/.env`），准备好镜像后执行 `scripts/start.sh`。本工程独立启动，不接入 mazbri-max 的 `up.sh` 或平台编排。
 
+## 升级
+
+同一数据库结构版本内升级：改 `config/.env` 的 `X_LOADGEN_VERSION`，执行 `scripts/start.sh`，数据与口令保留。
+
+跨数据库结构版本升级（例如 0.5.x → 0.6.0，中央库 v2 → v3、任务库 v1 → v2）没有迁移，也不兼容旧库：新版本读到旧库会拒绝启动，日志里提示清空数据目录。按下面的顺序做，旧的集合、环境、预设和压测记录都会丢失，需要的话先 `scripts/backup.sh` 或从页面导出集合与环境：
+
+```bash
+scripts/stop.sh
+rm -rf data/*            # 清空数据目录（logs/ backups/ 可保留）
+# 修改 config/.env：X_LOADGEN_VERSION=<新版本>
+scripts/start.sh         # 重新生成 data/admin.passwd
+```
+
+之后按「首次启动与必须改密」用新的 `admin.passwd` 登录并设置新口令，旧口令随旧库一起失效。
+
 ## 检查
 
 ```bash

@@ -64,6 +64,11 @@ pub struct LoadConfig {
     pub token_refresh_skew_secs: i64,
     #[serde(default = "default_true")]
     pub include_request_id: bool,
+    /// W3C `traceparent` sampled flag sent with every load request (`01` when
+    /// true, `00` by default so a load run does not flood the tracing backend;
+    /// log correlation by trace-id works either way).
+    #[serde(default)]
+    pub trace_sampled: bool,
     #[serde(default = "default_processes")]
     pub processes: i64,
     #[serde(default = "default_split_mode")]
@@ -98,6 +103,7 @@ impl Default for LoadConfig {
             connect_timeout_secs: default_connect_timeout_secs(),
             token_refresh_skew_secs: default_refresh_skew_secs(),
             include_request_id: true,
+            trace_sampled: false,
             processes: 1,
             qps_mode: default_split_mode(),
             requests_mode: default_split_mode(),
@@ -319,7 +325,7 @@ pub fn list_load_profiles(conn: &Connection) -> Result<Vec<LoadProfile>, StoreEr
                 token_refresh_skew_secs, include_request_id, processes,
                 qps_mode, requests_mode, loop_enabled, rounds, loop_interval_secs,
                 expected_reasons_json, detail_retain_days, detail_retain_rows,
-                assert_json, note, created_at, updated_at
+                assert_json, note, created_at, updated_at, trace_sampled
          FROM load_profiles ORDER BY created_at DESC, name ASC",
     )?;
     let rows = stmt.query_map([], profile_from_row)?;
@@ -342,7 +348,7 @@ pub fn get_load_profile_by_id_or_name(
                 token_refresh_skew_secs, include_request_id, processes,
                 qps_mode, requests_mode, loop_enabled, rounds, loop_interval_secs,
                 expected_reasons_json, detail_retain_days, detail_retain_rows,
-                assert_json, note, created_at, updated_at
+                assert_json, note, created_at, updated_at, trace_sampled
          FROM load_profiles WHERE id = ?1 OR name = ?1 LIMIT 1",
         params![key],
         profile_from_row,
@@ -363,7 +369,7 @@ pub fn get_load_profile(conn: &Connection, id: &str) -> Result<LoadProfile, Stor
                 token_refresh_skew_secs, include_request_id, processes,
                 qps_mode, requests_mode, loop_enabled, rounds, loop_interval_secs,
                 expected_reasons_json, detail_retain_days, detail_retain_rows,
-                assert_json, note, created_at, updated_at
+                assert_json, note, created_at, updated_at, trace_sampled
          FROM load_profiles WHERE id = ?1",
         params![id],
         profile_from_row,
@@ -409,14 +415,14 @@ pub fn create_load_profile(
             token_refresh_skew_secs, include_request_id, processes,
             qps_mode, requests_mode, loop_enabled, rounds, loop_interval_secs,
             expected_reasons_json, detail_retain_days, detail_retain_rows,
-            assert_json, note, created_at, updated_at
+            assert_json, note, created_at, updated_at, trace_sampled
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7,
             ?8, ?9, ?10, ?11,
             ?12, ?13, ?14,
             ?15, ?16, ?17, ?18, ?19,
             ?20, ?21, ?22,
-            ?23, ?24, ?25, ?25
+            ?23, ?24, ?25, ?25, ?26
          )",
         params![
             id,
@@ -443,7 +449,8 @@ pub fn create_load_profile(
             input.config.detail_retain_rows,
             assert_json,
             non_empty_owned(input.note.as_deref()),
-            now
+            now,
+            i64::from(input.config.trace_sampled)
         ],
     )
     .map_err(|err| map_unique_err(err, name))?;
@@ -490,7 +497,8 @@ pub fn update_load_profile(
             requests_mode = ?15, loop_enabled = ?16, rounds = ?17,
             loop_interval_secs = ?18, expected_reasons_json = ?19,
             detail_retain_days = ?20, detail_retain_rows = ?21,
-            assert_json = ?22, note = ?23, updated_at = ?24
+            assert_json = ?22, note = ?23, updated_at = ?24,
+            trace_sampled = ?26
          WHERE id = ?25",
         params![
             name,
@@ -517,7 +525,8 @@ pub fn update_load_profile(
             assert_json,
             non_empty_owned(input.note.as_deref()),
             now,
-            id
+            id,
+            i64::from(input.config.trace_sampled)
         ],
     )
     .map_err(|err| map_unique_err(err, name))?;
@@ -568,6 +577,7 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadProfile> {
             connect_timeout_secs: row.get(10)?,
             token_refresh_skew_secs: row.get(11)?,
             include_request_id: row.get::<_, i64>(12)? != 0,
+            trace_sampled: row.get::<_, i64>(26)? != 0,
             processes: row.get(13)?,
             qps_mode: row.get(14)?,
             requests_mode: row.get(15)?,

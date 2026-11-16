@@ -112,6 +112,7 @@ impl RequestExecutor for MockExecutor {
                 customer_name: None,
                 body: None,
                 pre_send_wait_us: 0,
+                ..ExecOutcome::default()
             }
         })
     }
@@ -254,6 +255,7 @@ async fn histogram_and_ring_stay_fixed_size_after_many_samples() {
             error: None,
             response_bytes: Some(4),
             customer_name: None,
+            ..Sample::default()
         };
         metrics.record(sample, OutcomeClass::Success, false, &sink);
     }
@@ -290,6 +292,7 @@ fn run_histogram_survives_window_reset_and_restores_from_blob() {
             error: None,
             response_bytes: None,
             customer_name: None,
+            ..Sample::default()
         };
         metrics.record(sample, OutcomeClass::Success, false, &sink);
     }
@@ -334,6 +337,7 @@ async fn dropped_details_increment_when_try_send_fails() {
         error: None,
         response_bytes: None,
         customer_name: None,
+        ..Sample::default()
     };
     metrics.record(sample, OutcomeClass::Success, false, &DropAllSink);
     assert_eq!(metrics.counters().dropped_details, 1);
@@ -472,6 +476,7 @@ fn latency_sample(latency_us: i64) -> Sample {
         error: None,
         response_bytes: None,
         customer_name: None,
+        ..Sample::default()
     }
 }
 

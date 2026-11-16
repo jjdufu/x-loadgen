@@ -407,12 +407,13 @@ xlg "$XLG/api/v1/collections/export" | jq 'length'
 
 ### 单次交互调试（Probe / Send）
 
-`POST /api/v1/probe` 对应工作台里的 **`Send`** 按钮：可按 `request_id` 发送已保存请求，也可直接传未保存草稿 `request`，结合可选 `environment_id` 发起 **1 次真实请求**。
+`POST /api/v1/probe` 对应工作台里的 **`Send`** 按钮：可按 `request_id`（已保存请求的 ID）发送已保存请求，也可直接传未保存草稿 `request`，结合可选 `environment_id` 发起 **1 次真实请求**。
+- 两种协议都返回本次发送的 `request_id`（`probe-<UUIDv7>`）、`trace_id`、`traceparent`（默认采样 `01`，`"trace_sampled": false` 改为 `00`）与 `trace_echo`。
 - `http` 模式返回状态码、耗时（`latency_us`）、字节数、响应头、格式化 JSON、逐项断言结果与实际发出的请求预览。
 - `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、5 个 `x-mazbri-*` 绑定签名头、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
 
 ```bash
-xlg -X POST "$XLG/api/v1/probe" --data-binary @- <<EOF | jq '{http_status, transport_ok, passed_assertions, latency_us}'
+xlg -X POST "$XLG/api/v1/probe" --data-binary @- <<EOF | jq '{http_status, transport_ok, passed_assertions, latency_us, request_id, trace_id, trace_echo}'
 {
   "request_id": "$HTTP_REQ_ID",
   "environment_id": "$ENV_ID"
@@ -438,6 +439,7 @@ PROFILE=$(xlg -X POST "$XLG/api/v1/load-profiles" --data-binary @- <<'EOF'
   "connect_timeout_secs": 5,
   "token_refresh_skew_secs": 30,
   "include_request_id": true,
+  "trace_sampled": false,
   "processes": 1,
   "qps_mode": "total",
   "requests_mode": "total",
@@ -462,6 +464,7 @@ LOOP_PROFILE=$(xlg -X POST "$XLG/api/v1/load-profiles" --data-binary @- <<'EOF'
   "connect_timeout_secs": 5,
   "token_refresh_skew_secs": 30,
   "include_request_id": true,
+  "trace_sampled": false,
   "processes": 1,
   "qps_mode": "total",
   "requests_mode": "total",
@@ -746,8 +749,22 @@ esac
 2. 调用：`POST {gateway_base_url}/api/v1/gateway`，带 `Authorization: Bearer <token>`。请求体为 `GatewayRequest`（`product_id`、`path`、`method`、`query`、`headers`、`body`），请求里的 `<<var>>` / `{{var}}` 与压测动态变量 `{{seq}}`、`{{$timestamp}}`、`{{$randomUUID}}` 在发送前自动渲染。
 3. 请求绑定（可选）：对 `METHOD\npath\ntimestamp\nnonce\nbody` 签名，附带 `x-mazbri-timestamp`、`x-mazbri-nonce`、`x-mazbri-signature`、`x-mazbri-signature-input`、`x-mazbri-key-id`。
 4. 加密：`none` 发明文；`request` 只密封请求，响应按明文解析；`full` 请求和响应都加密，响应解密并校验 MAC 后才参与统计。
+5. 请求标识与链路追踪：见下一节。
 
 耗时、状态统计和业务校验（`assertions.expect_transport`、`assertions.checks`）都基于解密后的响应。
+
+### 请求标识与链路追踪
+
+每个请求（`http` 与 `mazbri` 协议都一样）在发送前生成两个标识并先写进样本，所以超时、断连的请求也查得到：
+
+| 请求头 | 取值 | 说明 |
+| --- | --- | --- |
+| `X-Request-Id` | 压测为 `UUIDv7`（小写带连字符）；单发为 `probe-<UUIDv7>` | 符合网关的流水号规则 `[A-Za-z0-9._-]{1,128}`，网关原样透传给上游。压测配置 `include_request_id=false` 时不发送，样本记录网关回写的流水号（响应头 `X-Request-Id`，没有时取响应体 `request_id`）。 |
+| `traceparent` | W3C Trace Context `00-<trace-id>-<parent-id>-<flags>` | 每个请求一个新的随机 trace-id。flags：单发默认 `01`（采样，网关调用链视图能看到完整链路，请求体 `trace_sampled` 可改）；压测由 `trace_sampled` 决定，默认 `false` 即 `00`（不把压测流量塞进追踪后端，按 trace_id 查日志不受影响）。 |
+
+收到响应后比对响应头 `traceparent`，结果记为 `trace_echo`：`match`（trace-id 相同，链路已接续）、`mismatch`（非法或 trace-id 不同）、`absent`（没有回写，例如连接失败）。
+
+拿一个流水号排查时：在 x-loadgen 里按 `request_id` / `trace_id` 查样本（`GET /api/v1/runs/{id}/samples?request_id=...`），在网关日志与调用日志里按同一个 `request_id`（mgmt 精确查询用 `serial_no=`）或 `trace_id` 查，在上游日志里按 `X-Request-Id` 查。
 
 ### 支持矩阵
 
@@ -790,14 +807,14 @@ API Key、租户密钥、HMAC 密钥和私钥在编辑表单里默认遮盖，�
 
 ## Mock 网关
 
-`x-loadgen-mockgw` 按同一份合同实现 `/auth/token` 与 `/api/v1/gateway`：校验 token、请求绑定签名、打开请求信封，并把请求原样回显（`data.echo`），`full` 模式下加密响应。它用于自动化测试和本地端到端联调：
+`x-loadgen-mockgw` 按同一份合同实现 `/auth/token` 与 `/api/v1/gateway`：校验 token、请求绑定签名、打开请求信封，并把请求原样回显（`data.echo`），`full` 模式下加密响应。请求标识与网关一致：合规的 `X-Request-Id` 原样保留、缺失或不合规时换成新 UUID；合法的入站 `traceparent` 以相同 trace-id 和 flags 接续、缺失或非法时新开一条采样链路；两者在每个响应（含拒绝）的响应头里回写。它用于自动化测试和本地端到端联调：
 
 ```bash
 cargo run -p x-loadgen-mockgw -- --example > /tmp/mockgw.json   # 示例配置
 cargo run -p x-loadgen-mockgw -- --listen 0.0.0.0:18080 --config /tmp/mockgw.json
 ```
 
-配置字段与页面上的租户字段同名，另有 `binding_verify_key`（HMAC 密钥或签名公钥 PEM）和故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置（例如登记页面生成的公钥），`GET /__mock/stats` 查看已签发 token、已验签与已解封的计数，`GET /__mock/health` 做存活检查。
+配置字段与页面上的租户字段同名，另有 `binding_verify_key`（HMAC 密钥或签名公钥 PEM）和故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置（例如登记页面生成的公钥），`GET /__mock/stats` 查看已签发 token、已验签与已解封的计数（`traces_continued` / `traces_sampled` 为收到合法 / 带采样位的 `traceparent` 的次数），`GET /__mock/health` 做存活检查。
 
 > mockgw 与 x-loadgen 共用同一份 `x-loadgen-core` 加解密代码，只能验证流程，测不出信封协议与真实 mazbri 网关是否一致。协议一致性由 `x-loadgen-libs/x-loadgen-core/src/crypto/transport/golden_mazbri.json` 固定测试向量保证（用 mazbri 真实实现生成，x-loadgen 必须逐字节一致）；mazbri 改动信封协议时，须先用 mazbri 源码重新生成这组向量，再同步修改 x-loadgen。
 

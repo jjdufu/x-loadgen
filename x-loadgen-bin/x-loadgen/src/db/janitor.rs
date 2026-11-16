@@ -253,6 +253,7 @@ mod tests {
             error: None,
             response_bytes: Some(1),
             customer_name: None,
+            ..Sample::default()
         }
     }
 

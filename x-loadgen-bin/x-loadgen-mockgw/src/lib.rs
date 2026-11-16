@@ -11,6 +11,12 @@
 //!   window, nonce replay); opens the transport envelope under `request` /
 //!   `full`; answers with a `GatewayResponseEnvelope` echoing the
 //!   `GatewayRequest`, sealed under `full`.
+//! - Request identity like the gateway: a protocol-valid `X-Request-Id` is
+//!   kept, a missing or invalid one is replaced by a new UUID; an inbound W3C
+//!   `traceparent` is continued (same trace-id and flags, new parent-id), a
+//!   missing or invalid one starts a new sampled trace. Both are written back
+//!   as response headers on every reply, rejections included, and the request
+//!   id is also echoed in the envelope `request_id`.
 //!
 //! Test helpers: `GET /__mock/stats` (counters), `PUT /__mock/tenants`
 //! (replace the tenant table), `GET /__mock/health`. Per-tenant `fault`
@@ -26,7 +32,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -47,7 +53,8 @@ use x_loadgen_core::crypto::{
 };
 use x_loadgen_sdk::{
     GATEWAY_INVOKE_PATH, GRANT_TYPE_CLIENT_CREDENTIALS, GatewayRequest, GatewayResponseEnvelope,
-    TOKEN_PATH, TenantSettings, transport_profile,
+    REQUEST_ID_HEADER, TOKEN_PATH, TRACEPARENT_HEADER, TenantSettings, TraceParent,
+    is_valid_request_id, new_request_id, transport_profile,
 };
 
 /// Allowed distance between a binding timestamp and the mock's clock.
@@ -157,6 +164,10 @@ pub struct MockStats {
     pub bindings_verified: u64,
     pub envelopes_opened: u64,
     pub responses_sealed: u64,
+    /// Calls that carried a valid `traceparent` (continued trace).
+    pub traces_continued: u64,
+    /// Continued traces whose inbound flags had the sampled bit.
+    pub traces_sampled: u64,
 }
 
 #[derive(Default)]
@@ -169,6 +180,8 @@ struct Counters {
     bindings_verified: AtomicU64,
     envelopes_opened: AtomicU64,
     responses_sealed: AtomicU64,
+    traces_continued: AtomicU64,
+    traces_sampled: AtomicU64,
 }
 
 impl Counters {
@@ -183,6 +196,8 @@ impl Counters {
             bindings_verified: read(&self.bindings_verified),
             envelopes_opened: read(&self.envelopes_opened),
             responses_sealed: read(&self.responses_sealed),
+            traces_continued: read(&self.traces_continued),
+            traces_sampled: read(&self.traces_sampled),
         }
     }
 }
@@ -498,17 +513,36 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 async fn invoke(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
     bump(&shared.counters.calls);
-    let request_id = header(&headers, "x-request-id").map(str::to_string);
-    match handle_invoke(&shared, &headers, &body, request_id.clone()) {
+    let request_id = header(&headers, REQUEST_ID_HEADER)
+        .map(str::trim)
+        .filter(|id| is_valid_request_id(id))
+        .map_or_else(new_request_id, str::to_string);
+    let inbound = header(&headers, TRACEPARENT_HEADER).and_then(TraceParent::parse);
+    if let Some(parent) = inbound {
+        bump(&shared.counters.traces_continued);
+        if parent.sampled() {
+            bump(&shared.counters.traces_sampled);
+        }
+    }
+    let trace = inbound.map_or_else(|| TraceParent::generate(true), |parent| parent.child());
+    let mut response = match handle_invoke(&shared, &headers, &body, Some(request_id.clone())) {
         Ok(response) => {
             bump(&shared.counters.accepted);
             response
         }
         Err((status, error)) => {
             bump(&shared.counters.rejected);
-            rejection(status, error, request_id)
+            rejection(status, error, Some(request_id.clone()))
         }
+    };
+    let reply_headers = response.headers_mut();
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        reply_headers.insert(REQUEST_ID_HEADER, value);
     }
+    if let Ok(value) = HeaderValue::from_str(&trace.to_string()) {
+        reply_headers.insert(TRACEPARENT_HEADER, value);
+    }
+    response
 }
 
 type Rejection = (StatusCode, &'static str);

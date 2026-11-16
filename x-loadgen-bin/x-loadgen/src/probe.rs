@@ -14,23 +14,25 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use x_loadgen_core::crypto::request_binding::unix_now_secs;
-use x_loadgen_sdk::{GATEWAY_INVOKE_PATH, TOKEN_PATH, parse_token_response, token_request_body};
+use x_loadgen_sdk::{
+    GATEWAY_INVOKE_PATH, TOKEN_PATH, TRACEPARENT_HEADER, parse_token_response, token_request_body,
+};
 
-use crate::db::StoreError;
 use crate::db::collections::RequestDraft;
 use crate::db::profiles::LoadConfig;
 use crate::db::workspace::{PROTOCOL_MAZBRI, TenantSpec, non_empty_str};
+use crate::db::{StoreError, TraceEcho};
 use crate::engine::mazbri::{build_gateway_request, decode_error_class};
 use crate::engine::snapshot::{ExecutionRequest, ExecutionTarget, compile_single_request_target};
 use crate::engine::transport::{
-    PreparedRequest, Weighted, active_kv_pairs, build_client_for_tls, join_url, pick_weighted,
-    render_http_call,
+    PreparedRequest, RequestIds, Weighted, active_kv_pairs, build_client_for_tls, join_url,
+    pick_weighted, render_http_call,
 };
 use crate::expect::{DetailedCheckResult, Judge, TransportExpect, eval_checks_detailed, judge};
 use crate::vars::{RuntimeVars, render_str, unresolved_tokens};
 
 /// Body for `POST /api/v1/probe`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeRequest {
     #[serde(default)]
     pub request_id: Option<String>,
@@ -44,10 +46,18 @@ pub struct ProbeRequest {
     pub variables_override: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub seq: Option<u64>,
+    /// W3C `traceparent` sampled flag; single probes default to sampled (`01`)
+    /// so the whole call chain shows up in the gateway's trace view.
+    #[serde(default = "default_probe_sampled")]
+    pub trace_sampled: bool,
+}
+
+const fn default_probe_sampled() -> bool {
+    true
 }
 
 /// Preview of the rendered outbound request and any unresolved `<<var>>` placeholders.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProbeRequestPreview {
     pub method: String,
     pub url: String,
@@ -91,9 +101,20 @@ pub struct MazbriWireDebug {
 }
 
 /// Response returned by `POST /api/v1/probe`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProbeResponse {
     pub protocol: String,
+    /// `X-Request-Id` sent with the call (`probe-<UUIDv7>`).
+    pub request_id: String,
+    /// Trace-id of the `traceparent` sent with the call.
+    pub trace_id: String,
+    /// Full `traceparent` sent with the call.
+    pub traceparent: String,
+    /// `traceparent` returned by the target, when it sent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_traceparent: Option<String>,
+    /// How the returned `traceparent` compared with the one sent.
+    pub trace_echo: TraceEcho,
     pub transport_ok: bool,
     pub passed_assertions: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,7 +165,11 @@ const MAX_PROBE_TIMEOUT_SECS: i64 = 300;
 /// # Errors
 ///
 /// Returns `StoreError` if the HTTP/TLS client cannot be constructed.
-pub async fn run_probe(target: ExecutionTarget, seq: u64) -> Result<ProbeResponse, StoreError> {
+pub async fn run_probe(
+    target: ExecutionTarget,
+    seq: u64,
+    trace_sampled: bool,
+) -> Result<ProbeResponse, StoreError> {
     let exec_req = target
         .requests
         .first()
@@ -183,12 +208,36 @@ pub async fn run_probe(target: ExecutionTarget, seq: u64) -> Result<ProbeRespons
 
     let unresolved = collect_unresolved(exec_req, target.gateway_base_url.as_deref());
     let runtime = RuntimeVars::for_index(seq);
+    let ids = RequestIds::for_probe(trace_sampled);
 
-    if exec_req.protocol == PROTOCOL_MAZBRI {
-        Ok(run_mazbri_probe(&client, &target, exec_req, &prepared, &runtime, unresolved).await)
+    let mut response = if exec_req.protocol == PROTOCOL_MAZBRI {
+        run_mazbri_probe(
+            &client, &target, exec_req, &prepared, &runtime, &ids, unresolved,
+        )
+        .await
     } else {
-        Ok(run_http_probe(&client, &target, &prepared, &runtime, unresolved).await)
-    }
+        run_http_probe(&client, &target, &prepared, &runtime, &ids, unresolved).await
+    };
+    attach_ids(&mut response, &ids);
+    Ok(response)
+}
+
+/// Fill the request identity fields and compare the returned `traceparent`.
+fn attach_ids(response: &mut ProbeResponse, ids: &RequestIds) {
+    response.request_id = ids.request_id.clone().unwrap_or_default();
+    response.trace_id = ids.trace_id();
+    response.traceparent = ids.trace.to_string();
+    response.response_traceparent = response
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(TRACEPARENT_HEADER))
+        .map(|(_, value)| value.clone());
+    response.trace_echo = response
+        .response_traceparent
+        .as_deref()
+        .map_or(TraceEcho::Absent, |value| {
+            ids.compare_traceparent(Some(value))
+        });
 }
 
 async fn run_http_probe(
@@ -196,6 +245,7 @@ async fn run_http_probe(
     target: &ExecutionTarget,
     prepared: &PreparedRequest,
     runtime: &RuntimeVars,
+    ids: &RequestIds,
     unresolved: Vec<String>,
 ) -> ProbeResponse {
     let weighted_tenants: Vec<Weighted<&TenantSpec>> = target
@@ -214,7 +264,7 @@ async fn run_http_probe(
         prepared,
         runtime,
         picked_api_key,
-        Some(&format!("probe-{}", runtime.uuid)),
+        ids,
     );
 
     let preview_headers = call
@@ -248,6 +298,7 @@ async fn run_http_probe(
             assertions: Vec::new(),
             request_preview,
             mazbri_wire: None,
+            ..ProbeResponse::default()
         };
     }
 
@@ -291,6 +342,7 @@ async fn run_http_probe(
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: None,
+                ..ProbeResponse::default()
             };
         }
     };
@@ -337,6 +389,7 @@ async fn decode_http_probe_response(
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: None,
+                ..ProbeResponse::default()
             };
         }
     };
@@ -386,6 +439,7 @@ async fn decode_http_probe_response(
         assertions: detailed_checks,
         request_preview,
         mazbri_wire: None,
+        ..ProbeResponse::default()
     }
 }
 
@@ -396,6 +450,7 @@ async fn run_mazbri_probe(
     exec_req: &ExecutionRequest,
     prepared: &PreparedRequest,
     runtime: &RuntimeVars,
+    ids: &RequestIds,
     unresolved: Vec<String>,
 ) -> ProbeResponse {
     let raw_gw = non_empty_str(exec_req.mazbri.gateway_base_url.as_deref())
@@ -458,6 +513,7 @@ async fn run_mazbri_probe(
                 unresolved_variables: unresolved,
             },
             mazbri_wire: None,
+            ..ProbeResponse::default()
         };
     };
 
@@ -486,6 +542,7 @@ async fn run_mazbri_probe(
                     unresolved_variables: unresolved,
                 },
                 mazbri_wire: None,
+                ..ProbeResponse::default()
             };
         }
     };
@@ -513,6 +570,7 @@ async fn run_mazbri_probe(
                 unresolved_variables: unresolved,
             },
             mazbri_wire: None,
+            ..ProbeResponse::default()
         };
     }
 
@@ -582,6 +640,7 @@ async fn run_mazbri_probe(
                     unresolved_variables: unresolved,
                 },
                 mazbri_wire: Some(wire),
+                ..ProbeResponse::default()
             };
         }
     };
@@ -614,6 +673,7 @@ async fn run_mazbri_probe(
                     unresolved_variables: unresolved,
                 },
                 mazbri_wire: None,
+                ..ProbeResponse::default()
             };
         }
     };
@@ -628,15 +688,14 @@ async fn run_mazbri_probe(
         binding_map.insert((*k).to_string(), v.clone());
     }
 
-    let probe_req_id = format!("probe-{}", runtime.uuid);
     let mut preview_headers = vec![
         (
             "Authorization".to_string(),
             format!("Bearer {}", mask_token(&issued.access_token)),
         ),
         ("Content-Type".to_string(), "application/json".to_string()),
-        ("X-Request-Id".to_string(), probe_req_id.clone()),
     ];
+    preview_headers.extend(ids.headers());
     for (k, v) in &encoded.headers {
         preview_headers.push(((*k).to_string(), v.clone()));
     }
@@ -653,8 +712,10 @@ async fn run_mazbri_probe(
         .post(&invoke_url)
         .bearer_auth(&issued.access_token)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header("X-Request-Id", &probe_req_id)
         .body(encoded.body.clone());
+    for (name, value) in ids.headers() {
+        builder = builder.header(name, value);
+    }
     if let Some(timeout) = prepared.timeout {
         builder = builder.timeout(timeout);
     }
@@ -701,6 +762,7 @@ async fn run_mazbri_probe(
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: Some(wire),
+                ..ProbeResponse::default()
             };
         }
     };
@@ -737,6 +799,7 @@ async fn run_mazbri_probe(
                 assertions: Vec::new(),
                 request_preview,
                 mazbri_wire: None,
+                ..ProbeResponse::default()
             };
         }
     };
@@ -863,6 +926,7 @@ async fn run_mazbri_probe(
         assertions: detailed_checks,
         request_preview,
         mazbri_wire: Some(wire),
+        ..ProbeResponse::default()
     }
 }
 

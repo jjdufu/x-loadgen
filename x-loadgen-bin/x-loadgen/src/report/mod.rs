@@ -463,6 +463,12 @@ fn timeseries_points(input: &ReportInput<'_>, windows: &[Value]) -> Vec<Value> {
 #[serde(deny_unknown_fields)]
 pub struct SamplesQuery {
     pub product_id: Option<String>,
+    /// Exact match on the tenant (`customer_name`).
+    pub tenant: Option<String>,
+    /// Exact match on the `X-Request-Id` recorded for the sample.
+    pub request_id: Option<String>,
+    /// Exact match on the trace-id of the `traceparent` sent.
+    pub trace_id: Option<String>,
     pub success: Option<bool>,
     /// Exact match on `error_class` (e.g. `http`, `transport`, `assertion`).
     pub error_class: Option<String>,
@@ -587,6 +593,9 @@ struct SampleRow {
     error: Option<String>,
     response_bytes: Option<i64>,
     customer_name: Option<String>,
+    trace_id: Option<String>,
+    trace_echo: String,
+    warmup: bool,
 }
 
 impl SampleRow {
@@ -609,6 +618,9 @@ impl SampleRow {
             "error": self.error.map(|text| scrub_text(&text, secrets)),
             "response_bytes": self.response_bytes,
             "customer_name": self.customer_name,
+            "trace_id": self.trace_id,
+            "trace_echo": self.trace_echo,
+            "warmup": self.warmup,
         })
     }
 }
@@ -641,7 +653,8 @@ fn load_worker_samples(
     };
     let sql = "SELECT seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                       request_index, http_status, success, expected, reason, error_class,
-                      request_id, error, response_bytes, customer_name
+                      request_id, error, response_bytes, customer_name, trace_id, trace_echo,
+                      warmup
                FROM samples
                WHERE (?1 IS NULL OR product_id = ?1)
                  AND (?2 IS NULL OR success = ?2)
@@ -650,8 +663,16 @@ fn load_worker_samples(
                  AND (?5 IS NULL OR error_class = ?5)
                  AND (?6 IS NULL OR latency_us >= ?6)
                  AND (?7 IS NULL OR end_unix_ms > ?7 OR (end_unix_ms = ?7 AND seq > ?8))
+                 AND (?10 IS NULL OR customer_name = ?10)
+                 AND (?11 IS NULL OR request_id = ?11)
+                 AND (?12 IS NULL OR trace_id = ?12)
                ORDER BY end_unix_ms, seq
                LIMIT ?9";
+    let exact = |value: Option<&String>| {
+        value
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+    };
     let success = query.success.map(i64::from);
     let error_class = query
         .error_class
@@ -672,6 +693,9 @@ fn load_worker_samples(
                 after_end,
                 tie_seq,
                 fetch,
+                exact(query.tenant.as_ref()),
+                exact(query.request_id.as_ref()),
+                exact(query.trace_id.as_ref()).map(|id| id.to_ascii_lowercase()),
             ],
             |row| {
                 Ok(SampleRow {
@@ -692,6 +716,9 @@ fn load_worker_samples(
                     error: row.get(13)?,
                     response_bytes: row.get(14)?,
                     customer_name: row.get(15)?,
+                    trace_id: row.get(16)?,
+                    trace_echo: row.get(17)?,
+                    warmup: row.get::<_, i64>(18)? != 0,
                 })
             },
         )

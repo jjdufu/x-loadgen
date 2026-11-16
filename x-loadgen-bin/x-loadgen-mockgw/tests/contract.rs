@@ -1,9 +1,13 @@
-//! The mock enforces the client contract: grant type, bearer, binding, replay, envelopes.
+//! The mock enforces the client contract: grant type, bearer, binding, replay, envelopes,
+//! and request identity (`X-Request-Id`, W3C `traceparent`).
 
 use serde_json::{Value, json};
 use x_loadgen_core::crypto::request_binding::unix_now_secs;
 use x_loadgen_mockgw::{MockConfig, MockGateway, MockTenant};
-use x_loadgen_sdk::{GatewayRequest, TenantSettings, parse_token_response, token_request_body};
+use x_loadgen_sdk::{
+    GatewayRequest, REQUEST_ID_HEADER, TRACEPARENT_HEADER, TenantSettings, TraceParent,
+    is_valid_request_id, new_request_id, parse_token_response, token_request_body,
+};
 
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
 const HMAC_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
@@ -183,5 +187,95 @@ async fn tenant_table_can_be_replaced_and_rejects_invalid_tenants() {
     assert_ne!(token(&http, &base).await, "");
     let debug = format!("{:?}", tenant());
     assert!(!debug.contains(TENANT_KEY) && !debug.contains(HMAC_KEY));
+    gateway.stop().await;
+}
+
+#[tokio::test]
+async fn gateway_keeps_request_id_and_continues_traceparent() {
+    let gateway = MockGateway::start(
+        "127.0.0.1:0",
+        &MockConfig {
+            tenants: vec![MockTenant {
+                api_key: "ak-contract".into(),
+                encryption_mode: "none".into(),
+                ..MockTenant::default()
+            }],
+            ..MockConfig::default()
+        },
+    )
+    .await
+    .expect("start");
+    let base = gateway.base_url();
+    let http = reqwest::Client::new();
+    let bearer = token(&http, &base).await;
+    let body = serde_json::to_vec(&GatewayRequest {
+        product_id: "P1".into(),
+        path: "/x".into(),
+        method: "GET".into(),
+        query: None,
+        headers: None,
+        body: None,
+    })
+    .expect("json");
+    let call = |rid: Option<&str>, tp: Option<&str>| {
+        let mut builder = http
+            .post(format!("{base}/api/v1/gateway"))
+            .bearer_auth(&bearer)
+            .body(body.clone());
+        if let Some(rid) = rid {
+            builder = builder.header(REQUEST_ID_HEADER, rid);
+        }
+        if let Some(tp) = tp {
+            builder = builder.header(TRACEPARENT_HEADER, tp);
+        }
+        builder.send()
+    };
+    let header = |resp: &reqwest::Response, name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+
+    let rid = new_request_id();
+    let inbound = TraceParent::generate(false);
+    let resp = call(Some(&rid), Some(&inbound.to_string()))
+        .await
+        .expect("send");
+    assert_eq!(
+        header(&resp, REQUEST_ID_HEADER).as_deref(),
+        Some(rid.as_str())
+    );
+    let echoed = TraceParent::parse(&header(&resp, TRACEPARENT_HEADER).expect("traceparent"))
+        .expect("valid traceparent");
+    assert!(echoed.same_trace(&inbound));
+    assert_ne!(echoed.parent_id(), inbound.parent_id());
+    assert!(!echoed.sampled(), "flags follow the caller");
+    let envelope: Value = resp.json().await.expect("json");
+    assert_eq!(envelope["request_id"], rid.as_str());
+
+    let replaced = call(Some("bad id with spaces"), Some("garbage"))
+        .await
+        .expect("send");
+    let new_id = header(&replaced, REQUEST_ID_HEADER).expect("request id");
+    assert_ne!(new_id, "bad id with spaces");
+    assert!(is_valid_request_id(&new_id));
+    let fresh = TraceParent::parse(&header(&replaced, TRACEPARENT_HEADER).expect("traceparent"))
+        .expect("valid traceparent");
+    assert!(fresh.sampled());
+
+    let rejected = http
+        .post(format!("{base}/api/v1/gateway"))
+        .header(REQUEST_ID_HEADER, rid.as_str())
+        .body(body.clone())
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(rejected.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        header(&rejected, REQUEST_ID_HEADER).as_deref(),
+        Some(rid.as_str())
+    );
+    assert!(header(&rejected, TRACEPARENT_HEADER).is_some());
     gateway.stop().await;
 }

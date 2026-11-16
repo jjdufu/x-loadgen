@@ -22,7 +22,7 @@ pub use paths::DataPaths;
 pub use schema::{USER_VERSION, WORKER_USER_VERSION};
 pub use writer::{
     CheckpointUpdate, DEFAULT_BATCH_SIZE, DEFAULT_CAPACITY, DEFAULT_CHECKPOINT_INTERVAL,
-    DEFAULT_FLUSH_INTERVAL, DetailWriter, Sample, WriterConfig, WriterHandle,
+    DEFAULT_FLUSH_INTERVAL, DetailWriter, Sample, TraceEcho, WriterConfig, WriterHandle,
 };
 
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
@@ -30,34 +30,40 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
 
-use crate::db::schema::{CENTRAL_SCHEMA_V2, WORKER_SCHEMA_V1};
+use crate::db::schema::{CENTRAL_SCHEMA, WORKER_SCHEMA};
 
-/// Open (or create) the central database, apply PRAGMAs, and migrate to v2.
+/// Open (or create) the central database, apply PRAGMAs, and create the schema.
 ///
 /// # Errors
 ///
 /// Returns an error if the data directory cannot be created, the file cannot
-/// be opened, a PRAGMA cannot be applied, or the schema is newer than this
-/// binary supports.
+/// be opened, a PRAGMA cannot be applied, or the file was written by another
+/// schema version (there is no migration; the data directory must be cleared).
 pub fn open_central(paths: &DataPaths) -> Result<Connection> {
     paths.ensure().context("create data directory")?;
     let path = paths.central_db();
     let conn = Connection::open(&path)
         .with_context(|| format!("open central database {}", path.display()))?;
     apply_pragmas(&conn)?;
-    migrate_central(&conn)?;
+    ensure_schema(
+        &conn,
+        "central",
+        CENTRAL_SCHEMA,
+        USER_VERSION,
+        &paths.root().display().to_string(),
+    )?;
     let _ = environments::ensure_global_environment(&conn)
         .map_err(|err| anyhow::anyhow!("ensure global environment: {err}"))?;
     Ok(conn)
 }
 
-/// Open (or create) a worker database, apply PRAGMAs, migrate, and record
-/// `worker_meta` when the table is empty.
+/// Open (or create) a worker database, apply PRAGMAs, create the schema, and
+/// record `worker_meta` when the table is empty.
 ///
 /// # Errors
 ///
 /// Returns an error if the run directory cannot be created, the file cannot
-/// be opened, or migration fails.
+/// be opened, or it was written by another schema version.
 pub fn open_worker_connection(
     paths: &DataPaths,
     run_id: &str,
@@ -68,7 +74,13 @@ pub fn open_worker_connection(
     let conn = Connection::open(&path)
         .with_context(|| format!("open worker database {}", path.display()))?;
     apply_pragmas(&conn)?;
-    migrate_worker(&conn)?;
+    ensure_schema(
+        &conn,
+        "worker",
+        WORKER_SCHEMA,
+        WORKER_USER_VERSION,
+        &paths.root().display().to_string(),
+    )?;
     ensure_worker_meta(&conn, run_id, worker_index)?;
     Ok(conn)
 }
@@ -154,40 +166,32 @@ pub fn unix_now_ms() -> Result<u64, SystemTimeError> {
     )
 }
 
-fn migrate_central(conn: &Connection) -> Result<()> {
+/// Create the schema on an empty file, accept the current version, and refuse
+/// anything else with instructions: there is no migration and no compatibility
+/// layer, an upgrade starts from an empty data directory.
+fn ensure_schema(
+    conn: &Connection,
+    kind: &str,
+    ddl: &str,
+    expected: i32,
+    data_dir: &str,
+) -> Result<()> {
     let version = user_version(conn)?;
     if version == 0 {
-        conn.execute_batch(CENTRAL_SCHEMA_V2)
-            .context("apply central schema v2")?;
-        conn.pragma_update(None, "user_version", USER_VERSION)
-            .context("set central user_version")?;
+        conn.execute_batch(ddl)
+            .with_context(|| format!("apply {kind} schema v{expected}"))?;
+        conn.pragma_update(None, "user_version", expected)
+            .with_context(|| format!("set {kind} user_version"))?;
         return Ok(());
     }
-    if version == USER_VERSION {
+    if version == expected {
         return Ok(());
     }
-    if version > USER_VERSION {
-        bail!("central database user_version {version} is newer than {USER_VERSION}");
-    }
-    bail!("central database user_version {version} has no migration path")
-}
-
-fn migrate_worker(conn: &Connection) -> Result<()> {
-    let version = user_version(conn)?;
-    if version == 0 {
-        conn.execute_batch(WORKER_SCHEMA_V1)
-            .context("apply worker schema v1")?;
-        conn.pragma_update(None, "user_version", WORKER_USER_VERSION)
-            .context("set worker user_version")?;
-        return Ok(());
-    }
-    if version == WORKER_USER_VERSION {
-        return Ok(());
-    }
-    if version > WORKER_USER_VERSION {
-        bail!("worker database user_version {version} is newer than {WORKER_USER_VERSION}");
-    }
-    bail!("worker database user_version {version} has no migration path")
+    bail!(
+        "{kind} database schema v{version} is not supported by this x-loadgen (needs v{expected}); \
+         there is no migration: stop x-loadgen, clear the data directory {data_dir}, start again \
+         and set the admin password on first login"
+    )
 }
 
 fn user_version(conn: &Connection) -> Result<i32> {
@@ -288,7 +292,36 @@ mod tests {
             error: None,
             response_bytes: Some(16),
             customer_name: None,
+            ..Sample::default()
         }
+    }
+
+    #[test]
+    fn databases_from_another_schema_version_are_refused_with_instructions() {
+        let dir = TempDir::new("old-schema");
+        let paths = dir.paths();
+        paths.ensure().expect("data dir");
+        {
+            let old = Connection::open(paths.central_db()).expect("open");
+            old.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .expect("old table");
+            old.pragma_update(None, "user_version", 2).expect("v2");
+        }
+        let err = open_central(&paths).expect_err("v2 central database is refused");
+        let text = format!("{err:#}");
+        assert!(text.contains("schema v2"), "{text}");
+        assert!(text.contains("needs v3"), "{text}");
+        assert!(text.contains("clear the data directory"), "{text}");
+        assert!(text.contains(&dir.path.display().to_string()), "{text}");
+
+        let run_id = "old-run";
+        paths.ensure_run(run_id).expect("run dir");
+        {
+            let old = Connection::open(paths.worker_db(run_id, 0)).expect("open worker");
+            old.pragma_update(None, "user_version", 1).expect("v1");
+        }
+        let err = open_worker_connection(&paths, run_id, 0).expect_err("v1 worker refused");
+        assert!(format!("{err:#}").contains("worker database schema v1"));
     }
 
     fn fast_config() -> WriterConfig {

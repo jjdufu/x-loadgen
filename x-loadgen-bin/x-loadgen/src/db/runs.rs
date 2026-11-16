@@ -558,6 +558,8 @@ pub struct CreateRunRequest {
     #[serde(default)]
     pub include_request_id: Option<bool>,
     #[serde(default)]
+    pub trace_sampled: Option<bool>,
+    #[serde(default)]
     pub processes: Option<i64>,
     #[serde(default)]
     pub qps_mode: Option<String>,
@@ -660,6 +662,9 @@ impl CreateRunRequest {
         }
         if let Some(v) = self.include_request_id {
             config.include_request_id = v;
+        }
+        if let Some(v) = self.trace_sampled {
+            config.trace_sampled = v;
         }
         if let Some(v) = self.processes {
             config.processes = v;

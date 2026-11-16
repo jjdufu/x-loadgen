@@ -26,8 +26,8 @@ use crate::db::workspace::TenantSpec;
 use crate::engine::metrics::unix_now_ms;
 use crate::engine::token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 use crate::engine::transport::{
-    ExecOutcome, PreparedRequest, RequestCtx, active_kv_pairs, apply_judge, elapsed_us,
-    failed_outcome, join_url, urlencoding_lite,
+    ExecOutcome, PreparedRequest, RequestCtx, RequestIds, active_kv_pairs, apply_judge, elapsed_us,
+    failed_outcome, join_url, response_request_id, urlencoding_lite,
 };
 use crate::expect::judge;
 use crate::vars::{RuntimeVars, render_str};
@@ -87,7 +87,7 @@ impl MazbriTenant {
         client: &Client,
         ctx: &RequestCtx,
         req: &PreparedRequest,
-        request_id: Option<String>,
+        ids: &RequestIds,
         customer_name: Option<String>,
     ) -> ExecOutcome {
         let token_wait = Instant::now();
@@ -99,7 +99,7 @@ impl MazbriTenant {
                     now,
                     now,
                     0,
-                    request_id,
+                    ids,
                     Some("token_refresh".into()),
                     Some(message),
                     None,
@@ -111,7 +111,7 @@ impl MazbriTenant {
         // queueing delay (it is not part of the wire latency itself).
         let pre_send_wait_us = u64::try_from(token_wait.elapsed().as_micros()).unwrap_or(u64::MAX);
         let mut outcome = self
-            .execute_with_token(client, ctx, req, &token, request_id, customer_name)
+            .execute_with_token(client, ctx, req, &token, ids, customer_name)
             .await;
         outcome.pre_send_wait_us = pre_send_wait_us;
         outcome
@@ -123,11 +123,11 @@ impl MazbriTenant {
         ctx: &RequestCtx,
         req: &PreparedRequest,
         token: &str,
-        request_id: Option<String>,
+        ids: &RequestIds,
         customer_name: Option<String>,
     ) -> ExecOutcome {
         let started = unix_now_ms();
-        let request = match self.build_call(client, ctx, req, token, request_id.as_deref()) {
+        let request = match self.build_call(client, ctx, req, token, ids) {
             Ok(request) => request,
             // Never reached the wire: latency 0 keeps it out of the histogram.
             Err((class, message)) => {
@@ -135,7 +135,7 @@ impl MazbriTenant {
                     started,
                     unix_now_ms(),
                     0,
-                    request_id,
+                    ids,
                     Some(class.into()),
                     Some(message),
                     None,
@@ -151,7 +151,7 @@ impl MazbriTenant {
                 started,
                 unix_now_ms(),
                 elapsed_us(sent),
-                request_id.clone(),
+                ids,
                 Some(class.into()),
                 Some(message),
                 status,
@@ -166,10 +166,18 @@ impl MazbriTenant {
         if http_status == 401 {
             self.broker.invalidate(token).await;
         }
+        let trace_echo = ids.trace_echo(response.headers());
+        let request_id = ids
+            .request_id
+            .clone()
+            .or_else(|| response_request_id(response.headers()));
         let raw = match response.bytes().await {
             Ok(raw) => raw,
             Err(error) => {
-                return fail("transport", error.to_string(), Some(i64::from(http_status)));
+                let mut failed = fail("transport", error.to_string(), Some(i64::from(http_status)));
+                failed.request_id = request_id;
+                failed.trace_echo = trace_echo;
+                return failed;
             }
         };
         // Stop the clock before decrypting/decoding the response.
@@ -188,6 +196,8 @@ impl MazbriTenant {
             error: None,
             response_bytes: i64::try_from(raw.len()).ok(),
             request_id,
+            trace_id: Some(ids.trace_id()),
+            trace_echo,
             body: None,
             customer_name,
             pre_send_wait_us: 0,
@@ -203,7 +213,7 @@ impl MazbriTenant {
         ctx: &RequestCtx,
         req: &PreparedRequest,
         token: &str,
-        request_id: Option<&str>,
+        ids: &RequestIds,
     ) -> Result<reqwest::RequestBuilder, (&'static str, String)> {
         let runtime = RuntimeVars::for_index(ctx.index);
         let gw_req = build_gateway_request(req, &runtime);
@@ -221,8 +231,8 @@ impl MazbriTenant {
         for (name, value) in encoded.headers {
             request = request.header(name, value);
         }
-        if let Some(id) = request_id {
-            request = request.header("X-Request-Id", id);
+        for (name, value) in ids.headers() {
+            request = request.header(name, value);
         }
         if let Some(timeout) = req.timeout {
             request = request.timeout(timeout);

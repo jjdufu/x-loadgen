@@ -118,12 +118,13 @@ impl Metrics {
     /// counted but not added to the histogram, so they cannot drag p50 down.
     pub fn record_with_queue(
         &self,
-        sample: Sample,
+        mut sample: Sample,
         class: OutcomeClass,
         warmup: bool,
         queue_us: u64,
         sink: &dyn SampleSink,
     ) {
+        sample.warmup = warmup;
         if warmup {
             self.touch_ring(&sample, class, true);
         } else {
@@ -519,6 +520,7 @@ mod timeseries_tests {
             request_id: None,
             error: None,
             response_bytes: Some(128),
+            ..Sample::default()
         }
     }
 

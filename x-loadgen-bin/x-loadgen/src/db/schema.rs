@@ -1,13 +1,16 @@
-//! SQL schema for the central database (v2 Hoppscotch workspace) and per-worker databases (v1).
+//! SQL schema for the central database (v3) and per-worker sample databases (v2).
+//!
+//! There is no migration path: a database written by another schema version is
+//! refused at startup and the data directory has to be cleared.
 
 /// Current `PRAGMA user_version` for the central catalog & run database.
-pub const USER_VERSION: i32 = 2;
+pub const USER_VERSION: i32 = 3;
 
 /// Current `PRAGMA user_version` for per-worker sample databases (`wNN.sqlite`).
-pub const WORKER_USER_VERSION: i32 = 1;
+pub const WORKER_USER_VERSION: i32 = 2;
 
 /// Central database DDL applied on fresh creation.
-pub const CENTRAL_SCHEMA_V2: &str = "
+pub const CENTRAL_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -109,6 +112,7 @@ CREATE TABLE IF NOT EXISTS load_profiles (
   connect_timeout_secs    INTEGER NOT NULL DEFAULT 5,
   token_refresh_skew_secs INTEGER NOT NULL DEFAULT 60,
   include_request_id      INTEGER NOT NULL DEFAULT 1,
+  trace_sampled           INTEGER NOT NULL DEFAULT 0,
   processes               INTEGER NOT NULL DEFAULT 1,
   qps_mode                TEXT NOT NULL DEFAULT 'total',
   requests_mode           TEXT NOT NULL DEFAULT 'total',
@@ -192,7 +196,7 @@ CREATE TABLE IF NOT EXISTS run_checkpoints (
 ";
 
 /// Worker database DDL applied when `user_version` is 0.
-pub const WORKER_SCHEMA_V1: &str = "
+pub const WORKER_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS worker_meta (
   run_id       TEXT NOT NULL,
   worker_index INTEGER NOT NULL,
@@ -215,10 +219,15 @@ CREATE TABLE IF NOT EXISTS samples (
   request_id     TEXT,
   error          TEXT,
   response_bytes INTEGER,
-  customer_name  TEXT
+  customer_name  TEXT,
+  trace_id       TEXT,
+  trace_echo     TEXT NOT NULL DEFAULT 'absent',
+  warmup         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_samples_end ON samples(end_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_samples_product ON samples(product_id, end_unix_ms);
+CREATE INDEX IF NOT EXISTS idx_samples_request_id ON samples(request_id);
+CREATE INDEX IF NOT EXISTS idx_samples_trace_id ON samples(trace_id);
 
 CREATE TABLE IF NOT EXISTS worker_checkpoints (
   ts              INTEGER PRIMARY KEY,

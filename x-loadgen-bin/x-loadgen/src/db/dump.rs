@@ -14,7 +14,7 @@ use super::writer::Sample;
 pub const MAGIC: &[u8; 4] = b"LGPD";
 
 /// Dump format version written after the magic.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 /// Write `samples` to `pending-wNN-<unix_ms>.bin` under the run directory.
 ///
@@ -157,8 +157,10 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
             "INSERT OR IGNORE INTO samples (
                 seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                 request_index, http_status, success, expected, reason, error_class,
-                request_id, error, response_bytes, customer_name
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                request_id, error, response_bytes, customer_name, trace_id, trace_echo,
+                warmup
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                      ?17, ?18, ?19)",
         )
         .context("prepare sample insert")?;
     for sample in samples {
@@ -179,6 +181,9 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
             sample.error,
             sample.response_bytes,
             sample.customer_name,
+            sample.trace_id,
+            sample.trace_echo.as_str(),
+            i64::from(sample.warmup),
         ])
         .context("insert sample")?;
     }

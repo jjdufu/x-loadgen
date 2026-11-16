@@ -26,8 +26,43 @@ pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// How often a checkpoint row is written.
 pub const DEFAULT_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How the `traceparent` returned by the target compares with the one sent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceEcho {
+    /// No `traceparent` came back (no response, or the target does not echo it).
+    #[default]
+    Absent,
+    /// Same trace-id as sent.
+    Match,
+    /// Invalid `traceparent`, or another trace-id: the target did not continue the trace.
+    Mismatch,
+}
+
+impl TraceEcho {
+    /// Stored / wire value (`absent`, `match`, `mismatch`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Match => "match",
+            Self::Mismatch => "mismatch",
+        }
+    }
+
+    /// Parse a stored value; unknown text reads as [`TraceEcho::Absent`].
+    #[must_use]
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "match" => Self::Match,
+            "mismatch" => Self::Mismatch,
+            _ => Self::Absent,
+        }
+    }
+}
+
 /// One recorded request written to the worker `samples` table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sample {
     /// Optional primary key; `None` lets SQLite assign `seq`.
     pub seq: Option<i64>,
@@ -46,6 +81,12 @@ pub struct Sample {
     pub error: Option<String>,
     pub response_bytes: Option<i64>,
     pub customer_name: Option<String>,
+    /// Trace-id of the W3C `traceparent` sent with the request.
+    pub trace_id: Option<String>,
+    /// How the response `traceparent` compared with the one sent.
+    pub trace_echo: TraceEcho,
+    /// Recorded during warmup (excluded from counters, percentiles and breakdowns).
+    pub warmup: bool,
 }
 
 /// Tuning knobs for a [`DetailWriter`].

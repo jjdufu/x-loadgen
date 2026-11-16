@@ -3246,6 +3246,10 @@
           "include_request_id": {
             "type": "boolean"
           },
+          "trace_sampled": {
+            "type": "boolean",
+            "description": "覆盖压测配置的 `traceparent` 采样位（默认 `false`，即 flags `00`）"
+          },
           "processes": {
             "type": "integer"
           },
@@ -3770,7 +3774,13 @@
           },
           "include_request_id": {
             "type": "boolean",
-            "default": true
+            "default": true,
+            "description": "每个压测请求是否发送 `X-Request-Id`（UUIDv7）；关闭时样本记录网关回写的流水号"
+          },
+          "trace_sampled": {
+            "type": "boolean",
+            "default": false,
+            "description": "压测请求发送的 W3C `traceparent` 采样位：默认 `false`（flags `00`，不把压测流量塞进追踪后端，按 trace_id 关联日志不受影响），`true` 为 `01`"
           },
           "processes": {
             "type": "integer",
@@ -3842,13 +3852,30 @@
         "type": "object",
         "properties": {
           "request_id": {
-            "type": "string"
+            "type": "string",
+            "description": "已保存请求的 ID（与 `request` 二选一；不是流水号）"
           },
           "request": {
             "$ref": "#/components/schemas/RequestDraft"
           },
           "environment_id": {
             "type": "string"
+          },
+          "variables_override": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "临时覆盖的变量（优先级最高）"
+          },
+          "seq": {
+            "type": "integer",
+            "description": "`{{seq}}` 取值（默认 0）"
+          },
+          "trace_sampled": {
+            "type": "boolean",
+            "default": true,
+            "description": "发送的 W3C `traceparent` 是否带采样位：`true` 为 flags `01`（默认，网关调用链视图可看到完整链路），`false` 为 `00`"
           }
         }
       },
@@ -3857,6 +3884,32 @@
         "properties": {
           "protocol": {
             "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "本次发送的 `X-Request-Id`：`probe-<UUIDv7>`"
+          },
+          "trace_id": {
+            "type": "string",
+            "description": "本次发送的 `traceparent` 中的 trace-id（32 位小写 hex），发送前生成，超时或断连时也有"
+          },
+          "traceparent": {
+            "type": "string",
+            "description": "本次发送的完整 W3C `traceparent`（`00-<trace-id>-<parent-id>-<flags>`）"
+          },
+          "response_traceparent": {
+            "type": "string",
+            "nullable": true,
+            "description": "目标在响应头回写的 `traceparent`"
+          },
+          "trace_echo": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "match",
+              "mismatch"
+            ],
+            "description": "响应 `traceparent` 与发送值的比对：`absent` 未回写，`match` trace-id 相同（链路已接续），`mismatch` 非法或 trace-id 不同"
           },
           "transport_ok": {
             "type": "boolean"

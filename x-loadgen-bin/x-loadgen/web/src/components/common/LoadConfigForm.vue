@@ -225,7 +225,14 @@
               :model-value="config.include_request_id"
               @update:model-value="(v) => patch({ include_request_id: v })"
             />
-            <span>自动注入 X-Request-ID 追踪头</span>
+            <span>发送 X-Request-Id（UUIDv7 流水号）</span>
+          </label>
+          <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+            <UiSwitch
+              :model-value="config.trace_sampled"
+              @update:model-value="(v) => patch({ trace_sampled: v })"
+            />
+            <span>traceparent 采样（flags 01，默认 00 不采样）</span>
           </label>
         </div>
 

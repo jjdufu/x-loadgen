@@ -623,6 +623,7 @@ fn dumped_sample() -> Sample {
         error: None,
         response_bytes: Some(2),
         customer_name: None,
+        ..Sample::default()
     }
 }
 
