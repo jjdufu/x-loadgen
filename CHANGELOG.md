@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2](https://github.com/jjdufu/x-loadgen/compare/v0.5.1...v0.5.2) (2026-11-16)
+
+### Features
+
+* **ci:** 将前端构建与 CI 升级到 Node 26 LTS ([f5cbdbd](https://github.com/jjdufu/x-loadgen/commit/f5cbdbdeb97c76223fe89ede59e2c93619d7c302))
+
 ## [0.5.1](https://github.com/jjdufu/x-loadgen/compare/v0.5.0...v0.5.1) (2026-11-16)
 
 ### Features
