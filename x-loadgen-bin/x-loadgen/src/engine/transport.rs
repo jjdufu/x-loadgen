@@ -138,6 +138,27 @@ pub fn response_request_id(response: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Longest response text kept with a failed sample.
+pub const MAX_FAILURE_BODY_BYTES: usize = 2048;
+
+/// `text` cut to [`MAX_FAILURE_BODY_BYTES`] at a character boundary.
+#[must_use]
+pub fn failure_body_text(text: &str) -> String {
+    let mut cut = text.len().min(MAX_FAILURE_BODY_BYTES);
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
+impl ExecOutcome {
+    /// Whether this outcome is a failure before run-level expected reasons apply.
+    #[must_use]
+    pub fn failed(&self) -> bool {
+        !self.expected && (!self.transport_ok || self.error_class.is_some())
+    }
+}
+
 /// Result of a single executed request (no scheduling or metrics).
 #[derive(Debug, Clone, Default)]
 pub struct ExecOutcome {
@@ -158,6 +179,8 @@ pub struct ExecOutcome {
     pub trace_echo: TraceEcho,
     /// Values read by the request's captures.
     pub captures: Captures,
+    /// Response text kept for failed requests only (≤ [`MAX_FAILURE_BODY_BYTES`]).
+    pub failure_body: Option<String>,
     pub body: Option<Value>,
     pub customer_name: Option<String>,
     /// Time spent waiting before the request could be sent (for example on a
@@ -908,6 +931,7 @@ async fn classify_response(
         trace_id: Some(ids.trace_id()),
         trace_echo,
         captures: Captures::new(),
+        failure_body: None,
         body,
         customer_name,
         pre_send_wait_us: 0,
@@ -919,6 +943,9 @@ async fn classify_response(
         &req.checks,
     );
     apply_judge(&mut outcome, judgement);
+    if outcome.failed() {
+        outcome.failure_body = Some(failure_body_text(&String::from_utf8_lossy(&raw_bytes)));
+    }
     outcome
 }
 

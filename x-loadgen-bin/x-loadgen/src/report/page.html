@@ -87,6 +87,7 @@
     color: var(--muted);
     margin: 0 0 16px;
   }
+  h3 { font-size: 12px; font-weight: 600; margin: 18px 0 8px; }
   .muted { color: var(--muted); font-size: 13px; }
   .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .badge {
@@ -159,6 +160,18 @@
     <div id="timeseries" class="chart"></div>
   </section>
   <section>
+    <h2>分项统计</h2>
+    <p class="muted" style="margin: 0 0 12px;">按已落库样本计算（不含预热，耗时为原始线上耗时，不做协调遗漏校正）。</p>
+    <h3>按接口 / 产品</h3>
+    <div id="by-product" class="table-wrap"></div>
+    <h3>按租户</h3>
+    <div id="by-tenant" class="table-wrap"></div>
+    <h3>HTTP 状态码分布</h3>
+    <div id="status-codes" class="table-wrap"></div>
+    <h3>错误 Top N</h3>
+    <div id="top-errors" class="table-wrap"></div>
+  </section>
+  <section>
     <h2>窗口明细</h2>
     <div id="windows" class="table-wrap"></div>
   </section>
@@ -227,6 +240,28 @@
           w.success, w.failure, w.expected, fmtLatencyUs(w.p99_us), fmtBytes(w.bytes)])
       )
     : "<p class='muted'>当前任务无多轮循环窗口记录</p>";
+  const bd = r.breakdown || {};
+  const groupRows = (list, key) => (list || []).map(g => [
+    g[key], g.samples, g.success, g.failure, g.expected,
+    fmtLatencyUs(g.p50_us), fmtLatencyUs(g.p95_us), fmtLatencyUs(g.p99_us), fmtLatencyUs(g.max_us)
+  ]);
+  const groupHead = ["样本", "成功", "失败", "预期拒绝", "P50", "P95", "P99", "最大"];
+  document.getElementById("by-product").innerHTML = (bd.products || []).length
+    ? table(["接口 / 产品"].concat(groupHead), groupRows(bd.products, "product_id"))
+    : "<p class='muted'>暂无样本</p>";
+  document.getElementById("by-tenant").innerHTML = (bd.tenants || []).length
+    ? table(["租户"].concat(groupHead), groupRows(bd.tenants, "tenant"))
+    : "<p class='muted'>暂无样本</p>";
+  const codes = Object.entries(bd.status_codes || {});
+  document.getElementById("status-codes").innerHTML = codes.length
+    ? table(["状态码", "样本数"], codes.map(([code, n]) => [code === "none" ? "无（未到达目标）" : code, n]))
+    : "<p class='muted'>暂无样本</p>";
+  document.getElementById("top-errors").innerHTML = (bd.top_errors || []).length
+    ? table(["错误分类", "错误", "次数", "状态码"], bd.top_errors.map(e => [
+        e.error_class, e.error, e.count,
+        Object.entries(e.http_status || {}).map(([c, n]) => c + "×" + n).join(" ")
+      ]))
+    : "<p class='muted'>无失败样本</p>";
   document.getElementById("timeline").innerHTML = (r.timeline || []).length
     ? table(
         ["时间", "事件", "详情"],

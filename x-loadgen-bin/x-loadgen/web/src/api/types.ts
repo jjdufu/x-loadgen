@@ -493,6 +493,15 @@ export interface SampleRow {
   request_id?: string | null;
   error?: string | null;
   response_bytes?: number | null;
+  /** W3C trace id sent in `traceparent` (32 lowercase hex). */
+  trace_id?: string | null;
+  /** `match` / `mismatch` / `absent`: response traceparent vs the sent one. */
+  trace_echo?: string;
+  warmup?: boolean;
+  /** Values extracted by the request's `captures` (secrets scrubbed). */
+  captures?: Record<string, string>;
+  /** Failed samples only: response body cut to 2 KB (secrets scrubbed). */
+  response_body?: string | null;
 }
 
 /** Server-side filters for `GET /runs/:id/samples`. */
@@ -501,6 +510,40 @@ export interface SampleFilters {
   product_id?: string;
   error_class?: string;
   min_latency_us?: number;
+  tenant?: string;
+  request_id?: string;
+  trace_id?: string;
+}
+
+/** One product / tenant row of the report breakdown. */
+export interface BreakdownGroup {
+  product_id?: string;
+  tenant?: string;
+  samples: number;
+  success: number;
+  failure: number;
+  expected: number;
+  p50_us: number | null;
+  p95_us: number | null;
+  p99_us: number | null;
+  max_us: number | null;
+}
+
+export interface BreakdownError {
+  error_class: string;
+  error: string;
+  count: number;
+  http_status: Record<string, number>;
+}
+
+/** `report.breakdown`: computed from recorded (non-warmup) samples. */
+export interface ReportBreakdown {
+  basis: string;
+  samples: number;
+  products: BreakdownGroup[];
+  tenants: BreakdownGroup[];
+  status_codes: Record<string, number>;
+  top_errors: BreakdownError[];
 }
 
 /** Keyset cursor returned as `next`; send all three fields back verbatim. */
@@ -540,6 +583,7 @@ export interface ReportPayload {
   timeseries: TimePoint[];
   snapshot?: unknown;
   verdict?: Verdict | null;
+  breakdown?: ReportBreakdown;
 }
 
 /** One entry of the probe history (`GET /api/v1/probes`). */

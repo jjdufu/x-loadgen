@@ -1,5 +1,6 @@
 //! Redacted per-run reports, HTML export, and merged sample pagination.
 
+pub mod breakdown;
 pub mod html;
 pub mod redact;
 
@@ -54,6 +55,7 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
     let timeline = list_timeline(input.conn, &input.record.id)?;
     let (counters, percentiles) = counters_and_percentiles(input, &windows)?;
     let timeseries = timeseries_points(input, &windows);
+    let breakdown = breakdown::build_breakdown(input.paths, &input.record.id, &secrets)?;
     let mut report = json!({
         "id": input.record.id,
         "title": title,
@@ -72,6 +74,7 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
         "created_at": input.record.created_at,
         "counters": counters,
         "percentiles": percentiles,
+        "breakdown": breakdown,
         "windows": windows,
         "timeline": timeline,
         "timeseries": timeseries,
@@ -599,6 +602,7 @@ struct SampleRow {
     trace_echo: String,
     warmup: bool,
     captures: Option<String>,
+    response_body: Option<String>,
 }
 
 impl SampleRow {
@@ -625,6 +629,7 @@ impl SampleRow {
             "trace_echo": self.trace_echo,
             "warmup": self.warmup,
             "captures": captures_json(self.captures.as_deref(), secrets),
+            "response_body": self.response_body.map(|text| scrub_text(&text, secrets)),
         })
     }
 }
@@ -671,7 +676,7 @@ fn load_worker_samples(
     let sql = "SELECT seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                       request_index, http_status, success, expected, reason, error_class,
                       request_id, error, response_bytes, customer_name, trace_id, trace_echo,
-                      warmup, captures
+                      warmup, captures, response_body
                FROM samples
                WHERE (?1 IS NULL OR product_id = ?1)
                  AND (?2 IS NULL OR success = ?2)
@@ -737,6 +742,7 @@ fn load_worker_samples(
                     trace_echo: row.get(17)?,
                     warmup: row.get::<_, i64>(18)? != 0,
                     captures: row.get(19)?,
+                    response_body: row.get(20)?,
                 })
             },
         )

@@ -113,6 +113,11 @@ fn classify(
         trace_echo: outcome.trace_echo,
         warmup: false,
         captures: capture::to_json(&outcome.captures),
+        response_body: if matches!(class, OutcomeClass::Failure) {
+            outcome.failure_body
+        } else {
+            None
+        },
     };
     let _ = outcome.body;
     Executed {

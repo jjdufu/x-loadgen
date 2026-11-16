@@ -562,3 +562,14 @@ async fn open_loop_reaches_qps_well_above_one_thousand() {
         snapshot.samples
     );
 }
+
+#[test]
+fn failure_body_is_truncated_on_a_char_boundary() {
+    use super::transport::{MAX_FAILURE_BODY_BYTES, failure_body_text};
+    assert_eq!(failure_body_text("short"), "short");
+    let long = "错".repeat(MAX_FAILURE_BODY_BYTES);
+    let cut = failure_body_text(&long);
+    assert!(cut.len() <= MAX_FAILURE_BODY_BYTES);
+    assert!(cut.len() > MAX_FAILURE_BODY_BYTES - 3);
+    assert!(cut.chars().all(|c| c == '错'));
+}

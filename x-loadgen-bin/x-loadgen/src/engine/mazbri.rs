@@ -28,7 +28,7 @@ use crate::engine::metrics::unix_now_ms;
 use crate::engine::token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 use crate::engine::transport::{
     ExecOutcome, PreparedRequest, RequestIds, active_kv_pairs, apply_judge, elapsed_us,
-    failed_outcome, join_url, response_request_id, urlencoding_lite,
+    failed_outcome, failure_body_text, join_url, response_request_id, urlencoding_lite,
 };
 use crate::expect::judge;
 use crate::vars::{RuntimeVars, render_str};
@@ -200,11 +200,12 @@ impl MazbriTenant {
             trace_id: Some(ids.trace_id()),
             trace_echo,
             captures: Captures::new(),
+            failure_body: None,
             body: None,
             customer_name,
             pre_send_wait_us: 0,
         };
-        judge_decoded(&mut outcome, decoded, http_status, req);
+        judge_decoded(&mut outcome, decoded, http_status, req, &raw);
         outcome
     }
 
@@ -332,8 +333,12 @@ fn judge_decoded(
     decoded: Result<GatewayResponseEnvelope, SdkError>,
     http_status: u16,
     req: &PreparedRequest,
+    raw: &[u8],
 ) {
     let http_ok = (200..300).contains(&http_status);
+    // Failed samples keep the decoded envelope (plaintext even under full
+    // encryption) or, when it cannot be decoded, the raw response text.
+    let mut envelope_text = None;
     let rejection = match decoded {
         Ok(envelope) => {
             outcome.transport_ok = http_ok && envelope.success;
@@ -341,12 +346,16 @@ fn judge_decoded(
                 outcome.request_id.clone_from(&envelope.request_id);
             }
             let message = rejection_message(&envelope, http_status);
+            if !outcome.transport_ok || !req.checks.is_empty() {
+                envelope_text = serde_json::to_string(&envelope).ok();
+            }
             outcome.body = envelope.data;
             message
         }
         Err(error) if http_ok => {
             outcome.error_class = Some(decode_error_class(&error).into());
             outcome.error = Some(format!("decode response: {error}"));
+            outcome.failure_body = Some(failure_body_text(&String::from_utf8_lossy(raw)));
             return;
         }
         Err(_) => format!("gateway rejected the call with HTTP {http_status}"),
@@ -360,6 +369,10 @@ fn judge_decoded(
     apply_judge(outcome, judgement);
     if !outcome.transport_ok && outcome.error_class.as_deref() == Some("transport") {
         outcome.error = Some(rejection);
+    }
+    if outcome.failed() {
+        let text = envelope_text.unwrap_or_else(|| String::from_utf8_lossy(raw).into_owned());
+        outcome.failure_body = Some(failure_body_text(&text));
     }
 }
 

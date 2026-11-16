@@ -2938,7 +2938,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/Report"
                 }
               }
             }
@@ -4562,6 +4562,11 @@
               "type": "string"
             },
             "description": "本条请求取到的提取变量"
+          },
+          "response_body": {
+            "type": "string",
+            "nullable": true,
+            "description": "仅失败样本保留：响应体前 2 KB（按 UTF-8 字符边界截断，敏感值已脱敏）；mazbri 解密成功时为解密后的信封"
           }
         }
       },
@@ -4721,6 +4726,117 @@
             "type": "integer",
             "nullable": true,
             "description": "下一页游标，作为 before_id 带回；没有更多时为 null"
+          }
+        }
+      },
+      "BreakdownGroup": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "description": "仅 products 分组出现"
+          },
+          "tenant": {
+            "type": "string",
+            "description": "仅 tenants 分组出现；无租户时为 `(none)`"
+          },
+          "samples": {
+            "type": "integer"
+          },
+          "success": {
+            "type": "integer"
+          },
+          "failure": {
+            "type": "integer"
+          },
+          "expected": {
+            "type": "integer"
+          },
+          "p50_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "p95_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "p99_us": {
+            "type": "integer",
+            "nullable": true
+          },
+          "max_us": {
+            "type": "integer",
+            "nullable": true
+          }
+        }
+      },
+      "ReportBreakdown": {
+        "type": "object",
+        "description": "分项统计：只基于已落库的非预热样本计算（受 detail_sample_rate 与丢弃影响），耗时为原始线上耗时，不做协调遗漏校正",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "enum": [
+              "recorded_samples"
+            ]
+          },
+          "samples": {
+            "type": "integer",
+            "description": "参与统计的样本数"
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownGroup"
+            }
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownGroup"
+            }
+          },
+          "status_codes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "HTTP 状态码 → 样本数；未拿到响应的记为 `none`"
+          },
+          "top_errors": {
+            "type": "array",
+            "description": "失败样本按 (error_class, error) 聚合的前 10 项",
+            "items": {
+              "type": "object",
+              "properties": {
+                "error_class": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string",
+                  "description": "已脱敏"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "http_status": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "description": "完整压测报告（字段较多，此处只列出结构化的分项统计）",
+        "additionalProperties": true,
+        "properties": {
+          "breakdown": {
+            "$ref": "#/components/schemas/ReportBreakdown"
           }
         }
       }

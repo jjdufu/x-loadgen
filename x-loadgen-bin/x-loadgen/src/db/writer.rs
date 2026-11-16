@@ -89,6 +89,8 @@ pub struct Sample {
     pub warmup: bool,
     /// Captured values as a JSON object, `None` when nothing was captured.
     pub captures: Option<String>,
+    /// Response text of a failed request (≤ 2KB), `None` for other samples.
+    pub response_body: Option<String>,
 }
 
 /// Tuning knobs for a [`DetailWriter`].

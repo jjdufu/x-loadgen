@@ -310,6 +310,32 @@
                   class="w-28"
                 />
               </div>
+              <div class="space-y-1">
+                <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  租户
+                </label>
+                <UiInput
+                  v-model="sampleFilterTenant"
+                  size="sm"
+                  mono
+                  placeholder="精确匹配"
+                  aria-label="租户"
+                  class="w-36"
+                />
+              </div>
+              <div class="space-y-1">
+                <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  请求号 / 链路号
+                </label>
+                <UiInput
+                  v-model="sampleFilterId"
+                  size="sm"
+                  mono
+                  placeholder="X-Request-Id 或 trace_id"
+                  aria-label="请求号或链路号"
+                  class="w-72"
+                />
+              </div>
               <UiButton variant="outline" size="sm" :disabled="sampleLoading" @click="loadSamples('search')">
                 检索
               </UiButton>
@@ -327,47 +353,79 @@
                 <thead>
                   <tr class="border-b border-border text-muted-foreground">
                     <th class="py-2.5 pr-4 font-medium">进程#序号</th>
+                    <th class="py-2.5 pr-4 font-medium">开始时间</th>
                     <th class="py-2.5 pr-4 font-medium">接口</th>
+                    <th class="py-2.5 pr-4 font-medium">租户</th>
                     <th class="py-2.5 pr-4 font-medium">状态</th>
                     <th class="py-2.5 pr-4 font-medium">延迟</th>
                     <th class="py-2.5 pr-4 font-medium">字节</th>
+                    <th class="py-2.5 pr-4 font-medium">请求号 / 链路号</th>
                     <th class="py-2.5 font-medium">错误 / 诊断信息</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-border">
-                  <tr
-                    v-for="s in samples"
-                    :key="`${s.worker}-${s.seq}`"
-                    class="hover:bg-muted/35"
-                  >
-                    <td class="py-2 pr-4 text-muted-foreground tabular-nums">
-                      w{{ s.worker }}#{{ s.seq }}
-                    </td>
-                    <td class="py-2 pr-4 text-foreground">
-                      {{ s.product_name || s.product_id }}
-                    </td>
-                    <td class="py-2 pr-4">
-                      <span
-                        class="font-semibold"
-                        :class="
-                          s.success
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-rose-600 dark:text-rose-400'
-                        "
-                      >
-                        {{ s.http_status ?? (s.success ? "成功" : "失败") }}
-                      </span>
-                    </td>
-                    <td class="py-2 pr-4 text-foreground tabular-nums">
-                      {{ formatLatencyUs(s.latency_us) }}
-                    </td>
-                    <td class="py-2 pr-4 text-muted-foreground tabular-nums">
-                      {{ formatBytes(s.response_bytes) }}
-                    </td>
-                    <td class="max-w-md truncate py-2 text-rose-600 dark:text-rose-400">
-                      {{ s.error_class ? `[${s.error_class}] ` : "" }}{{ s.error ?? "" }}
-                    </td>
-                  </tr>
+                  <template v-for="s in samples" :key="`${s.worker}-${s.seq}`">
+                    <tr
+                      class="hover:bg-muted/35"
+                      :class="s.response_body ? 'cursor-pointer' : ''"
+                      @click="toggleSampleBody(s)"
+                    >
+                      <td class="py-2 pr-4 text-muted-foreground tabular-nums">
+                        w{{ s.worker }}#{{ s.seq }}
+                      </td>
+                      <td class="py-2 pr-4 text-muted-foreground tabular-nums">
+                        {{ formatSampleTime(s.start_unix_ms) }}
+                      </td>
+                      <td class="py-2 pr-4 text-foreground">
+                        {{ s.product_name || s.product_id }}
+                      </td>
+                      <td class="py-2 pr-4 text-muted-foreground">
+                        {{ s.customer_name || "-" }}
+                      </td>
+                      <td class="py-2 pr-4">
+                        <span
+                          class="font-semibold"
+                          :class="
+                            s.success
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-rose-600 dark:text-rose-400'
+                          "
+                        >
+                          {{ s.http_status ?? (s.success ? "成功" : "失败") }}
+                        </span>
+                      </td>
+                      <td class="py-2 pr-4 text-foreground tabular-nums">
+                        {{ formatLatencyUs(s.latency_us) }}
+                      </td>
+                      <td class="py-2 pr-4 text-muted-foreground tabular-nums">
+                        {{ formatBytes(s.response_bytes) }}
+                      </td>
+                      <td class="py-2 pr-4 text-[11px] leading-tight text-muted-foreground">
+                        <div class="select-all" :title="s.request_id ?? ''">{{ s.request_id || "-" }}</div>
+                        <div
+                          class="select-all"
+                          :class="s.trace_echo === 'mismatch' ? 'text-amber-600 dark:text-amber-400' : ''"
+                          :title="traceTitle(s)"
+                        >
+                          {{ s.trace_id || "-" }}
+                        </div>
+                      </td>
+                      <td class="max-w-md truncate py-2 text-rose-600 dark:text-rose-400">
+                        <span v-if="s.response_body" class="mr-1 text-muted-foreground">
+                          {{ expandedSamples.has(sampleKey(s)) ? "▾" : "▸" }}
+                        </span>
+                        {{ s.error_class ? `[${s.error_class}] ` : "" }}{{ s.error ?? "" }}
+                      </td>
+                    </tr>
+                    <tr v-if="s.response_body && expandedSamples.has(sampleKey(s))">
+                      <td colspan="9" class="bg-muted/30 px-3 py-2">
+                        <div class="mb-1 text-[11px] text-muted-foreground">
+                          响应体（失败样本，最多保留 2 KB，敏感值已打码）
+                        </div>
+                        <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px] text-foreground">{{ s.response_body }}</pre>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
@@ -377,6 +435,91 @@
                 {{ sampleLoading ? "加载中…" : "加载更多" }}
               </UiButton>
             </div>
+          </div>
+
+          <!-- 1b. Breakdown (from the report) -->
+          <div v-else-if="activeDetailTab === 'breakdown'" class="space-y-5 p-5 text-xs">
+            <div v-if="!breakdown" class="py-6 text-center text-sm text-muted-foreground">
+              分项统计在压测结束后根据已落库样本生成
+            </div>
+            <template v-else>
+              <p class="text-muted-foreground">
+                基于 {{ breakdown.samples }} 条已落库样本（不含预热）；耗时为原始线上耗时，不做协调遗漏校正。
+              </p>
+              <div
+                v-for="section in breakdownSections"
+                :key="section.title"
+                class="overflow-x-auto"
+              >
+                <div class="mb-2 font-medium text-foreground">{{ section.title }}</div>
+                <table class="w-full border-collapse text-left font-mono tabular-nums">
+                  <thead>
+                    <tr class="border-b border-border text-muted-foreground">
+                      <th class="py-2 pr-4 font-medium">{{ section.label }}</th>
+                      <th class="py-2 pr-4 font-medium">样本</th>
+                      <th class="py-2 pr-4 font-medium">成功</th>
+                      <th class="py-2 pr-4 font-medium">失败</th>
+                      <th class="py-2 pr-4 font-medium">预期拒绝</th>
+                      <th class="py-2 pr-4 font-medium">p50</th>
+                      <th class="py-2 pr-4 font-medium">p95</th>
+                      <th class="py-2 pr-4 font-medium">p99</th>
+                      <th class="py-2 font-medium">max</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-border">
+                    <tr v-for="g in section.rows" :key="g.product_id ?? g.tenant">
+                      <td class="py-2 pr-4 text-foreground">{{ g.product_id ?? g.tenant }}</td>
+                      <td class="py-2 pr-4">{{ g.samples }}</td>
+                      <td class="py-2 pr-4 text-emerald-600 dark:text-emerald-400">{{ g.success }}</td>
+                      <td class="py-2 pr-4 text-rose-600 dark:text-rose-400">{{ g.failure }}</td>
+                      <td class="py-2 pr-4">{{ g.expected }}</td>
+                      <td class="py-2 pr-4">{{ formatLatencyUs(g.p50_us) }}</td>
+                      <td class="py-2 pr-4">{{ formatLatencyUs(g.p95_us) }}</td>
+                      <td class="py-2 pr-4">{{ formatLatencyUs(g.p99_us) }}</td>
+                      <td class="py-2">{{ formatLatencyUs(g.max_us) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <div class="mb-2 font-medium text-foreground">HTTP 状态码分布</div>
+                <div class="flex flex-wrap gap-2 font-mono">
+                  <span
+                    v-for="[code, n] in Object.entries(breakdown.status_codes)"
+                    :key="code"
+                    class="rounded border border-border px-2 py-1"
+                  >
+                    {{ code === "none" ? "无响应" : code }} × {{ n }}
+                  </span>
+                </div>
+              </div>
+              <div class="overflow-x-auto">
+                <div class="mb-2 font-medium text-foreground">错误 Top {{ breakdown.top_errors.length }}</div>
+                <div v-if="breakdown.top_errors.length === 0" class="text-muted-foreground">
+                  无失败样本
+                </div>
+                <table v-else class="w-full border-collapse text-left font-mono">
+                  <thead>
+                    <tr class="border-b border-border text-muted-foreground">
+                      <th class="py-2 pr-4 font-medium">分类</th>
+                      <th class="py-2 pr-4 font-medium">错误</th>
+                      <th class="py-2 pr-4 font-medium">次数</th>
+                      <th class="py-2 font-medium">状态码</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-border">
+                    <tr v-for="e in breakdown.top_errors" :key="`${e.error_class}|${e.error}`">
+                      <td class="py-2 pr-4 text-foreground">{{ e.error_class }}</td>
+                      <td class="max-w-xl break-all py-2 pr-4 text-rose-600 dark:text-rose-400">{{ e.error }}</td>
+                      <td class="py-2 pr-4 tabular-nums">{{ e.count }}</td>
+                      <td class="py-2 tabular-nums">
+                        {{ Object.entries(e.http_status).map(([c, n]) => `${c}×${n}`).join(" ") }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
           </div>
 
           <!-- 2. SLA Verdict -->
@@ -524,6 +667,7 @@ import type {
   RunView,
   SampleCursor,
   SampleFilters,
+  ReportBreakdown,
   SampleRow,
   TimePoint,
   TimelineEvent,
@@ -581,10 +725,55 @@ const ERROR_CLASSES = [
 const sampleFilterSuccess = ref<"all" | "true" | "false">("all");
 const sampleFilterErrClass = ref("");
 const sampleFilterMinMs = ref("");
+const sampleFilterTenant = ref("");
+/** One box for both ids: 32 hex chars is a trace id, anything else a request id. */
+const sampleFilterId = ref("");
+const expandedSamples = ref(new Set<string>());
+const breakdown = ref<ReportBreakdown | null>(null);
+const breakdownSections = computed(() =>
+  breakdown.value
+    ? [
+        { title: "按接口 / 产品", label: "接口", rows: breakdown.value.products },
+        { title: "按租户", label: "租户", rows: breakdown.value.tenants },
+      ]
+    : [],
+);
+
+function sampleKey(s: SampleRow): string {
+  return `${s.worker}-${s.seq}`;
+}
+
+function toggleSampleBody(s: SampleRow) {
+  if (!s.response_body) return;
+  const next = new Set(expandedSamples.value);
+  const key = sampleKey(s);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  expandedSamples.value = next;
+}
+
+function formatSampleTime(ms: number): string {
+  if (!ms) return "-";
+  const d = new Date(ms);
+  return `${d.toLocaleTimeString("zh-CN", { hour12: false })}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+
+function traceTitle(s: SampleRow): string {
+  switch (s.trace_echo) {
+    case "match":
+      return "响应 traceparent 与发送一致";
+    case "mismatch":
+      return "响应 traceparent 的 trace_id 与发送不一致";
+    default:
+      return "响应未回传 traceparent";
+  }
+}
 
 const tuneQps = ref(20);
 const tuneConcurrency = ref(10);
-const activeDetailTab = ref<"samples" | "verdict" | "windows" | "timeline" | "snapshot">("samples");
+const activeDetailTab = ref<
+  "samples" | "breakdown" | "verdict" | "windows" | "timeline" | "snapshot"
+>("samples");
 
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: EChartsType | null = null;
@@ -637,6 +826,7 @@ const formattedTimeline = computed(() =>
 
 const detailTabs = computed(() => [
   { id: "samples" as const, label: "样本明细", count: samples.value.length },
+  { id: "breakdown" as const, label: "分项统计", count: 0 },
   { id: "verdict" as const, label: "SLA 判定", count: 0 },
   { id: "windows" as const, label: "循环窗口", count: windows.value.length },
   { id: "timeline" as const, label: "事件时间线", count: timeline.value.length },
@@ -724,16 +914,17 @@ async function fetchAll(): Promise<void> {
 
   let effectiveSeries = seriesData;
   if (
-    effectiveSeries.length === 0 &&
     !isLiveStatus(runData.status) &&
-    statsData.samples > 0
+    statsData.samples > 0 &&
+    (effectiveSeries.length === 0 || !breakdown.value)
   ) {
     try {
       const report = await api.getRunReport(id.value, SILENT);
       if (disposed || generation !== loadGeneration) return;
-      effectiveSeries = report.timeseries ?? [];
+      if (effectiveSeries.length === 0) effectiveSeries = report.timeseries ?? [];
+      breakdown.value = report.breakdown ?? null;
     } catch {
-      // Keep empty series if report is still finalizing
+      // Keep empty series / breakdown if the report is still finalizing
     }
   }
   lastSeries.value = effectiveSeries;
@@ -799,11 +990,18 @@ function readSampleFilters(): SampleFilters {
         ? undefined
         : sampleFilterSuccess.value === "true",
     error_class: sampleFilterErrClass.value || undefined,
+    tenant: sampleFilterTenant.value.trim() || undefined,
+    ...idFilter(sampleFilterId.value.trim()),
     min_latency_us:
       sampleFilterMinMs.value !== "" && Number.isFinite(minMs) && minMs > 0
         ? Math.round(minMs * 1000)
         : undefined,
   };
+}
+
+function idFilter(raw: string): Pick<SampleFilters, "request_id" | "trace_id"> {
+  if (!raw) return {};
+  return /^[0-9a-fA-F]{32}$/.test(raw) ? { trace_id: raw } : { request_id: raw };
 }
 
 let sampleRequestSeq = 0;
@@ -1002,6 +1200,8 @@ async function loadRun(): Promise<void> {
   timeline.value = [];
   samples.value = [];
   sampleNextCursor.value = null;
+  expandedSamples.value = new Set();
+  breakdown.value = null;
   lastSeries.value = [];
   loadError.value = null;
   refreshError.value = null;

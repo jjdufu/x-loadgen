@@ -499,6 +499,7 @@ async fn assert_keyset_walk_and_new_filters(http: &reqwest::Client, base: &str, 
     );
 
     assert_identity_filters(http, base, id).await;
+    assert_breakdown(http, base, id).await;
 
     for bad in [
         "after_worker=0&after_seq=3",
@@ -509,6 +510,44 @@ async fn assert_keyset_walk_and_new_filters(http: &reqwest::Client, base: &str, 
         let (code, body) = get_json(http, &format!("{base}/api/v1/runs/{id}/samples?{bad}")).await;
         assert_eq!(code, reqwest::StatusCode::BAD_REQUEST, "{bad}: {body}");
     }
+}
+
+/// Report breakdown over the seeded samples, and scrubbed failure bodies.
+async fn assert_breakdown(http: &reqwest::Client, base: &str, id: &str) {
+    let (code, failed) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?success=false&limit=1"),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{failed}");
+    let body = failed["items"][0]["response_body"]
+        .as_str()
+        .expect("failure body");
+    assert!(
+        body.contains("bad key") && !body.contains(API_KEY),
+        "{body}"
+    );
+
+    let (code, report) = get_json(http, &format!("{base}/api/v1/runs/{id}/report")).await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{report}");
+    let bd = &report["breakdown"];
+    assert_eq!(bd["basis"], "recorded_samples");
+    assert_eq!(bd["samples"], 60);
+    let products = bd["products"].as_array().expect("products");
+    assert_eq!(products.len(), 2);
+    assert_eq!(products[0]["product_id"], "PA");
+    assert_eq!(products[0]["samples"], 30);
+    assert!(products[0]["p99_us"].as_u64().is_some_and(|p| p >= 100));
+    let tenants = bd["tenants"].as_array().expect("tenants");
+    assert_eq!(tenants[0]["tenant"], "t-a");
+    assert_eq!(tenants[0]["samples"], 20);
+    assert_eq!(bd["status_codes"], json!({"200": 48, "500": 12}));
+    let top = bd["top_errors"].as_array().expect("top errors");
+    assert_eq!(top.len(), 1);
+    assert_eq!(top[0]["count"], 12);
+    assert_eq!(top[0]["error_class"], "http");
+    assert_eq!(top[0]["http_status"], json!({"500": 12}));
+    assert!(!bd.to_string().contains(API_KEY));
 }
 
 /// Exact filters on tenant / request id / trace id, and scrubbed captures.
@@ -635,6 +674,7 @@ fn seed_pages(paths: &DataPaths, run_id: &str) {
             customer_name: Some(if i % 3 == 0 { "t-a" } else { "t-b" }.into()),
             trace_id: Some(format!("{:032x}", i + 1)),
             captures: (i == 7).then(|| json!({"job": "j-7", "key": API_KEY}).to_string()),
+            response_body: (i % 5 == 0).then(|| format!("{{\"error\":\"bad key {API_KEY}\"}}")),
             ..Sample::default()
         };
         if i % 2 == 0 {

@@ -631,6 +631,9 @@ xlg "$XLG/api/v1/runs/$RUN_ID/windows" | jq '.windows[] | {window_index, samples
 # success、error_class、min_latency_us、from_ms、to_ms 过滤；
 # 用 after_end_unix_ms、after_worker、after_seq 做 keyset 翻页（响应里的 next 原样带回）。
 xlg "$XLG/api/v1/runs/$RUN_ID/samples?limit=20&success=true" | jq '{count: (.items | length), next}'
+# 失败样本额外带 response_body：响应体前 2 KB（按 UTF-8 字符边界截断，已脱敏），成功样本为 null
+xlg "$XLG/api/v1/runs/$RUN_ID/samples?success=false&limit=5" \
+  | jq '.items[] | {request_id, trace_id, customer_name, http_status, error_class, error, response_body}'
 
 # 实时事件：SSE，事件名为 stats，约每秒一条。curl -N 关闭缓冲；Ctrl-C 结束。
 # curl -NS -H @"$HDR" "$XLG/api/v1/runs/$LOOP_ID/events"
@@ -675,6 +678,18 @@ xlg "$XLG/api/v1/runs/$RUN_ID/report" | jq '{id, status, counters, percentiles, 
 xlg -o "run-$RUN_ID-report.json" "$XLG/api/v1/runs/$RUN_ID/report.json"
 # HTML 是完整独立页面，嵌入了同一份脱敏 JSON（含 verdict）
 curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/report.html"
+```
+
+报告里的 `breakdown` 是分项统计，任务详情页「分项统计」标签和 HTML 报告都会展示：
+
+- `products[]` / `tenants[]`：按接口（product_id）和租户分组的 `samples`、`success`、`failure`、`expected`、`p50_us`、`p95_us`、`p99_us`、`max_us`；没有租户的样本归到 `(none)`。
+- `status_codes`：HTTP 状态码 → 样本数，没拿到响应的记为 `none`。
+- `top_errors[]`：失败样本按 `(error_class, error)` 聚合的前 10 项，带 `count` 和各状态码次数，错误文本已脱敏。
+
+`breakdown` 只用已落库的非预热样本（`basis: "recorded_samples"`），所以会受 `detail_sample_rate` 和写入队列丢弃影响；耗时是原始线上耗时，不做协调遗漏校正，可能和顶层 `percentiles` 有差异。它在请求报告时扫描各进程样本库现算，样本很多时报告接口会慢一些。
+
+```bash
+xlg "$XLG/api/v1/runs/$RUN_ID/report" | jq '.breakdown | {status_codes, products: [.products[] | {product_id, samples, p99_us}], top: .top_errors[:3]}'
 ```
 
 报告、任务快照和默认集合/环境导出会自动脱敏所有敏感凭据（`api_key`、`binding_key`、`tenant_key_base64`、`client_key`、环境变量 secret、HTTP auth 令牌/密码等）。

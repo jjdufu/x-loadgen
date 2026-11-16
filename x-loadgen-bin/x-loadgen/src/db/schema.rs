@@ -256,7 +256,8 @@ CREATE TABLE IF NOT EXISTS samples (
   trace_id       TEXT,
   trace_echo     TEXT NOT NULL DEFAULT 'absent',
   warmup         INTEGER NOT NULL DEFAULT 0,
-  captures       TEXT
+  captures       TEXT,
+  response_body  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_samples_end ON samples(end_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_samples_product ON samples(product_id, end_unix_ms);

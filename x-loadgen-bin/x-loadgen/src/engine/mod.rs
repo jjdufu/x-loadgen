@@ -26,7 +26,7 @@ pub use execute::{ExecutePlan, ProductChoice, TenantChoice};
 pub use limits::{TrafficShare, check_caps, sum_traffic};
 pub use metrics::{
     CounterSnapshot, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink,
-    merge_timeseries_slots, unix_now_ms,
+    merge_timeseries_slots, new_latency_histogram, unix_now_ms,
 };
 pub use scheduler::{LiveTraffic, MAX_SCHEDULE_LAG, WindowPlan, run_window};
 pub use snapshot::{
