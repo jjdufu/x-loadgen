@@ -799,4 +799,6 @@ cargo run -p x-loadgen-mockgw -- --listen 0.0.0.0:18080 --config /tmp/mockgw.jso
 
 配置字段与页面上的租户字段同名，另有 `binding_verify_key`（HMAC 密钥或签名公钥 PEM）和故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置（例如登记页面生成的公钥），`GET /__mock/stats` 查看已签发 token、已验签与已解封的计数，`GET /__mock/health` 做存活检查。
 
+> mockgw 与 x-loadgen 共用同一份 `x-loadgen-core` 加解密代码，只能验证流程，测不出信封协议与真实 mazbri 网关是否一致。协议一致性由 `x-loadgen-libs/x-loadgen-core/src/crypto/transport/golden_mazbri.json` 固定测试向量保证（用 mazbri 真实实现生成，x-loadgen 必须逐字节一致）；mazbri 改动信封协议时，须先用 mazbri 源码重新生成这组向量，再同步修改 x-loadgen。
+
 容器内的 x-loadgen 访问宿主机上的 mock 网关时，`gateway_base_url` 填宿主机的局域网 IP，或 `${STACK}-x-loadgen-net` 网络的网关地址，例如 `http://<宿主机IP>:18080`。
