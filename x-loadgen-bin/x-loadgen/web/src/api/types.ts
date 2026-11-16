@@ -256,7 +256,10 @@ export interface ProbeRequest {
 }
 
 export interface ProbeResponse {
+  /** Id of this probe in the probe history (absent when history is off). */
+  history_id?: number | null;
   protocol: RequestProtocol | string;
+  tenant_name?: string | null;
   /** `X-Request-Id` sent (`probe-<UUIDv7>`). */
   request_id: string;
   trace_id: string;
@@ -537,4 +540,48 @@ export interface ReportPayload {
   timeseries: TimePoint[];
   snapshot?: unknown;
   verdict?: Verdict | null;
+}
+
+/** One entry of the probe history (`GET /api/v1/probes`). */
+export interface ProbeRecord {
+  id: number;
+  kind: "probe";
+  created_at: number;
+  saved_request_id?: string | null;
+  request_name: string;
+  protocol: RequestProtocol | string;
+  method: string;
+  url: string;
+  environment_id?: string | null;
+  environment_name?: string | null;
+  tenant_name?: string | null;
+  product_id?: string | null;
+  request_id: string;
+  trace_id: string;
+  traceparent: string;
+  trace_echo: "absent" | "match" | "mismatch";
+  http_status?: number | null;
+  transport_ok: boolean;
+  passed_assertions: boolean;
+  latency_us: number;
+  response_bytes: number;
+  error_class?: string | null;
+  error?: string | null;
+  captures: Record<string, string>;
+  /** Only returned by `GET /api/v1/probes/{id}`. */
+  response_body?: string;
+  response_truncated: boolean;
+}
+
+export interface ProbesPage {
+  items: ProbeRecord[];
+  next_before_id: number | null;
+}
+
+export interface ProbesQuery {
+  limit?: number;
+  before_id?: number;
+  request_id?: string;
+  trace_id?: string;
+  saved_request_id?: string;
 }

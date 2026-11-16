@@ -6,6 +6,7 @@ pub mod environments;
 pub mod error;
 pub mod janitor;
 mod paths;
+pub mod probes;
 pub mod profiles;
 pub mod runs;
 mod schema;

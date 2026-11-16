@@ -43,6 +43,7 @@ fn serve_args(dir: &Path) -> ServeArgs {
         no_auth: true,
         max_qps: None,
         max_concurrency: None,
+        probe_history: crate::db::probes::DEFAULT_PROBE_HISTORY,
     }
 }
 

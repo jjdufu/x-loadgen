@@ -37,6 +37,9 @@ pub enum Command {
         /// Global concurrency cap across all running tasks. Unset or empty means no cap.
         #[arg(long, env = "X_LOADGEN_MAX_CONCURRENCY", default_value = "")]
         max_concurrency: OptionalCap,
+        /// Number of single probes kept in the probe history; 0 keeps none.
+        #[arg(long, env = "X_LOADGEN_PROBE_HISTORY", default_value_t = crate::db::probes::DEFAULT_PROBE_HISTORY)]
+        probe_history: usize,
     },
     /// Regenerate the initial admin password file.
     ResetPasswd {
@@ -70,6 +73,8 @@ pub struct ServeArgs {
     pub max_qps: Option<u64>,
     /// Optional global concurrency cap.
     pub max_concurrency: Option<u64>,
+    /// Number of single probes kept in the probe history.
+    pub probe_history: usize,
 }
 
 /// Parse process arguments.
@@ -93,6 +98,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             no_auth,
             max_qps,
             max_concurrency,
+            probe_history,
         } => {
             let args = ServeArgs {
                 listen,
@@ -100,6 +106,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                 no_auth: no_auth || env_flag("X_LOADGEN_NO_AUTH"),
                 max_qps: max_qps.0,
                 max_concurrency: max_concurrency.0,
+                probe_history,
             };
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -211,8 +218,10 @@ mod tests {
                 no_auth,
                 max_qps,
                 max_concurrency,
+                probe_history,
             } => {
                 assert_eq!(listen, "0.0.0.0:8757");
+                assert_eq!(probe_history, 1000);
                 assert_eq!(data_dir, std::path::PathBuf::from("./data"));
                 assert!(!no_auth);
                 assert!(max_qps.0.is_none());

@@ -11,8 +11,11 @@ import type {
   LoadProfileInput,
   MeResponse,
   MetaResponse,
+  ProbeRecord,
   ProbeRequest,
   ProbeResponse,
+  ProbesPage,
+  ProbesQuery,
   ReportPayload,
   RequestDraft,
   RunStats,
@@ -153,6 +156,12 @@ export const api = {
       .then((r) => r.data),
   probe: (req: ProbeRequest) =>
     http.post<ProbeResponse>("/api/v1/probe", req).then((r) => r.data),
+  listProbes: (params?: ProbesQuery) =>
+    http.get<ProbesPage>("/api/v1/probes", { params }).then((r) => r.data),
+  getProbe: (id: number) =>
+    http.get<ProbeRecord>(`/api/v1/probes/${id}`).then((r) => r.data),
+  deleteProbe: (id: number) =>
+    http.delete<void>(`/api/v1/probes/${id}`).then((r) => r.data),
 
   // Load Profiles
   listLoadProfiles: () =>

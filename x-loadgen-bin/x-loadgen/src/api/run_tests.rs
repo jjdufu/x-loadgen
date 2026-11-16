@@ -47,6 +47,7 @@ fn serve_args(dir: &Path, max_qps: Option<u64>) -> ServeArgs {
         no_auth: true,
         max_qps,
         max_concurrency: None,
+        probe_history: crate::db::probes::DEFAULT_PROBE_HISTORY,
     }
 }
 
@@ -817,5 +818,104 @@ async fn probe_captures_are_saved_with_requests_and_feed_later_probes() {
     )
     .await;
     assert_eq!(st, reqwest::StatusCode::BAD_REQUEST, "{bad}");
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
+    const SECRET: &str = "S3CRET-PROBE-TOKEN-1234";
+    let tmp = TempDir::new("history");
+    let (mock, _mock_shutdown) = start_mock().await;
+    let (base, shutdown) = start_api(&tmp.path, None).await;
+    let client = client();
+
+    let (st, env) = post_json(
+        &client,
+        &format!("{base}/api/v1/environments"),
+        &json!({
+            "name": "hist",
+            "variables": [
+                {"key": "baseUrl", "value": mock, "secret": false, "active": true},
+                {"key": "token", "value": SECRET, "secret": true, "active": true}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{env}");
+    let mut sent = Vec::new();
+    for seq in [1, 2] {
+        let (st, resp) = post_json(
+            &client,
+            &format!("{base}/api/v1/probe"),
+            &json!({
+                "environment_id": env["id"],
+                "seq": seq,
+                "request": {
+                    "name": "echo",
+                    "endpoint": "<<baseUrl>>/json-echo",
+                    "params": [
+                        {"key": "seq", "value": "{{seq}}", "active": true},
+                        {"key": "k", "value": "<<token>>", "active": true}
+                    ],
+                    "captures": [{"name": "seq", "path": "seq"}]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(st, reqwest::StatusCode::OK, "{resp}");
+        assert!(resp["history_id"].as_i64().is_some(), "{resp}");
+        sent.push(resp);
+    }
+
+    let (st, page) = get_json(&client, &format!("{base}/api/v1/probes")).await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{page}");
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], sent[1]["history_id"], "newest first");
+    assert_eq!(page["next_before_id"], Value::Null);
+    let first = &items[1];
+    assert_eq!(first["kind"], "probe");
+    assert_eq!(first["request_id"], sent[0]["request_id"]);
+    assert_eq!(first["trace_id"], sent[0]["trace_id"]);
+    assert_eq!(first["environment_name"], "hist");
+    assert_eq!(first["http_status"], 200);
+    assert_eq!(first["captures"]["seq"], "1");
+    assert!(first.get("response_body").is_none(), "list omits bodies");
+    assert!(!page.to_string().contains(SECRET), "{page}");
+
+    let (st, by_rid) = get_json(
+        &client,
+        &format!(
+            "{base}/api/v1/probes?request_id={}",
+            sent[0]["request_id"].as_str().expect("rid")
+        ),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK);
+    assert_eq!(by_rid["items"].as_array().map(Vec::len), Some(1));
+
+    let id = sent[0]["history_id"].as_i64().expect("id");
+    let (st, one) = get_json(&client, &format!("{base}/api/v1/probes/{id}")).await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{one}");
+    assert!(
+        one["response_body"]
+            .as_str()
+            .expect("body")
+            .contains("\"seq\"")
+    );
+    assert_eq!(one["response_truncated"], false);
+    assert!(!one.to_string().contains(SECRET), "{one}");
+
+    let status = client
+        .delete(format!("{base}/api/v1/probes/{id}"))
+        .send()
+        .await
+        .expect("delete")
+        .status();
+    assert_eq!(status, reqwest::StatusCode::NO_CONTENT);
+    for path in [format!("{id}"), "nope".to_string()] {
+        let (st, _) = get_json(&client, &format!("{base}/api/v1/probes/{path}")).await;
+        assert_eq!(st, reqwest::StatusCode::NOT_FOUND);
+    }
     let _ = shutdown.send(());
 }

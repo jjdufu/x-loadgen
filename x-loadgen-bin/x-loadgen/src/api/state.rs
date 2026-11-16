@@ -39,6 +39,8 @@ pub struct AppState {
     pub active_sse: Arc<AtomicUsize>,
     /// True when the HTTP listener is bound to a loopback address (`127.0.0.1` / `::1`).
     pub loopback_only: bool,
+    /// Number of single probes kept in the probe history (0 keeps none).
+    pub probe_history: usize,
     /// Latest values captured by single probes (`{{captures.<name>}}`), kept in memory.
     probe_captures: Arc<Mutex<Arc<Captures>>>,
 }
@@ -67,6 +69,7 @@ impl AppState {
             auth_limiter: AuthRateLimiter::new(),
             active_sse: Arc::new(AtomicUsize::new(0)),
             loopback_only: false,
+            probe_history: crate::db::probes::DEFAULT_PROBE_HISTORY,
             probe_captures: Arc::default(),
         }
     }
@@ -75,6 +78,13 @@ impl AppState {
     #[must_use]
     pub fn with_loopback_only(mut self, loopback_only: bool) -> Self {
         self.loopback_only = loopback_only;
+        self
+    }
+
+    /// Keep the newest `n` single probes in the history.
+    #[must_use]
+    pub fn with_probe_history(mut self, n: usize) -> Self {
+        self.probe_history = n;
         self
     }
 

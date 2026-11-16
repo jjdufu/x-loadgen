@@ -42,7 +42,7 @@
     },
     {
       "name": "probe",
-      "description": "工作台单次实时请求探测与 Mazbri 协议信封追踪"
+      "description": "工作台单次实时请求探测、Mazbri 协议信封追踪与单发历史"
     },
     {
       "name": "runs",
@@ -1766,6 +1766,212 @@
           }
         },
         "description": "工作台「发送」按钮对应的调试接口，支持直接传入未保存草稿 `request` 或已归档 `request_id`，结合环境渲染变量并返回响应体、逐项断言结果及 Mazbri 加解密与签名明细。"
+      }
+    },
+    "/api/v1/probes": {
+      "get": {
+        "summary": "单发历史（新到旧，不含响应体）",
+        "tags": [
+          "probe"
+        ],
+        "description": "每次 POST /api/v1/probe 都记一条，服务端保留最近 N 条（`X_LOADGEN_PROBE_HISTORY`，默认 1000，0 表示不记录）。",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "单页条数（默认 50，最大 500）"
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "只返回 ID 小于该值的记录（上一页 next_before_id）"
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按 `X-Request-Id` 精确过滤"
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按 trace-id 精确过滤（不区分大小写）"
+          },
+          {
+            "name": "saved_request_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "只看某个已保存请求的单发"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "请求成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "查询参数非法（`invalid_request`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未鉴权或口令无效（`unauthorized`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "首次启动口令尚未修改（`password_change_required`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/probes/{id}": {
+      "get": {
+        "summary": "单发历史详情（含截断的响应体）",
+        "tags": [
+          "probe"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "历史记录 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "请求成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未鉴权或口令无效（`unauthorized`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "首次启动口令尚未修改（`password_change_required`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "记录不存在（`not_found`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "删除一条单发历史",
+        "tags": [
+          "probe"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "历史记录 ID"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "删除成功"
+          },
+          "401": {
+            "description": "未鉴权或口令无效（`unauthorized`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "首次启动口令尚未修改（`password_change_required`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "记录不存在（`not_found`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/crypto/binding-keypair": {
@@ -3972,8 +4178,17 @@
       "ProbeResponse": {
         "type": "object",
         "properties": {
+          "history_id": {
+            "type": "integer",
+            "description": "本次单发在历史中的 ID（GET /api/v1/probes/{id}）；历史关闭（X_LOADGEN_PROBE_HISTORY=0）时不返回"
+          },
           "protocol": {
             "type": "string"
+          },
+          "tenant_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "本次使用的租户（mazbri 租户，或 http 请求按权重选中的环境租户）"
           },
           "request_id": {
             "type": "string",
@@ -4374,6 +4589,138 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "ProbeRecord": {
+        "type": "object",
+        "description": "一次单发的历史记录（`kind` 固定为 `probe`）。URL、错误、提取值与响应体中的环境密钥、租户密钥、API Key 等已脱敏。",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "历史记录 ID（递增）"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "probe"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "description": "发送时间（Unix 毫秒）"
+          },
+          "saved_request_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "已保存请求的 ID；未保存草稿为 null"
+          },
+          "request_name": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "http",
+              "mazbri"
+            ]
+          },
+          "method": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "实际请求地址（mazbri 为网关调用地址）"
+          },
+          "environment_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "environment_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenant_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "product_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "request_id": {
+            "type": "string",
+            "description": "发送的 `X-Request-Id`（`probe-<UUIDv7>`）"
+          },
+          "trace_id": {
+            "type": "string",
+            "description": "发送的 trace-id"
+          },
+          "traceparent": {
+            "type": "string"
+          },
+          "trace_echo": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "match",
+              "mismatch"
+            ]
+          },
+          "http_status": {
+            "type": "integer",
+            "nullable": true
+          },
+          "transport_ok": {
+            "type": "boolean"
+          },
+          "passed_assertions": {
+            "type": "boolean"
+          },
+          "latency_us": {
+            "type": "integer"
+          },
+          "response_bytes": {
+            "type": "integer",
+            "description": "完整响应体字节数"
+          },
+          "error_class": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "captures": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "response_body": {
+            "type": "string",
+            "description": "响应体文本（mazbri 为解封后的结果），最多保存 64KB；只在 GET /api/v1/probes/{id} 返回"
+          },
+          "response_truncated": {
+            "type": "boolean",
+            "description": "响应体超过 64KB 被截断"
+          }
+        }
+      },
+      "ProbesPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProbeRecord"
+            }
+          },
+          "next_before_id": {
+            "type": "integer",
+            "nullable": true,
+            "description": "下一页游标，作为 before_id 带回；没有更多时为 null"
           }
         }
       }

@@ -52,7 +52,11 @@ export interface ProtocolFields {
 
 export type ProtocolStash = Partial<Record<"http" | "mazbri", ProtocolFields>>;
 
-export type RightSidebarSection = "collections" | "environments" | "profiles";
+export type RightSidebarSection =
+  | "collections"
+  | "environments"
+  | "profiles"
+  | "history";
 
 export interface LoadRunnerLaunchContext {
   mode: "single" | "collection";
@@ -321,6 +325,8 @@ export const rightSidebarSection = ref<RightSidebarSection>(
 );
 export const horizontalSplit = ref<boolean>(initialLayout.horizontalSplit);
 export const responsePaneOpen = ref<boolean>(false);
+/** Bumped after every Send so the probe history reloads. */
+export const probeHistoryVersion = ref(0);
 
 watch(
   [leftSidebarExpanded, rightSidebarOpen, rightSidebarSection, horizontalSplit],
@@ -794,6 +800,7 @@ export async function sendActiveTabProbe(): Promise<void> {
       environment_id: activeEnvironmentId.value,
     });
     tab.response = markRaw(res);
+    probeHistoryVersion.value += 1;
     if (res.protocol === "mazbri" && !res.transport_ok && res.mazbri_wire) {
       tab.responseSubTab = "mazbri_wire";
     } else if (res.body_json !== undefined && res.body_json !== null) {

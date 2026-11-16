@@ -81,6 +81,7 @@ x-loadgen 的独立部署工程，布局与 mazbri 中间件的单组件 Compose
 | `X_LOADGEN_ACCESS_HOST` | 空 | 打印访问地址用的主机名或 IP，空为自动探测 |
 | `X_LOADGEN_NO_AUTH` | `0` | `1` 关闭登录（仅联调） |
 | `X_LOADGEN_MAX_QPS` / `X_LOADGEN_MAX_CONCURRENCY` | 空 | 全局硬上限（所有运行中任务合计），空为不限 |
+| `X_LOADGEN_PROBE_HISTORY` | `1000` | 单发历史保留条数，0 为不记录 |
 | `LG_CPUS` / `LG_MEM` / `LG_CPUS_RESERVE` / `LG_MEM_RESERVE` | `4` / `4G` / `0.5` / `256M` | 资源限制与预留，按压测机规格调整 |
 | `LG_NOFILE` | `262144` | 文件句柄上限（高并发连接） |
 | `X_LOADGEN_STOP_GRACE` | `120s` | `docker stop` 宽限，需大于请求超时加写库余量 |

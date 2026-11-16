@@ -27,7 +27,10 @@ use super::environments::{
     list_environments, list_tenants, update_environment, update_tenant,
 };
 use super::openapi::openapi;
-use super::probe::{generate_stateless_binding_keypair, probe_handler};
+use super::probe::{
+    delete_probe_handler, generate_stateless_binding_keypair, get_probe_handler,
+    list_probes_handler, probe_handler,
+};
 use super::profiles::{
     create_load_profile, delete_load_profile, get_load_profile, list_load_profiles,
     update_load_profile,
@@ -107,6 +110,11 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_load_profile),
         )
         .route("/api/v1/probe", post(probe_handler))
+        .route("/api/v1/probes", get(list_probes_handler))
+        .route(
+            "/api/v1/probes/{id}",
+            get(get_probe_handler).delete(delete_probe_handler),
+        )
         .route(
             "/api/v1/crypto/binding-keypair",
             post(generate_stateless_binding_keypair),
@@ -318,7 +326,8 @@ pub fn prepare(args: ServeArgs) -> Result<PreparedServer> {
         args.max_qps,
         args.max_concurrency,
     )
-    .with_loopback_only(addr.ip().is_loopback());
+    .with_loopback_only(addr.ip().is_loopback())
+    .with_probe_history(args.probe_history);
     Ok(PreparedServer {
         listen: args.listen,
         state,

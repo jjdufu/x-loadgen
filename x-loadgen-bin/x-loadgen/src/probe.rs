@@ -105,7 +105,14 @@ pub struct MazbriWireDebug {
 /// Response returned by `POST /api/v1/probe`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProbeResponse {
+    /// Id of the stored entry in the probe history (`GET /api/v1/probes/{id}`),
+    /// absent when history is switched off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_id: Option<i64>,
     pub protocol: String,
+    /// Tenant used for the call (mazbri tenant, or the environment tenant whose API key was sent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_name: Option<String>,
     /// `X-Request-Id` sent with the call (`probe-<UUIDv7>`).
     pub request_id: String,
     /// Trace-id of the `traceparent` sent with the call.
@@ -228,8 +235,26 @@ pub async fn run_probe(
         run_http_probe(&client, &target, &prepared, &runtime, &ids, unresolved).await
     };
     attach_ids(&mut response, &ids);
+    response.tenant_name = match response.mazbri_wire.as_ref() {
+        Some(wire) => Some(wire.tenant_name.clone()),
+        None if exec_req.protocol == PROTOCOL_MAZBRI => None,
+        None => http_tenant(&target, seq).map(|tenant| tenant.name.clone()),
+    };
     response.captures = capture::extract(response.body_json.as_ref(), &prepared.captures);
     Ok(response)
+}
+
+/// Environment tenant whose API key an `http` probe sends (same weighted pick as load runs).
+fn http_tenant(target: &ExecutionTarget, seq: u64) -> Option<&TenantSpec> {
+    let weighted: Vec<Weighted<&TenantSpec>> = target
+        .tenants
+        .iter()
+        .map(|t| Weighted {
+            weight: u64::try_from(t.weight.max(1)).unwrap_or(1),
+            value: t,
+        })
+        .collect();
+    pick_weighted(seq, &weighted).copied()
 }
 
 /// Fill the request identity fields and compare the returned `traceparent`.
@@ -258,16 +283,8 @@ async fn run_http_probe(
     ids: &RequestIds,
     unresolved: Vec<String>,
 ) -> ProbeResponse {
-    let weighted_tenants: Vec<Weighted<&TenantSpec>> = target
-        .tenants
-        .iter()
-        .map(|t| Weighted {
-            weight: u64::try_from(t.weight.max(1)).unwrap_or(1),
-            value: t,
-        })
-        .collect();
-    let picked_api_key = pick_weighted(runtime.seq, &weighted_tenants)
-        .and_then(|t| non_empty_str(t.api_key.as_deref()));
+    let picked_api_key =
+        http_tenant(target, runtime.seq).and_then(|t| non_empty_str(t.api_key.as_deref()));
 
     let call = render_http_call(
         target.gateway_base_url.as_deref(),

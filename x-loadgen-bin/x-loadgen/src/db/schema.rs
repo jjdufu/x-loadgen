@@ -194,6 +194,38 @@ CREATE TABLE IF NOT EXISTS run_checkpoints (
   timeseries_json TEXT,
   PRIMARY KEY (run_id, worker_index)
 );
+
+CREATE TABLE IF NOT EXISTS probe_history (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind               TEXT NOT NULL DEFAULT 'probe' CHECK (kind = 'probe'),
+  created_at         INTEGER NOT NULL,
+  saved_request_id   TEXT,
+  request_name       TEXT NOT NULL,
+  protocol           TEXT NOT NULL,
+  method             TEXT NOT NULL,
+  url                TEXT NOT NULL,
+  environment_id     TEXT,
+  environment_name   TEXT,
+  tenant_name        TEXT,
+  product_id         TEXT,
+  request_id         TEXT NOT NULL,
+  trace_id           TEXT NOT NULL,
+  traceparent        TEXT NOT NULL,
+  trace_echo         TEXT NOT NULL,
+  http_status        INTEGER,
+  transport_ok       INTEGER NOT NULL,
+  passed_assertions  INTEGER NOT NULL,
+  latency_us         INTEGER NOT NULL,
+  response_bytes     INTEGER NOT NULL,
+  error_class        TEXT,
+  error              TEXT,
+  captures_json      TEXT NOT NULL DEFAULT '{}',
+  response_body      TEXT NOT NULL DEFAULT '',
+  response_truncated INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_probe_history_request_id ON probe_history(request_id);
+CREATE INDEX IF NOT EXISTS idx_probe_history_trace_id ON probe_history(trace_id);
+CREATE INDEX IF NOT EXISTS idx_probe_history_saved ON probe_history(saved_request_id, id);
 ";
 
 /// Worker database DDL applied when `user_version` is 0.

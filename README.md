@@ -26,7 +26,7 @@ x-loadgen version
 x-loadgen health [--url http://127.0.0.1:8757/health]
 ```
 
-`serve` 对应环境变量（命令行优先）：`X_LOADGEN_LISTEN`、`X_LOADGEN_DATA_DIR`、`X_LOADGEN_NO_AUTH`（`1` / `true` / `yes` / `on`）、`X_LOADGEN_MAX_QPS`、`X_LOADGEN_MAX_CONCURRENCY`。空的上限环境变量视为未设置。
+`serve` 对应环境变量（命令行优先）：`X_LOADGEN_LISTEN`、`X_LOADGEN_DATA_DIR`、`X_LOADGEN_NO_AUTH`（`1` / `true` / `yes` / `on`）、`X_LOADGEN_MAX_QPS`、`X_LOADGEN_MAX_CONCURRENCY`、`X_LOADGEN_PROBE_HISTORY`（单发历史保留条数，默认 1000，0 为不记录）。空的上限环境变量视为未设置。
 
 默认开启登录。口令写在数据目录下的 `admin.passwd`。`X_LOADGEN_NO_AUTH=1` 或 `--no-auth` 时无需登录即可打开页面和调用 API。`health` 在进程尚未监听时以非 0 退出。
 
@@ -431,6 +431,7 @@ xlg "$XLG/api/v1/collections/export" | jq 'length'
 - `http` 模式返回状态码、耗时（`latency_us`）、字节数、响应头、格式化 JSON、逐项断言结果与实际发出的请求预览。
 - `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、5 个 `x-mazbri-*` 绑定签名头、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
 - `captures` 返回本次按请求 `captures` 取到的值。
+- `history_id` 是本次单发在单发历史里的 ID（见下文）；`tenant_name` 是本次使用的租户。
 
 #### 提取变量（captures）
 
@@ -447,6 +448,21 @@ xlg -X POST "$XLG/api/v1/probe" --data-binary @- <<EOF | jq '{http_status, trans
   "environment_id": "$ENV_ID"
 }
 EOF
+```
+
+#### 单发历史（Probe History）
+
+每次单发都记一条历史（`kind: "probe"`）：时间、请求名与已保存请求 ID、环境、租户、`request_id`、`trace_id`、状态码、耗时、错误分类与错误、`captures`，以及最多 64KB 的响应体（超出截断并标 `response_truncated`）。URL、错误、提取值和响应体中的环境密钥、租户密钥、API Key 等已知密钥值写入前脱敏。服务端保留最近 `X_LOADGEN_PROBE_HISTORY` 条（默认 1000，0 不记录），页面工作台右侧栏「历史」标签展示同一份数据。
+
+```bash
+# 新到旧，不含响应体；可按 request_id / trace_id / saved_request_id 过滤，before_id 翻页
+xlg "$XLG/api/v1/probes?limit=20" | jq '.items[] | {id, created_at, request_name, http_status, latency_us, request_id, trace_id}'
+xlg "$XLG/api/v1/probes?trace_id=$TRACE_ID" | jq '.items | length'
+
+# 详情（含响应体），删除
+PROBE_ID=$(xlg "$XLG/api/v1/probes?limit=1" | jq -r '.items[0].id')
+xlg "$XLG/api/v1/probes/$PROBE_ID" | jq '{request_id, trace_id, captures, response_truncated, body: .response_body[0:200]}'
+xlg -X DELETE "$XLG/api/v1/probes/$PROBE_ID" -o /dev/null -w '%{http_code}\n'   # 204
 ```
 
 ### 压测预设（Load Profiles）

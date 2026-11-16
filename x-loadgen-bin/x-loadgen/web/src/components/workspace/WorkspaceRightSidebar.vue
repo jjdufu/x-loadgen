@@ -234,7 +234,10 @@
         </div>
       </template>
 
-      <!-- 3. LOAD PROFILES QUICK LIST -->
+      <!-- 3. PROBE HISTORY -->
+      <ProbeHistoryPanel v-else-if="rightSidebarSection === 'history'" />
+
+      <!-- 4. LOAD PROFILES QUICK LIST -->
       <template v-else>
         <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
           <span class="text-xs font-semibold tracking-tight text-foreground">
@@ -309,6 +312,7 @@ import {
   Folder,
   FolderPlus,
   Gauge,
+  History,
   Layers,
   Plus,
   Upload,
@@ -337,6 +341,7 @@ import UiInput from "../ui/UiInput.vue";
 import UiSearchInput from "../ui/UiSearchInput.vue";
 import UiSwitch from "../ui/UiSwitch.vue";
 import CollectionTreeNode from "./CollectionTreeNode.vue";
+import ProbeHistoryPanel from "./ProbeHistoryPanel.vue";
 
 const router = useRouter();
 const searchText = ref("");
@@ -352,6 +357,7 @@ const sections: { id: RightSidebarSection; label: string; icon: unknown }[] = [
   { id: "collections", label: "接口集合", icon: Folder },
   { id: "environments", label: "环境与密钥池", icon: Layers },
   { id: "profiles", label: "负载预设", icon: Gauge },
+  { id: "history", label: "单发历史", icon: History },
 ];
 
 const globalEnvRow = computed(() =>

@@ -50,6 +50,7 @@ fn serve_args(dir: &std::path::Path, no_auth: bool) -> ServeArgs {
         no_auth,
         max_qps: None,
         max_concurrency: None,
+        probe_history: crate::db::probes::DEFAULT_PROBE_HISTORY,
     }
 }
 

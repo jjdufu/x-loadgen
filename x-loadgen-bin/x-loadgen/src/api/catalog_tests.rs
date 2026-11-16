@@ -56,6 +56,7 @@ fn serve_args(dir: &std::path::Path, no_auth: bool, max_qps: Option<u64>) -> Ser
         no_auth,
         max_qps,
         max_concurrency: None,
+        probe_history: crate::db::probes::DEFAULT_PROBE_HISTORY,
     }
 }
 
