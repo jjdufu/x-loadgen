@@ -172,9 +172,9 @@ xlg() { curl -fsS -H @"$HDR" "$@"; }
 
 ### 鉴权
 
-登录口令就是长期令牌：不自动过期，只在改密或 `reset-passwd` 之后失效。每个已认证请求用 `Authorization: Bearer <口令>` 或 Cookie `x_loadgen_token` 携带同一份口令。二者等价，脚本推荐 Bearer。
+管理员口令是长期凭据：不自动过期，只在改密或 `reset-passwd` 之后失效。脚本推荐用 `Authorization: Bearer <管理员口令>` 直接调用 API，不必先登录。
 
-Cookie 属性：`HttpOnly`、`SameSite=Lax`、`Path=/`，无 `Secure`、无 `Max-Age`（浏览器会话 cookie）。登出只清 cookie，口令本身仍然有效。
+浏览器登录（`POST /api/v1/auth/login`，body 为 `{"token":"<口令>"}`）不会在响应体里回传口令，只通过 `Set-Cookie` 下发不透明会话 ID：`x_loadgen_token=s_<64-hex>`。Cookie 属性为 `HttpOnly`、`SameSite=Lax`、`Path=/`、`Max-Age=86400`（24 小时）；在 HTTPS（或反向代理设置了 `X-Forwarded-Proto: https`）时加 `Secure`。Cookie **只接受** 会话 ID，不能把管理员口令写进 Cookie。`Authorization: Bearer` 则既可以是管理员口令，也可以是 `s_` 会话 ID。登出吊销当前会话并清除 Cookie，口令本身仍然有效，用 Bearer 或重新登录即可。
 
 #### 首次启动与必须改密
 
@@ -189,13 +189,13 @@ mkdir -p "$(dirname "$TOKEN_FILE")"
 # 数据目录在容器内部是 /data，宿主机上一般是 deploy/data/admin.passwd
 cp -f /path/to/data/admin.passwd "$TOKEN_FILE"
 
-# 登录（响应里的 token 与口令相同，同时 Set-Cookie）
+# 登录：响应只有 must_change_password，会话 ID 走 Set-Cookie（s_<64-hex>，24h）
 curl -fsS -X POST "$XLG/api/v1/auth/login" \
   -H 'Content-Type: application/json' \
   --data-binary @<(jq -n --rawfile t "$TOKEN_FILE" '{token: ($t | rtrimstr("\n"))}') \
   | jq '{must_change_password}'
 
-# 改密：新口令先写入文件，再交给接口。成功后旧口令立即失效，Set-Cookie 换成新口令。
+# 改密：新口令先写入文件，再交给接口。成功后旧口令与全部历史会话立即失效，Set-Cookie 换成新的会话 ID。
 NEW_FILE=$(mktemp); chmod 600 "$NEW_FILE"
 # 用自己保管的新口令覆盖 NEW_FILE，至少 24 字符，例如：openssl rand -hex 16 > "$NEW_FILE"
 write_hdr   # 先用旧口令生成 $HDR
@@ -208,7 +208,7 @@ mv -f "$NEW_FILE" "$TOKEN_FILE"
 write_hdr
 ```
 
-改密之后，用旧口令访问会得到 **401** `unauthorized`；用新口令（Bearer 或重新登录）立即可以访问。进程重启后同一口令仍然有效，不必再登录。
+改密之后，用旧口令访问会得到 **401** `unauthorized`；用新口令做 Bearer，或重新登录拿到新会话，立即可以访问。进程重启后同一口令仍然有效，脚本用 Bearer 不必再登录。内存中的会话在进程重启后会丢失，浏览器需重新登录。
 
 用 curl 做浏览器式 cookie 登录（把 cookie 存进 jar，后续 `-b` 带上，可以不写 Bearer）：
 
@@ -221,7 +221,7 @@ curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$XLG/api/v1/auth/login" \
   | jq '{must_change_password}'
 curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$XLG/api/v1/auth/me" | jq .
 curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$XLG/api/v1/auth/logout" | jq .
-# 登出只清 cookie，口令仍有效；再用 Bearer 或重新登录即可
+# 登出吊销该会话并清 cookie，口令仍有效；再用 Bearer 或重新登录即可
 ```
 
 当前身份：
@@ -263,7 +263,7 @@ xlg "$XLG/api/v1/meta" | jq .
 
 完整 OpenAPI 3.0 规范（公开接口无需认证，路径与运行中的路由一一对应）：
 
-- **内置可视化接口规范视图**：在 Web 左侧导航栏点击「接口文档」（路由 `/docs`），即可离线浏览分组目录、搜索过滤、展开 `$ref` Schema、复制 `curl` 示例或一键载入工作台调试。
+- **内置可视化接口规范视图**：在 Web 左侧导航栏点击「接口文档」（路由 `/docs`）。页面首位是「x-loadgen 免 WebUI curl 调用手册」，其后是单独分类的 Mazbri 租户与密钥，再是其余分组参考；可搜索过滤、展开 `$ref` Schema、复制 `curl` 示例或一键载入工作台调试。
 - **机器可读 JSON 清单**：
 
 ```text

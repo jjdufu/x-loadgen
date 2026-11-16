@@ -13,6 +13,10 @@
   ],
   "tags": [
     {
+      "name": "mazbri",
+      "description": "Mazbri 租户密钥池、请求绑定密钥对生成（持久化与无状态）"
+    },
+    {
       "name": "meta",
       "description": "存活探针、实例运行规格与内置 OpenAPI 规范获取"
     },
@@ -30,7 +34,7 @@
     },
     {
       "name": "environments",
-      "description": "全局与命名环境变量、Mazbri 多租户加权密钥池及密钥对生成"
+      "description": "全局与命名环境变量、HTTP 鉴权、TLS 以及环境导入导出"
     },
     {
       "name": "load-profiles",
@@ -1161,7 +1165,7 @@
       "get": {
         "summary": "列出环境下的 Mazbri 租户密钥池",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1203,7 +1207,7 @@
       "post": {
         "summary": "向环境租户池添加 Mazbri 租户",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1274,7 +1278,7 @@
       "get": {
         "summary": "获取环境下单个 Mazbri 租户详情",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1322,7 +1326,7 @@
       "put": {
         "summary": "更新环境下的 Mazbri 租户配置",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1390,7 +1394,7 @@
       "delete": {
         "summary": "从环境租户池删除指定租户",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1433,7 +1437,7 @@
       "post": {
         "summary": "为环境租户生成并持久化非对称请求绑定密钥对",
         "tags": [
-          "environments"
+          "mazbri"
         ],
         "parameters": [
           {
@@ -1460,18 +1464,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "alg"
-                ],
-                "properties": {
-                  "alg": {
-                    "type": "string"
-                  },
-                  "kid": {
-                    "type": "string"
-                  }
-                }
+                "$ref": "#/components/schemas/BindingKeypairRequest"
               }
             }
           }
@@ -1779,25 +1772,14 @@
       "post": {
         "summary": "无状态生成非对称请求绑定密钥对（供内联调试使用）",
         "tags": [
-          "probe"
+          "mazbri"
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "alg"
-                ],
-                "properties": {
-                  "alg": {
-                    "type": "string"
-                  },
-                  "kid": {
-                    "type": "string"
-                  }
-                }
+                "$ref": "#/components/schemas/BindingKeypairRequest"
               }
             }
           }
@@ -3009,13 +2991,13 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "The login token. `Authorization: Bearer <token>`."
+        "description": "长期管理员口令，或登录后下发的不透明会话 ID（`s_` 前缀）。脚本推荐：`Authorization: Bearer <管理员口令>`。口令不自动过期，仅在改密或 `reset-passwd` 后失效。"
       },
       "cookieAuth": {
         "type": "apiKey",
         "in": "cookie",
         "name": "x_loadgen_token",
-        "description": "Set by POST /api/v1/auth/login."
+        "description": "`POST /api/v1/auth/login` 设置的 HttpOnly 会话 Cookie `x_loadgen_token`，值为服务端会话 ID（`s_<64-hex>`），TTL 24 小时，不是管理员口令。Cookie 只接受会话 ID；登出或改密会吊销会话。"
       }
     },
     "schemas": {
@@ -3180,33 +3162,58 @@
       },
       "CreateRunRequest": {
         "type": "object",
+        "description": "启动压测。目标三选一：request_id、collection_id（可选 selected_requests）、或 adhoc_request / adhoc_requests。负载可引用 load_profile / load_profile_id，其余字段覆盖本次 snapshot，不修改已保存预设。requests 与 duration_secs 互斥。",
         "properties": {
-          "title": {
-            "type": "string"
-          },
           "request_id": {
             "type": "string"
           },
           "collection_id": {
             "type": "string"
           },
+          "selected_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectedRequestWeight"
+            }
+          },
           "adhoc_request": {
             "$ref": "#/components/schemas/RequestDraft"
+          },
+          "adhoc_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestDraft"
+            }
           },
           "environment_id": {
             "type": "string"
           },
-          "load_profile": {
-            "type": "string"
+          "variables_override": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "load_profile_id": {
-            "type": "string"
+            "type": "string",
+            "description": "预设 ID 或唯一名称（别名 template_id / template）"
+          },
+          "load_profile": {
+            "type": "string",
+            "description": "预设名称或 ID，优先于 load_profile_id"
           },
           "mode": {
             "type": "string",
             "enum": [
               "once",
               "loop"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "open_loop",
+              "closed_loop"
             ]
           },
           "qps": {
@@ -3221,7 +3228,63 @@
           "duration_secs": {
             "type": "integer"
           },
+          "warmup_secs": {
+            "type": "integer"
+          },
+          "ramp_secs": {
+            "type": "integer"
+          },
+          "timeout_secs": {
+            "type": "integer"
+          },
+          "connect_timeout_secs": {
+            "type": "integer"
+          },
+          "token_refresh_skew_secs": {
+            "type": "integer"
+          },
+          "include_request_id": {
+            "type": "boolean"
+          },
           "processes": {
+            "type": "integer"
+          },
+          "qps_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ]
+          },
+          "requests_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ]
+          },
+          "loop_enabled": {
+            "type": "boolean"
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "clear_rounds": {
+            "type": "boolean"
+          },
+          "loop_interval_secs": {
+            "type": "integer"
+          },
+          "expected_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "detail_retain_days": {
+            "type": "integer"
+          },
+          "detail_retain_rows": {
             "type": "integer"
           },
           "assert": {
@@ -3447,27 +3510,67 @@
       },
       "RequestDraft": {
         "type": "object",
+        "description": "已保存或临时（adhoc）请求配置。创建已保存请求时必须提供 collection_id。",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "collection_id": {
             "type": "string"
           },
           "name": {
             "type": "string"
           },
+          "sort_order": {
+            "type": "integer"
+          },
           "protocol": {
             "type": "string",
             "enum": [
               "http",
               "mazbri"
-            ]
+            ],
+            "default": "http"
           },
           "method": {
-            "type": "string"
+            "type": "string",
+            "default": "GET"
           },
           "endpoint": {
             "type": "string"
           },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyValueRow"
+            }
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyValueRow"
+            }
+          },
+          "body": {
+            "$ref": "#/components/schemas/RequestBodySpec"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/HttpAuthSpec"
+          },
+          "mazbri": {
+            "$ref": "#/components/schemas/MazbriRequestSpec"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/TlsSpec"
+          },
+          "assertions": {
+            "$ref": "#/components/schemas/AssertionsSpec"
+          },
           "weight": {
+            "type": "integer",
+            "default": 1
+          },
+          "timeout_secs": {
             "type": "integer"
           }
         }
@@ -3489,6 +3592,7 @@
       },
       "TenantSpec": {
         "type": "object",
+        "description": "Mazbri 租户配置（环境加权池或请求内联）。",
         "properties": {
           "id": {
             "type": "string"
@@ -3497,7 +3601,8 @@
             "type": "string"
           },
           "weight": {
-            "type": "integer"
+            "type": "integer",
+            "default": 1
           },
           "api_key": {
             "type": "string"
@@ -3508,7 +3613,46 @@
               "none",
               "request",
               "full"
-            ]
+            ],
+            "default": "none"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "tenant_key_base64": {
+            "type": "string"
+          },
+          "key_version": {
+            "type": "string"
+          },
+          "suite": {
+            "type": "string"
+          },
+          "data_alg": {
+            "type": "string"
+          },
+          "mac_alg": {
+            "type": "string"
+          },
+          "require_signature": {
+            "type": "boolean"
+          },
+          "allow_insecure": {
+            "type": "boolean",
+            "default": false
+          },
+          "binding_kid": {
+            "type": "string"
+          },
+          "binding_alg": {
+            "type": "string"
+          },
+          "binding_key": {
+            "type": "string",
+            "description": "私钥 PEM 或 HMAC 密钥，导出时默认脱敏"
+          },
+          "binding_public_key": {
+            "type": "string"
           }
         }
       },
@@ -3528,8 +3672,24 @@
           "variables": {
             "type": "array",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/EnvVarRow"
             }
+          },
+          "http_auth": {
+            "$ref": "#/components/schemas/HttpAuthSpec"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/TlsSpec"
+          },
+          "note": {
+            "type": "string"
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantSpec"
+            },
+            "description": "若提供，则原子替换该环境的租户池"
           }
         }
       },
@@ -3562,18 +3722,25 @@
         "required": [
           "name"
         ],
+        "description": "新建或更新负载预设。config 字段与 LoadConfig 扁平展开在同一对象上。",
         "properties": {
           "name": {
             "type": "string"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "open_loop",
+              "closed_loop"
+            ],
+            "default": "open_loop"
           },
           "qps": {
             "type": "integer"
           },
           "concurrency": {
-            "type": "integer"
+            "type": "integer",
+            "default": 10
           },
           "requests": {
             "type": "integer"
@@ -3581,8 +3748,78 @@
           "duration_secs": {
             "type": "integer"
           },
+          "warmup_secs": {
+            "type": "integer",
+            "default": 0
+          },
+          "ramp_secs": {
+            "type": "integer",
+            "default": 0
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 30
+          },
+          "connect_timeout_secs": {
+            "type": "integer",
+            "default": 5
+          },
+          "token_refresh_skew_secs": {
+            "type": "integer",
+            "default": 60
+          },
+          "include_request_id": {
+            "type": "boolean",
+            "default": true
+          },
+          "processes": {
+            "type": "integer",
+            "default": 1
+          },
+          "qps_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ],
+            "default": "total"
+          },
+          "requests_mode": {
+            "type": "string",
+            "enum": [
+              "total",
+              "per_process"
+            ],
+            "default": "total"
+          },
+          "loop_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "loop_interval_secs": {
+            "type": "integer",
+            "default": 0
+          },
+          "expected_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "detail_retain_days": {
+            "type": "integer"
+          },
+          "detail_retain_rows": {
+            "type": "integer"
+          },
           "assert": {
             "$ref": "#/components/schemas/AssertSpec"
+          },
+          "note": {
+            "type": "string"
           }
         }
       },
@@ -3640,6 +3877,215 @@
           "mazbri_wire": {
             "type": "object",
             "nullable": true
+          }
+        }
+      },
+      "KeyValueRow": {
+        "type": "object",
+        "description": "请求参数、请求头或表单项。",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean",
+            "default": true
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "EnvVarRow": {
+        "type": "object",
+        "description": "环境或集合变量行。",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean",
+            "default": false
+          },
+          "active": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RequestBodySpec": {
+        "type": "object",
+        "properties": {
+          "content_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "form": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyValueRow"
+            }
+          }
+        }
+      },
+      "HttpAuthSpec": {
+        "type": "object",
+        "description": "HTTP 鉴权。`auth_type` 为 inherit / none / bearer / basic / api-key。",
+        "properties": {
+          "auth_type": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "none",
+              "bearer",
+              "basic",
+              "api-key"
+            ]
+          },
+          "auth_active": {
+            "type": "boolean",
+            "default": true
+          },
+          "token": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "add_to": {
+            "type": "string",
+            "enum": [
+              "HEADERS",
+              "QUERY_PARAMS"
+            ],
+            "description": "仅 api-key 使用"
+          }
+        }
+      },
+      "TlsSpec": {
+        "type": "object",
+        "description": "TLS / mTLS。证书字段为内联 PEM 或（已不推荐）服务端路径。",
+        "properties": {
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "ca_cert": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "FieldCheck": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSON 路径，不得为空"
+          },
+          "eq": {
+            "description": "缺省表示路径必须存在且非 null"
+          }
+        }
+      },
+      "AssertionsSpec": {
+        "type": "object",
+        "properties": {
+          "expect_transport": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "reject"
+            ],
+            "default": "ok"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldCheck"
+            }
+          }
+        }
+      },
+      "MazbriRequestSpec": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "gateway_base_url": {
+            "type": "string"
+          },
+          "tenant_source": {
+            "type": "string",
+            "enum": [
+              "environment",
+              "inline"
+            ],
+            "default": "environment"
+          },
+          "tenant_name": {
+            "type": "string"
+          },
+          "inline_tenant": {
+            "$ref": "#/components/schemas/TenantSpec"
+          }
+        }
+      },
+      "SelectedRequestWeight": {
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer",
+            "default": 1
+          }
+        }
+      },
+      "BindingKeypairRequest": {
+        "type": "object",
+        "required": [
+          "alg"
+        ],
+        "properties": {
+          "alg": {
+            "type": "string",
+            "description": "如 ed25519、sm2-sign、ecdsa-p256-sha256、ecdsa-p384-sha384、rsa-pkcs1v15-sign-sha256/384/512"
+          },
+          "kid": {
+            "type": "string"
           }
         }
       }

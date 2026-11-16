@@ -29,6 +29,22 @@
       </div>
 
       <div class="flex-1 overflow-y-auto p-2.5 space-y-4">
+        <div class="space-y-1">
+          <button
+            type="button"
+            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors hover:bg-accent/60"
+            :class="activeOpId === 'curl-manual' ? 'bg-accent text-foreground' : ''"
+            @click="focusManual()"
+          >
+            <span class="truncate">Curl 手册</span>
+            <span
+              class="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-muted px-1.5 font-mono text-[10px] text-muted-foreground"
+            >
+              免 WebUI
+            </span>
+          </button>
+        </div>
+
         <div v-for="group in filteredGroups" :key="group.tag" class="space-y-1">
           <button
             type="button"
@@ -100,7 +116,7 @@
                 </UiBadge>
               </div>
               <p class="text-sm text-muted-foreground leading-relaxed max-w-3xl">
-                内置离线接口规范文档，涵盖集合管理、环境与 Mazbri 租户密钥池、单次双协议探测及多进程压测生命周期控制，所有接口均可一键载入工作台调试。
+                先看下方「免 WebUI curl 调用手册」，用脚本完成导入、压测、调流与取报告；其后是按分组排列的 OpenAPI 参考，Mazbri 租户与密钥单独成类。所有接口均可一键载入工作台调试。
               </p>
             </div>
 
@@ -127,13 +143,13 @@
             <div class="space-y-1">
               <div class="font-semibold text-foreground">脚本鉴权</div>
               <div class="break-all font-mono text-muted-foreground">
-                Authorization: Bearer &lt;token&gt;
+                Authorization: Bearer &lt;管理员口令&gt;
               </div>
             </div>
             <div class="space-y-1">
-              <div class="font-semibold text-foreground">会话鉴权</div>
+              <div class="font-semibold text-foreground">浏览器会话</div>
               <div class="break-all font-mono text-muted-foreground">
-                Cookie: x_loadgen_token=&lt;token&gt;
+                Cookie: x_loadgen_token=s_&lt;24h 会话 ID&gt;
               </div>
             </div>
           </div>
@@ -147,6 +163,62 @@
             placeholder="搜索路径、接口名称或关键字..."
           />
         </div>
+
+        <!-- Curl manual (always first) -->
+        <section
+          id="curl-manual"
+          class="space-y-3 scroll-mt-6"
+        >
+          <div class="flex items-end justify-between gap-4 border-b border-border pb-2.5">
+            <div class="min-w-0 space-y-0.5">
+              <h2 class="text-base font-semibold tracking-tight text-foreground">
+                x-loadgen 免 WebUI curl 调用手册
+              </h2>
+              <p class="text-xs text-muted-foreground">
+                不打开工作台，用 curl 完成鉴权、导入、启动/管理压测任务与取结果。示例按真实请求体字段编写。
+              </p>
+            </div>
+            <span class="shrink-0 font-mono text-xs text-muted-foreground">
+              #curl
+            </span>
+          </div>
+
+          <div class="space-y-3">
+            <div
+              v-for="block in curlManualBlocks"
+              :id="block.id"
+              :key="block.id"
+              class="overflow-hidden rounded-lg border border-border bg-card"
+            >
+              <div class="space-y-1.5 border-b border-border px-4 py-3">
+                <h3 class="text-sm font-semibold text-foreground">
+                  {{ block.title }}
+                </h3>
+                <p class="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
+                  {{ block.body }}
+                </p>
+              </div>
+              <div class="space-y-2 p-4">
+                <div class="flex h-6 items-center justify-between gap-2">
+                  <span class="text-xs font-semibold tracking-wide text-muted-foreground">
+                    cURL
+                  </span>
+                  <button
+                    type="button"
+                    class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    @click="handleCopy(block.snippet, 'cURL 命令已复制')"
+                  >
+                    <Copy class="h-3 w-3" />
+                    <span>复制 cURL</span>
+                  </button>
+                </div>
+                <pre
+                  class="max-h-72 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap break-all"
+                >{{ block.snippet }}</pre>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <!-- Empty Search Result -->
         <div
@@ -571,6 +643,10 @@ interface ParsedOperation {
 }
 
 const TAG_META: Record<string, { title: string; subtitle: string }> = {
+  mazbri: {
+    title: "Mazbri 租户与密钥",
+    subtitle: "环境租户密钥池、请求绑定密钥对（持久化写入租户或无状态生成）。",
+  },
   meta: {
     title: "系统与元信息",
     subtitle: "存活探针、实例运行规格与内置 OpenAPI 规范获取。",
@@ -588,8 +664,8 @@ const TAG_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: "HTTP 与 Mazbri 双协议请求配置的持久化归档管理。",
   },
   environments: {
-    title: "环境与密钥池",
-    subtitle: "全局/命名环境变量、Mazbri 多租户加权密钥池及非对称密钥对生成。",
+    title: "环境与变量",
+    subtitle: "全局/命名环境变量、HTTP 鉴权、TLS 以及环境导入导出。",
   },
   "load-profiles": {
     title: "负载预设",
@@ -623,6 +699,40 @@ const searchQuery = ref("");
 const activeMethodFilter = ref<string>("ALL");
 const activeOpId = ref<string>("");
 const expandedIds = reactive(new Set<string>());
+
+
+const curlManualBlocks = [
+  {
+    id: "curl-auth",
+    title: "鉴权与公共接口",
+    body: "默认需要鉴权。脚本推荐 Authorization: Bearer <管理员口令>：口令不自动过期，仅在改密或 reset-passwd 后失效。浏览器登录（POST /api/v1/auth/login，body 为 {token}）只 Set-Cookie x_loadgen_token=s_<64-hex>（HttpOnly，SameSite=Lax，Max-Age=86400），响应体不再回口令；Cookie 只接受会话 ID，不是口令本身。登出会吊销该会话，Bearer 口令仍然有效。首次启动必须先改密，否则业务接口返回 403 password_change_required。GET /health 与 GET /api/v1/openapi.json 无需认证。--no-auth 时把下面的 xlg 换成 curl -fsS -H 'Content-Type: application/json' 即可。不要给写请求加跨站 Sec-Fetch-Site。",
+    snippet: "XLG=http://127.0.0.1:8757\nTOKEN_FILE=\\${TOKEN_FILE:-$HOME/.config/x-loadgen/token}\nHDR=\\${HDR:-$HOME/.config/x-loadgen/auth.hdr}\numask 077\nmkdir -p \"$(dirname \"$HDR\")\"\nprintf 'Authorization: Bearer %s\\\\nContent-Type: application/json\\\\n' \"$(tr -d '\\\\n' < \"$TOKEN_FILE\")\" > \"$HDR\"\nxlg() { curl -fsS -H @\"$HDR\" \"$@\"; }\n\ncurl -fsS \"$XLG/health\"\ncurl -fsS \"$XLG/api/v1/openapi.json\" | jq '{openapi, title: .info.title}'\nxlg \"$XLG/api/v1/auth/me\" | jq .\nxlg \"$XLG/api/v1/meta\" | jq .",
+  },
+  {
+    id: "curl-import",
+    title: "导入集合与环境",
+    body: "POST /api/v1/collections/import 接受 x-loadgen 原生集合 JSON 或 Hoppscotch REST Collection JSON，可选 query parent_id 挂到已有目录下。POST /api/v1/environments/import 接受原生或 Hoppscotch Environment JSON。导出默认脱敏，需要明文时加 ?include_secrets=true。工作台「导入 cURL」只在浏览器内解析，没有对应的 HTTP 导入接口。",
+    snippet: "# 导入先前导出的集合 / 环境文件\nxlg -X POST \"$XLG/api/v1/collections/import\" --data-binary @collections.json | jq 'length'\n# xlg -X POST \"$XLG/api/v1/collections/import?parent_id=$COLL_ID\" --data-binary @collections.json\n\nxlg -X POST \"$XLG/api/v1/environments/import\" --data-binary @environments.json | jq '[.[].name]'\n\n# 导出（默认脱敏）\nxlg \"$XLG/api/v1/collections/export\" -o collections.json\nxlg \"$XLG/api/v1/environments/export?include_secrets=true\" -o environments.json",
+  },
+  {
+    id: "curl-run-adhoc",
+    title: "启动压测（已保存请求 / 集合 / adhoc）",
+    body: "POST /api/v1/runs 的目标三选一：request_id、collection_id（可选 selected_requests 覆盖权重）、或 adhoc_request / adhoc_requests（不保存直接压）。可指定 environment_id、load_profile / load_profile_id，以及本次覆盖字段（qps、concurrency、requests、duration_secs、warmup_secs、ramp_secs、processes、mode、assert 等，只作用于本次 snapshot）。requests 与 duration_secs 互斥。?wait=true&timeout=N（1–600，默认 60）会等到任务离开 running/stopping 再返回 201；超时 409 wait_timeout。",
+    snippet: "# 对已保存请求按预设启动一次压测，并等待结束\nRUN=$(xlg -X POST \"$XLG/api/v1/runs?wait=true&timeout=60\" --data-binary @- <<EOF\n{\n  \"request_id\": \"$REQ_ID\",\n  \"environment_id\": \"$ENV_ID\",\n  \"load_profile\": \"nightly-once\",\n  \"mode\": \"once\",\n  \"qps\": 15,\n  \"concurrency\": 4,\n  \"requests\": 30,\n  \"processes\": 1,\n  \"assert\": {\"p99_ms\": 5000, \"max_error_rate\": 0.05, \"min_qps_ratio\": 0.5}\n}\nEOF\n)\nRUN_ID=$(echo \"$RUN\" | jq -r .id)\n\n# 不保存请求，直接 adhoc 压测\nADHOC=$(xlg -X POST \"$XLG/api/v1/runs?wait=true&timeout=60\" --data-binary @- <<'EOF'\n{\n  \"adhoc_request\": {\n    \"name\": \"adhoc-ping\",\n    \"protocol\": \"http\",\n    \"method\": \"GET\",\n    \"endpoint\": \"http://127.0.0.1:9/health\",\n    \"headers\": [],\n    \"params\": [],\n    \"body\": {\"content_type\": \"application/json\", \"body\": \"\", \"form\": []},\n    \"assertions\": {\"expect_transport\": \"ok\", \"checks\": []}\n  },\n  \"mode\": \"once\",\n  \"qps\": 5,\n  \"concurrency\": 2,\n  \"requests\": 10,\n  \"timeout_secs\": 3\n}\nEOF\n)\necho \"$ADHOC\" | jq '{id, status, verdict}'\n\n# 集合加权循环压测（立即返回，稍后 stop）\nLOOP=$(xlg -X POST \"$XLG/api/v1/runs\" --data-binary @- <<EOF\n{\n  \"collection_id\": \"$COLL_ID\",\n  \"selected_requests\": [\n    {\"request_id\": \"$REQ_ID\", \"weight\": 3}\n  ],\n  \"environment_id\": \"$ENV_ID\",\n  \"mode\": \"loop\",\n  \"qps\": 8,\n  \"rounds\": 50,\n  \"loop_interval_secs\": 2\n}\nEOF\n)\nLOOP_ID=$(echo \"$LOOP\" | jq -r .id)",
+  },
+  {
+    id: "curl-manage",
+    title: "任务状态、调流、停止与续跑",
+    body: "GET /api/v1/runs?status=running|finished|stopped|failed 列出任务。GET /api/v1/runs/{id} 含脱敏 snapshot 与 verdict。PATCH /api/v1/runs/{id}/traffic 仅对 running 有效，qps 与 concurrency 都可选。POST .../stop 平滑停止；POST .../resume 对已停止或异常中断的任务断点续跑。DELETE 只能删除已结束或已停止的任务。",
+    snippet: "xlg \"$XLG/api/v1/runs?status=running\" | jq '[.[] | {id, status, current_qps}]'\nxlg \"$XLG/api/v1/runs/$LOOP_ID\" | jq '{id, status, verdict}'\nxlg \"$XLG/api/v1/runs/$LOOP_ID/stats\" | jq '{status, samples, success, failure, p99_us, current_qps}'\nxlg -X PATCH \"$XLG/api/v1/runs/$LOOP_ID/traffic\" --data-binary '{\"qps\":20,\"concurrency\":4}' \\\\\n  | jq '{id, status, current_qps, current_concurrency}'\nxlg -X POST \"$XLG/api/v1/runs/$LOOP_ID/stop\" | jq '{id, status}'\n# xlg -X POST \"$XLG/api/v1/runs/$LOOP_ID/resume\" | jq '{id, status}'\n",
+  },
+  {
+    id: "curl-events-report",
+    title: "SSE 实时事件、报告与判定",
+    body: "GET /api/v1/runs/{id}/events 是 SSE，事件名为 stats，约每秒一条；curl -N 关闭缓冲，Ctrl-C 结束。GET .../report 返回脱敏完整报告 JSON；.../report.json 与 .../report.html 为附件下载。GET .../verdict 的 HTTP 状态是为了让 curl -f 当脚本退出码：通过为 200，失败为 4xx/5xx（有意不用 202）。",
+    snippet: "# SSE（另开终端；Ctrl-C 结束）\n# curl -NS -H @\"$HDR\" \"$XLG/api/v1/runs/$LOOP_ID/events\"\n\nxlg \"$XLG/api/v1/runs/$RUN_ID/timeseries\" | jq '{count: (.points | length)}'\nxlg \"$XLG/api/v1/runs/$RUN_ID/timeline\" | jq '.events[] | {ts, event}'\nxlg \"$XLG/api/v1/runs/$RUN_ID/report\" | jq '{id, status, counters, verdict}'\nxlg -o \"run-$RUN_ID-report.json\" \"$XLG/api/v1/runs/$RUN_ID/report.json\"\ncurl -fsS -H @\"$HDR\" -o \"run-$RUN_ID-report.html\" \"$XLG/api/v1/runs/$RUN_ID/report.html\"\n\nxlg \"$XLG/api/v1/runs/$RUN_ID/verdict\" | jq '{result, actual, failed}'\ncode=$(curl -sS -o /tmp/verdict.json -w '%{http_code}' -H @\"$HDR\" \\\\\n  \"$XLG/api/v1/runs/$RUN_ID/verdict\")\necho \"$code\"\n",
+  },
+];
 
 const originUrl = computed(() =>
   typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8757",
@@ -919,6 +1029,11 @@ function expandAllToggle(): void {
 function scrollToAnchor(domId: string): void {
   const el = document.getElementById(domId);
   el?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function focusManual(): void {
+  activeOpId.value = "curl-manual";
+  scrollToAnchor("curl-manual");
 }
 
 function focusOperation(opId: string): void {
