@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.29
 
 # 前端：在 web/ 执行 pnpm install --frozen-lockfile && pnpm build。
-FROM node:24-trixie AS frontend
+FROM node:26-trixie AS frontend
 WORKDIR /src/web
-RUN corepack enable && corepack prepare pnpm@12.21.0 --activate
+RUN npm install -g --allow-scripts=pnpm pnpm@12.21.0
 COPY x-loadgen-bin/x-loadgen/web/package.json x-loadgen-bin/x-loadgen/web/pnpm-lock.yaml x-loadgen-bin/x-loadgen/web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY x-loadgen-bin/x-loadgen/web/ ./

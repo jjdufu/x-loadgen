@@ -18,7 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
-  NODE_VERSION: '24.22.3'
+  NODE_VERSION: '26.13.1'
   PNPM_VERSION: '12.21.0'
   ACTIONLINT_VERSION: '1.7.12'
   WEB_DIR: x-loadgen-bin/x-loadgen/web
