@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS requests (
   weight          INTEGER NOT NULL DEFAULT 1,
   timeout_secs    INTEGER,
   created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
+  updated_at      INTEGER NOT NULL,
+  captures_json   TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_requests_collection ON requests(collection_id, sort_order);
 
@@ -222,7 +223,8 @@ CREATE TABLE IF NOT EXISTS samples (
   customer_name  TEXT,
   trace_id       TEXT,
   trace_echo     TEXT NOT NULL DEFAULT 'absent',
-  warmup         INTEGER NOT NULL DEFAULT 0
+  warmup         INTEGER NOT NULL DEFAULT 0,
+  captures       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_samples_end ON samples(end_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_samples_product ON samples(product_id, end_unix_ms);

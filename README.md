@@ -400,6 +400,25 @@ EOF
 )
 MZ_REQ_ID=$(echo "$MZ_REQ" | jq -r .id)
 
+# 提取变量（captures）：从响应按路径取值，后续请求用 {{captures.<name>}} 引用
+xlg -X POST "$XLG/api/v1/requests" --data-binary @- <<EOF | jq '{id, captures}'
+{
+  "collection_id": "$COLL_ID",
+  "name": "job-submit",
+  "method": "POST",
+  "endpoint": "<<base_url>>/jobs",
+  "captures": [{"name": "job_id", "path": "data.job_id"}]
+}
+EOF
+xlg -X POST "$XLG/api/v1/requests" --data-binary @- <<EOF | jq '{id, endpoint}'
+{
+  "collection_id": "$COLL_ID",
+  "name": "job-query",
+  "method": "GET",
+  "endpoint": "<<base_url>>/jobs/{{captures.job_id}}"
+}
+EOF
+
 # 查看完整集合目录树、导入 / 导出（兼容 Hoppscotch REST Collection JSON 与原生格式）
 xlg "$XLG/api/v1/collections" | jq '[.[] | {id, name, requests: [.requests[].name]}]'
 xlg "$XLG/api/v1/collections/export" | jq 'length'
@@ -411,6 +430,15 @@ xlg "$XLG/api/v1/collections/export" | jq 'length'
 - 两种协议都返回本次发送的 `request_id`（`probe-<UUIDv7>`）、`trace_id`、`traceparent`（默认采样 `01`，`"trace_sampled": false` 改为 `00`）与 `trace_echo`。
 - `http` 模式返回状态码、耗时（`latency_us`）、字节数、响应头、格式化 JSON、逐项断言结果与实际发出的请求预览。
 - `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、5 个 `x-mazbri-*` 绑定签名头、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
+- `captures` 返回本次按请求 `captures` 取到的值。
+
+#### 提取变量（captures）
+
+请求的 `captures: [{"name", "path"}]` 从响应里取值，`path` 与断言 `checks[].path` 写法相同（点分，数组用数字下标，如 `data.items.0.id`；mazbri 请求对解封后的 `data` 取值）。字符串原样保存，其他 JSON 值保存为紧凑 JSON；`null` 与不存在的路径跳过；单值最长 1024 字节，一次响应合计最多 4096 字节；每条请求最多 32 个，名字为 `A-Z a-z 0-9 _ -`。
+
+后续请求在 URL、参数、请求头、请求体、鉴权里用 `{{captures.<name>}}`（或 `<<captures.<name>>>`）引用该名字最新取到的值：
+- 单发：服务端在内存里保留每个名字的最新值（服务重启清空），先 Send 提交请求、再 Send 查询请求即可串起来；还没取到值时，占位符原样保留并出现在 `unresolved_variables` 里。
+- 压测：每个压测进程各自保留最新值，集合压测里一条请求取到的值供之后发出的请求使用；还没取到值的请求，占位符原样发送。每条样本的 `captures` 记录本条取到的值（`GET /api/v1/runs/{id}/samples`）。
 
 ```bash
 xlg -X POST "$XLG/api/v1/probe" --data-binary @- <<EOF | jq '{http_status, transport_ok, passed_assertions, latency_us, request_id, trace_id, trace_echo}'
@@ -583,7 +611,8 @@ xlg "$XLG/api/v1/runs/$RUN_ID/timeline" | jq '.events[] | {ts, event, payload}'
 
 xlg "$XLG/api/v1/runs/$RUN_ID/windows" | jq '.windows[] | {window_index, samples, success, failure, p99_us}'
 
-# 样本：默认最多 100 条，limit 最大 1000。可按 product_id、success、from_ms、to_ms 过滤；
+# 样本：默认最多 100 条，limit 最大 1000。可按 product_id、tenant、request_id、trace_id、
+# success、error_class、min_latency_us、from_ms、to_ms 过滤；
 # 用 after_end_unix_ms、after_worker、after_seq 做 keyset 翻页（响应里的 next 原样带回）。
 xlg "$XLG/api/v1/runs/$RUN_ID/samples?limit=20&success=true" | jq '{count: (.items | length), next}'
 

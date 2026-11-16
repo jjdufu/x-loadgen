@@ -87,6 +87,8 @@ pub struct Sample {
     pub trace_echo: TraceEcho,
     /// Recorded during warmup (excluded from counters, percentiles and breakdowns).
     pub warmup: bool,
+    /// Captured values as a JSON object, `None` when nothing was captured.
+    pub captures: Option<String>,
 }
 
 /// Tuning knobs for a [`DetailWriter`].

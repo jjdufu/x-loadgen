@@ -158,9 +158,9 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
                 seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                 request_index, http_status, success, expected, reason, error_class,
                 request_id, error, response_bytes, customer_name, trace_id, trace_echo,
-                warmup
+                warmup, captures
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                      ?17, ?18, ?19)",
+                      ?17, ?18, ?19, ?20)",
         )
         .context("prepare sample insert")?;
     for sample in samples {
@@ -184,6 +184,7 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
             sample.trace_id,
             sample.trace_echo.as_str(),
             i64::from(sample.warmup),
+            sample.captures,
         ])
         .context("insert sample")?;
     }

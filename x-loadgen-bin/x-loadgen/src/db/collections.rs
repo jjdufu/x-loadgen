@@ -14,6 +14,7 @@ use super::workspace::{
     RequestBodySpec, TlsSpec, default_http_protocol, new_id, non_empty_owned, now_ms,
     validate_protocol,
 };
+use crate::capture::{self, CaptureSpec};
 
 const fn default_weight() -> i64 {
     1
@@ -98,6 +99,7 @@ pub struct SavedRequest {
     pub mazbri: MazbriRequestSpec,
     pub tls: TlsSpec,
     pub assertions: AssertionsSpec,
+    pub captures: Vec<CaptureSpec>,
     pub weight: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<i64>,
@@ -124,6 +126,7 @@ impl SavedRequest {
             mazbri: self.mazbri.clone(),
             tls: self.tls.clone(),
             assertions: self.assertions.clone(),
+            captures: self.captures.clone(),
             weight: self.weight,
             timeout_secs: self.timeout_secs,
         }
@@ -172,6 +175,9 @@ pub struct RequestDraft {
     pub tls: TlsSpec,
     #[serde(default)]
     pub assertions: AssertionsSpec,
+    /// Values read from the response and stored as `{{captures.<name>}}`.
+    #[serde(default)]
+    pub captures: Vec<CaptureSpec>,
     #[serde(default = "default_weight")]
     pub weight: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -195,6 +201,7 @@ impl Default for RequestDraft {
             mazbri: MazbriRequestSpec::default(),
             tls: TlsSpec::default(),
             assertions: AssertionsSpec::default(),
+            captures: Vec::new(),
             weight: 1,
             timeout_secs: None,
         }
@@ -237,6 +244,15 @@ impl RequestDraft {
         self.auth.validate()?;
         self.tls.validate()?;
         self.assertions.validate()?;
+        let captures: Vec<CaptureSpec> = self
+            .captures
+            .iter()
+            .map(|c| CaptureSpec {
+                name: c.name.trim().to_string(),
+                path: c.path.trim().to_string(),
+            })
+            .collect();
+        capture::validate(&captures).map_err(StoreError::invalid)?;
         let mut mazbri = self.mazbri.clone();
         if protocol == PROTOCOL_MAZBRI {
             mazbri.validate()?;
@@ -260,6 +276,7 @@ impl RequestDraft {
             mazbri,
             tls: self.tls.clone(),
             assertions: self.assertions.clone(),
+            captures: self.captures.clone(),
             weight: self.weight,
             timeout_secs: self.timeout_secs,
         })
@@ -282,6 +299,7 @@ pub struct NormalizedRequest {
     pub mazbri: MazbriRequestSpec,
     pub tls: TlsSpec,
     pub assertions: AssertionsSpec,
+    pub captures: Vec<CaptureSpec>,
     pub weight: i64,
     pub timeout_secs: Option<i64>,
 }
@@ -495,7 +513,8 @@ pub fn list_collection_tree(conn: &Connection) -> Result<Vec<CollectionNode>, St
     let mut req_stmt = conn.prepare(
         "SELECT id, collection_id, name, sort_order, protocol, method, endpoint,
                 params_json, headers_json, body_json, auth_json, mazbri_json,
-                tls_json, assertions_json, weight, timeout_secs, created_at, updated_at
+                tls_json, assertions_json, weight, timeout_secs, created_at, updated_at,
+                captures_json
          FROM requests ORDER BY sort_order ASC, created_at ASC",
     )?;
     let reqs: Vec<SavedRequest> = req_stmt
@@ -610,8 +629,9 @@ pub fn create_request(conn: &Connection, draft: &RequestDraft) -> Result<SavedRe
         "INSERT INTO requests (
             id, collection_id, name, sort_order, protocol, method, endpoint,
             params_json, headers_json, body_json, auth_json, mazbri_json,
-            tls_json, assertions_json, weight, timeout_secs, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
+            tls_json, assertions_json, weight, timeout_secs, created_at, updated_at,
+            captures_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17, ?18)",
         params![
             id,
             collection_id,
@@ -629,7 +649,8 @@ pub fn create_request(conn: &Connection, draft: &RequestDraft) -> Result<SavedRe
             serde_json::to_string(&norm.assertions).unwrap_or_else(|_| "{}".into()),
             norm.weight,
             norm.timeout_secs,
-            now
+            now,
+            serde_json::to_string(&norm.captures).unwrap_or_else(|_| "[]".into())
         ],
     )?;
     get_request(conn, &id)
@@ -672,7 +693,7 @@ pub fn update_request(
             collection_id = ?1, name = ?2, sort_order = ?3, protocol = ?4, method = ?5,
             endpoint = ?6, params_json = ?7, headers_json = ?8, body_json = ?9,
             auth_json = ?10, mazbri_json = ?11, tls_json = ?12, assertions_json = ?13,
-            weight = ?14, timeout_secs = ?15, updated_at = ?16
+            weight = ?14, timeout_secs = ?15, updated_at = ?16, captures_json = ?18
          WHERE id = ?17",
         params![
             collection_id,
@@ -691,7 +712,8 @@ pub fn update_request(
             norm.weight,
             norm.timeout_secs,
             now,
-            id
+            id,
+            serde_json::to_string(&norm.captures).unwrap_or_else(|_| "[]".into())
         ],
     )?;
     get_request(conn, id)
@@ -719,7 +741,8 @@ pub fn get_request(conn: &Connection, id: &str) -> Result<SavedRequest, StoreErr
     conn.query_row(
         "SELECT id, collection_id, name, sort_order, protocol, method, endpoint,
                 params_json, headers_json, body_json, auth_json, mazbri_json,
-                tls_json, assertions_json, weight, timeout_secs, created_at, updated_at
+                tls_json, assertions_json, weight, timeout_secs, created_at, updated_at,
+                captures_json
          FROM requests WHERE id = ?1",
         params![id],
         request_from_row,
@@ -1031,6 +1054,10 @@ fn parse_hopp_or_native_request(val: &Value, collection_id: &str) -> RequestDraf
         .get("assertions")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
+    let captures: Vec<CaptureSpec> = val
+        .get("captures")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
     let weight = val
         .get("weight")
         .and_then(Value::as_i64)
@@ -1052,6 +1079,7 @@ fn parse_hopp_or_native_request(val: &Value, collection_id: &str) -> RequestDraf
         mazbri,
         tls,
         assertions,
+        captures,
         weight,
         timeout_secs,
     }
@@ -1162,6 +1190,7 @@ fn request_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
     let mazbri_raw: String = row.get(11)?;
     let tls_raw: String = row.get(12)?;
     let assertions_raw: String = row.get(13)?;
+    let captures_raw: String = row.get(18)?;
     Ok(SavedRequest {
         id: row.get(0)?,
         collection_id: row.get(1)?,
@@ -1177,6 +1206,7 @@ fn request_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedRequest> {
         mazbri: serde_json::from_str(&mazbri_raw).unwrap_or_default(),
         tls: serde_json::from_str(&tls_raw).unwrap_or_default(),
         assertions: serde_json::from_str(&assertions_raw).unwrap_or_default(),
+        captures: serde_json::from_str(&captures_raw).unwrap_or_default(),
         weight: row.get(14)?,
         timeout_secs: row.get(15)?,
         created_at: row.get(16)?,

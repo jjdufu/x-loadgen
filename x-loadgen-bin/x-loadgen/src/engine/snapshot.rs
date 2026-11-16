@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::capture::CaptureSpec;
 use crate::db::StoreError;
 use crate::db::collections::{
     CollectionRecord, NormalizedRequest, RequestDraft, SavedRequest, ancestor_chain,
@@ -60,6 +61,8 @@ pub struct ExecutionRequest {
     pub mazbri: MazbriRequestSpec,
     pub tls: TlsSpec,
     pub assertions: AssertionsSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub captures: Vec<CaptureSpec>,
     pub weight: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<i64>,
@@ -578,6 +581,7 @@ fn build_execution_request(
         mazbri: norm.mazbri.clone(),
         tls: norm.tls.clone(),
         assertions: norm.assertions.clone(),
+        captures: norm.captures.clone(),
         weight: norm.weight,
         timeout_secs: norm.timeout_secs,
         variables,

@@ -43,7 +43,8 @@ pub async fn probe_handler(
         let db = state.lock_db()?;
         prepare_probe(&db, &req)?
     };
-    let resp = run_probe(target, seq, req.trace_sampled).await?;
+    let resp = run_probe(target, seq, req.trace_sampled, state.probe_captures()).await?;
+    state.remember_probe_captures(&resp.captures);
     Ok(Json(resp))
 }
 

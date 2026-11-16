@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +13,7 @@ use reqwest::{Client, Method};
 use serde_json::Value;
 use x_loadgen_sdk::{REQUEST_ID_HEADER, TRACEPARENT_HEADER, TraceParent, new_request_id};
 
+use crate::capture::{self, CaptureSpec, Captures};
 use crate::db::TraceEcho;
 use crate::db::profiles::LoadConfig;
 use crate::db::workspace::{
@@ -155,6 +156,8 @@ pub struct ExecOutcome {
     pub trace_id: Option<String>,
     /// How the response `traceparent` compared with the one sent.
     pub trace_echo: TraceEcho,
+    /// Values read by the request's captures.
+    pub captures: Captures,
     pub body: Option<Value>,
     pub customer_name: Option<String>,
     /// Time spent waiting before the request could be sent (for example on a
@@ -201,6 +204,8 @@ pub struct HttpExecutor {
     pub(crate) include_request_id: bool,
     pub(crate) trace_sampled: bool,
     requests: HashMap<String, PreparedRequest>,
+    /// Latest value of every capture in this process (`{{captures.<name>}}`).
+    captures: Mutex<Arc<Captures>>,
     http_tenants: HashMap<String, Option<String>>,
     mazbri_tenants: HashMap<(String, String), Arc<MazbriTenant>>,
 }
@@ -228,6 +233,7 @@ pub(crate) struct PreparedRequest {
     pub(crate) timeout: Option<Duration>,
     pub(crate) transport: TransportExpect,
     pub(crate) checks: Vec<FieldCheck>,
+    pub(crate) captures: Vec<CaptureSpec>,
     pub(crate) custom_client: Option<Client>,
     pub(crate) mazbri_mode: Option<PreparedMazbriMode>,
 }
@@ -282,6 +288,7 @@ impl HttpExecutor {
             include_request_id: template.include_request_id,
             trace_sampled: template.trace_sampled,
             requests,
+            captures: Mutex::default(),
             http_tenants,
             mazbri_tenants,
         })
@@ -357,6 +364,7 @@ fn prepare_request(
         timeout,
         transport,
         checks: req.assertions.checks.clone(),
+        captures: req.captures.clone(),
         custom_client,
         mazbri_mode,
     })
@@ -708,27 +716,59 @@ impl HttpExecutor {
         };
 
         let client = req.custom_client.as_ref().unwrap_or(&self.client);
-
-        if let Some(mazbri_mode) = req.mazbri_mode.as_ref() {
-            return self
-                .execute_mazbri_mode(started, ctx, req, mazbri_mode, client, &ids)
-                .await;
+        let runtime = RuntimeVars::for_index(ctx.index).with_captures(self.latest_captures());
+        let mut outcome = if let Some(mazbri_mode) = req.mazbri_mode.as_ref() {
+            match self.resolve_mazbri_tenant(started, ctx, mazbri_mode, &ids) {
+                Ok((name, tenant)) => {
+                    tenant
+                        .execute(client, req, &ids, &runtime, Some(name))
+                        .await
+                }
+                Err(failed) => *failed,
+            }
+        } else {
+            self.send_http(started, ctx, req, client, &ids, &runtime)
+                .await
+        };
+        if !req.captures.is_empty() {
+            outcome.captures = capture::extract(outcome.body.as_ref(), &req.captures);
+            self.remember_captures(&outcome.captures);
         }
+        outcome
+    }
 
+    /// Snapshot of the latest captured values.
+    fn latest_captures(&self) -> Arc<Captures> {
+        Arc::clone(&self.captures.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Merge newly captured values into the latest values.
+    fn remember_captures(&self, captured: &Captures) {
+        if captured.is_empty() {
+            return;
+        }
+        let mut latest = self.captures.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut next = Captures::clone(&latest);
+        next.extend(captured.iter().map(|(k, v)| (k.clone(), v.clone())));
+        *latest = Arc::new(next);
+    }
+
+    async fn send_http(
+        &self,
+        started: i64,
+        ctx: &RequestCtx,
+        req: &PreparedRequest,
+        client: &Client,
+        ids: &RequestIds,
+        runtime: &RuntimeVars,
+    ) -> ExecOutcome {
         let tenant_api_key = ctx
             .tenant_name
             .as_deref()
             .and_then(|name| self.http_tenants.get(name))
             .and_then(|opt| opt.as_deref());
 
-        let runtime = RuntimeVars::for_index(ctx.index);
-        let call = render_http_call(
-            self.base_url.as_deref(),
-            req,
-            &runtime,
-            tenant_api_key,
-            &ids,
-        );
+        let call = render_http_call(self.base_url.as_deref(), req, runtime, tenant_api_key, ids);
 
         let mut builder = client.request(req.method.clone(), &call.url);
         if let Some(timeout) = req.timeout {
@@ -750,13 +790,13 @@ impl HttpExecutor {
         let sent = Instant::now();
         match builder.send().await {
             Ok(response) => {
-                classify_response(started, sent, &ids, req, response, ctx.tenant_name.clone()).await
+                classify_response(started, sent, ids, req, response, ctx.tenant_name.clone()).await
             }
             Err(err) => failed_outcome(
                 started,
                 unix_now_ms(),
                 elapsed_us(sent),
-                &ids,
+                ids,
                 Some("transport".into()),
                 Some(err.to_string()),
                 None,
@@ -765,27 +805,26 @@ impl HttpExecutor {
         }
     }
 
-    async fn execute_mazbri_mode(
+    /// Tenant that sends this mazbri call, or the failed outcome when none fits.
+    fn resolve_mazbri_tenant(
         &self,
         started: i64,
         ctx: &RequestCtx,
-        req: &PreparedRequest,
         mazbri_mode: &PreparedMazbriMode,
-        client: &reqwest::Client,
         ids: &RequestIds,
-    ) -> ExecOutcome {
-        let (actual_tenant_name, mazbri_tenant) = match mazbri_mode {
+    ) -> Result<(String, Arc<MazbriTenant>), Box<ExecOutcome>> {
+        match mazbri_mode {
             PreparedMazbriMode::Inline {
                 tenant_name,
                 tenant,
-            } => (tenant_name.clone(), Arc::clone(tenant)),
+            } => Ok((tenant_name.clone(), Arc::clone(tenant))),
             PreparedMazbriMode::Environment {
                 gateway_base_url,
                 pinned_tenant,
             } => {
                 let chosen = pinned_tenant.as_deref().or(ctx.tenant_name.as_deref());
                 let Some(name) = chosen else {
-                    return failed_outcome(
+                    return Err(Box::new(failed_outcome(
                         started,
                         started,
                         0,
@@ -794,11 +833,11 @@ impl HttpExecutor {
                         Some("no mazbri tenant selected for this request".into()),
                         None,
                         None,
-                    );
+                    )));
                 };
                 let key = (gateway_base_url.clone(), name.to_string());
                 let Some(found) = self.mazbri_tenants.get(&key) else {
-                    return failed_outcome(
+                    return Err(Box::new(failed_outcome(
                         started,
                         started,
                         0,
@@ -807,14 +846,11 @@ impl HttpExecutor {
                         Some(format!("mazbri tenant '{name}' not prepared")),
                         None,
                         Some(name.to_string()),
-                    );
+                    )));
                 };
-                (name.to_string(), Arc::clone(found))
+                Ok((name.to_string(), Arc::clone(found)))
             }
-        };
-        mazbri_tenant
-            .execute(client, ctx, req, ids, Some(actual_tenant_name))
-            .await
+        }
     }
 }
 
@@ -871,6 +907,7 @@ async fn classify_response(
         request_id,
         trace_id: Some(ids.trace_id()),
         trace_echo,
+        captures: Captures::new(),
         body,
         customer_name,
         pre_send_wait_us: 0,

@@ -382,7 +382,7 @@
         <p class="text-xs text-muted-foreground leading-relaxed">
           支持点分路径与数组下标（如
           <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">user.id</code> 或
-          <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">items[0].status</code>）。Mazbri
+          <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">items.0.status</code>）。Mazbri
           请求自动对客户端解封后的业务 <code class="font-mono text-foreground">data</code> 载荷执行校验。
         </p>
 
@@ -449,7 +449,70 @@
         </div>
       </div>
 
-      <!-- 6. Request-level TLS & Timeout -->
+      <!-- 6. Captures -->
+      <div v-else-if="activeTab.requestSubTab === 'captures'" class="p-5 space-y-4">
+        <div
+          class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4"
+        >
+          <p class="text-xs text-muted-foreground leading-relaxed">
+            从响应中按字段路径取值（写法与断言相同，如
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">data.job_id</code>），
+            后续请求用
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-foreground">{{ captureExample }}</code>
+            引用。单发结果和压测样本都会记录取到的值。
+          </p>
+          <UiButton variant="outline" size="sm" @click="addCapture">
+            <Plus class="h-3.5 w-3.5" />
+            <span>添加提取</span>
+          </UiButton>
+        </div>
+
+        <div
+          v-if="captureRows.length === 0"
+          class="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground"
+        >
+          未配置提取变量
+        </div>
+
+        <div v-else class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+          <div
+            v-for="(cap, idx) in captureRows"
+            :key="rowObjectKey(cap)"
+            class="flex items-center divide-x divide-border bg-background"
+          >
+            <div class="w-56 shrink-0">
+              <input
+                v-model="cap.name"
+                type="text"
+                :aria-label="`提取 ${idx + 1} 变量名`"
+                placeholder="变量名，如 job_id"
+                class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
+            <div class="flex-1 min-w-0">
+              <input
+                v-model="cap.path"
+                type="text"
+                :aria-label="`提取 ${idx + 1} 字段路径`"
+                placeholder="JSON 字段路径，如 data.job_id"
+                class="h-9 w-full bg-transparent px-3 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+              />
+            </div>
+            <div class="flex h-9 w-10 shrink-0 items-center justify-center">
+              <button
+                type="button"
+                aria-label="删除提取"
+                class="cursor-pointer rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                @click="captureRows.splice(idx, 1)"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. Request-level TLS & Timeout -->
       <div v-else class="p-5 space-y-5">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
@@ -596,6 +659,12 @@ const subTabs = computed<
     dot: false,
   },
   {
+    id: "captures",
+    label: "提取变量",
+    count: captureRows.value.length,
+    dot: false,
+  },
+  {
     id: "tls",
     label: "TLS / 超时",
     count: 0,
@@ -630,6 +699,15 @@ function setTenantSource(source: "environment" | "inline"): void {
   if (source === "inline" && !draft.value.mazbri.inline_tenant) {
     draft.value.mazbri.inline_tenant = createDefaultTenant("inline-tenant");
   }
+}
+
+const captureExample = "{{captures.job_id}}";
+
+/** Capture rows of the draft (tabs restored from older local state have none yet). */
+const captureRows = computed(() => draft.value.captures ?? []);
+
+function addCapture(): void {
+  (draft.value.captures ??= []).push({ name: "", path: "" });
 }
 
 function addCheck(): void {

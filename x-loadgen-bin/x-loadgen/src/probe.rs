@@ -7,6 +7,7 @@
 //! binding headers + sealed/unsealed envelopes.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use reqwest::Method;
@@ -18,6 +19,7 @@ use x_loadgen_sdk::{
     GATEWAY_INVOKE_PATH, TOKEN_PATH, TRACEPARENT_HEADER, parse_token_response, token_request_body,
 };
 
+use crate::capture::{self, Captures};
 use crate::db::collections::RequestDraft;
 use crate::db::profiles::LoadConfig;
 use crate::db::workspace::{PROTOCOL_MAZBRI, TenantSpec, non_empty_str};
@@ -132,6 +134,8 @@ pub struct ProbeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub assertions: Vec<DetailedCheckResult>,
+    /// Values read by the request's captures (usable as `{{captures.<name>}}`).
+    pub captures: Captures,
     pub request_preview: ProbeRequestPreview,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mazbri_wire: Option<MazbriWireDebug>,
@@ -162,6 +166,9 @@ const MAX_PROBE_TIMEOUT_SECS: i64 = 300;
 
 /// Execute a compiled single-request target once and collect full debug telemetry.
 ///
+/// `captures` are the latest captured values, readable as `{{captures.<name>}}`;
+/// the response carries the values this call captured.
+///
 /// # Errors
 ///
 /// Returns `StoreError` if the HTTP/TLS client cannot be constructed.
@@ -169,6 +176,7 @@ pub async fn run_probe(
     target: ExecutionTarget,
     seq: u64,
     trace_sampled: bool,
+    captures: Arc<Captures>,
 ) -> Result<ProbeResponse, StoreError> {
     let exec_req = target
         .requests
@@ -202,12 +210,13 @@ pub async fn run_probe(
         )),
         transport: transport_expect,
         checks: exec_req.assertions.checks.clone(),
+        captures: exec_req.captures.clone(),
         custom_client: None,
         mazbri_mode: None,
     };
 
-    let unresolved = collect_unresolved(exec_req, target.gateway_base_url.as_deref());
-    let runtime = RuntimeVars::for_index(seq);
+    let runtime = RuntimeVars::for_index(seq).with_captures(captures);
+    let unresolved = collect_unresolved(exec_req, target.gateway_base_url.as_deref(), &runtime);
     let ids = RequestIds::for_probe(trace_sampled);
 
     let mut response = if exec_req.protocol == PROTOCOL_MAZBRI {
@@ -219,6 +228,7 @@ pub async fn run_probe(
         run_http_probe(&client, &target, &prepared, &runtime, &ids, unresolved).await
     };
     attach_ids(&mut response, &ids);
+    response.captures = capture::extract(response.body_json.as_ref(), &prepared.captures);
     Ok(response)
 }
 
@@ -988,10 +998,14 @@ fn validate_probe_target_url(raw_url: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_unresolved(req: &ExecutionRequest, env_base_url: Option<&str>) -> Vec<String> {
+fn collect_unresolved(
+    req: &ExecutionRequest,
+    env_base_url: Option<&str>,
+    runtime: &RuntimeVars,
+) -> Vec<String> {
     let mut missing = Vec::new();
     let mut scan = |s: &str| {
-        for tok in unresolved_tokens(s, &req.variables) {
+        for tok in unresolved_tokens(s, &req.variables, runtime) {
             if !missing.contains(&tok) {
                 missing.push(tok);
             }

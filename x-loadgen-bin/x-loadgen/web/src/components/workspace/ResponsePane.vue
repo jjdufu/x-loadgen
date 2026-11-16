@@ -275,6 +275,22 @@
               {{ item.message }}
             </div>
           </div>
+
+          <div v-if="capturedEntries.length > 0" class="space-y-1.5">
+            <div class="text-xs font-semibold text-foreground">提取变量</div>
+            <div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+              <div
+                v-for="[name, value] in capturedEntries"
+                :key="name"
+                class="flex items-start gap-3 bg-card px-3.5 py-2 font-mono text-xs"
+              >
+                <span class="shrink-0 font-semibold text-foreground">{{ captureToken(name) }}</span>
+                <span class="min-w-0 flex-1 break-all text-muted-foreground select-text">{{
+                  value
+                }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div
@@ -473,8 +489,8 @@ const responseTabs = computed<
     },
     {
       id: "assertions",
-      label: "断言结果",
-      count: r.assertions.length,
+      label: "断言与提取",
+      count: r.assertions.length + Object.keys(r.captures ?? {}).length,
       dot: !r.passed_assertions,
       errorDot: !r.passed_assertions,
     },
@@ -491,6 +507,12 @@ const responseTabs = computed<
   }
   return items;
 });
+
+function captureToken(name: string): string {
+  return ["{{captures.", name, "}}"].join("");
+}
+
+const capturedEntries = computed(() => Object.entries(resp.value?.captures ?? {}));
 
 const prettyBodyText = computed(() => {
   if (!resp.value) return "";

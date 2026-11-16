@@ -2909,14 +2909,6 @@
             "description": "目标资源唯一 ID"
           },
           {
-            "name": "after",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            },
-            "description": "分页游标"
-          },
-          {
             "name": "limit",
             "in": "query",
             "schema": {
@@ -2930,7 +2922,31 @@
             "schema": {
               "type": "string"
             },
-            "description": "按接口或产品标识过滤样本"
+            "description": "按接口或产品标识精确过滤"
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按租户名精确过滤"
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按 `X-Request-Id` 精确过滤"
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按 trace-id 精确过滤（不区分大小写）"
           },
           {
             "name": "success",
@@ -2938,7 +2954,63 @@
             "schema": {
               "type": "boolean"
             },
-            "description": "按请求成功或失败状态过滤样本"
+            "description": "按成功或失败过滤"
+          },
+          {
+            "name": "error_class",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按错误分类精确过滤（如 http、transport、business）"
+          },
+          {
+            "name": "min_latency_us",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "只返回耗时不低于该值（微秒）的样本"
+          },
+          {
+            "name": "from_ms",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "结束时间下限（Unix 毫秒，含）"
+          },
+          {
+            "name": "to_ms",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "结束时间上限（Unix 毫秒，含）"
+          },
+          {
+            "name": "after_end_unix_ms",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "keyset 游标：上一页 next.after_end_unix_ms（三项须同时提供）"
+          },
+          {
+            "name": "after_worker",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "keyset 游标：上一页 next.after_worker"
+          },
+          {
+            "name": "after_seq",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "keyset 游标：上一页 next.after_seq"
           }
         ],
         "responses": {
@@ -2947,7 +3019,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/SamplesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "游标不完整或过滤值非法（`invalid_request`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3570,6 +3652,14 @@
           "assertions": {
             "$ref": "#/components/schemas/AssertionsSpec"
           },
+          "captures": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/CaptureSpec"
+            },
+            "description": "响应提取变量，见 CaptureSpec"
+          },
           "weight": {
             "type": "integer",
             "default": 1
@@ -3927,6 +4017,13 @@
           "body_text": {
             "type": "string"
           },
+          "captures": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "本次调用按请求 `captures` 取到的值；服务端在内存中保留每个名字的最新值（重启清空），后续单发用 `{{captures.<name>}}` 引用"
+          },
           "mazbri_wire": {
             "type": "object",
             "nullable": true
@@ -4139,6 +4236,144 @@
           },
           "kid": {
             "type": "string"
+          }
+        }
+      },
+      "CaptureSpec": {
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "description": "从响应中提取一个值：路径写法与断言 `checks[].path` 相同（点分，数组用数字下标，如 `data.items.0.id`），mazbri 请求对解封后的 `data` 取值。字符串原样保存，其他 JSON 值保存为紧凑 JSON，null 与不存在的路径跳过；单值最长 1024 字节、一次响应合计最多 4096 字节。后续请求用 `{{captures.<name>}}` 或 `<<captures.<name>>>` 引用最新取到的值。",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "变量名，同一请求内不得重复"
+          },
+          "path": {
+            "type": "string",
+            "description": "JSON 路径，不得为空"
+          }
+        }
+      },
+      "Sample": {
+        "type": "object",
+        "description": "一条请求样本（敏感值已脱敏）",
+        "properties": {
+          "worker": {
+            "type": "integer"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "start_unix_ms": {
+            "type": "integer"
+          },
+          "end_unix_ms": {
+            "type": "integer"
+          },
+          "latency_us": {
+            "type": "integer"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "product_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "request_index": {
+            "type": "integer",
+            "nullable": true
+          },
+          "http_status": {
+            "type": "integer",
+            "nullable": true
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "expected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "error_class": {
+            "type": "string",
+            "nullable": true
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "发送的 `X-Request-Id`（UUIDv7）；压测关闭 include_request_id 时为网关回写的流水号"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "response_bytes": {
+            "type": "integer",
+            "nullable": true
+          },
+          "customer_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "租户名"
+          },
+          "trace_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "发送的 `traceparent` 中的 trace-id"
+          },
+          "trace_echo": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "match",
+              "mismatch"
+            ]
+          },
+          "warmup": {
+            "type": "boolean",
+            "description": "预热期间的样本（不计入统计）"
+          },
+          "captures": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "本条请求取到的提取变量"
+          }
+        }
+      },
+      "SamplesPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sample"
+            }
+          },
+          "next": {
+            "type": "object",
+            "nullable": true,
+            "description": "下一页游标，原样作为 after_end_unix_ms / after_worker / after_seq 查询参数带回；没有更多时为 null",
+            "properties": {
+              "after_end_unix_ms": {
+                "type": "integer"
+              },
+              "after_worker": {
+                "type": "integer"
+              },
+              "after_seq": {
+                "type": "integer"
+              }
+            }
           }
         }
       }

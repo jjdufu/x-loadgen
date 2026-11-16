@@ -22,11 +22,12 @@ use x_loadgen_sdk::{
     GatewaySession, TOKEN_PATH, parse_token_response, token_request_body,
 };
 
+use crate::capture::Captures;
 use crate::db::workspace::TenantSpec;
 use crate::engine::metrics::unix_now_ms;
 use crate::engine::token::{CachedToken, RefreshFn, TokenBroker, TokenError, box_refresh};
 use crate::engine::transport::{
-    ExecOutcome, PreparedRequest, RequestCtx, RequestIds, active_kv_pairs, apply_judge, elapsed_us,
+    ExecOutcome, PreparedRequest, RequestIds, active_kv_pairs, apply_judge, elapsed_us,
     failed_outcome, join_url, response_request_id, urlencoding_lite,
 };
 use crate::expect::judge;
@@ -85,9 +86,9 @@ impl MazbriTenant {
     pub async fn execute(
         &self,
         client: &Client,
-        ctx: &RequestCtx,
         req: &PreparedRequest,
         ids: &RequestIds,
+        runtime: &RuntimeVars,
         customer_name: Option<String>,
     ) -> ExecOutcome {
         let token_wait = Instant::now();
@@ -111,7 +112,7 @@ impl MazbriTenant {
         // queueing delay (it is not part of the wire latency itself).
         let pre_send_wait_us = u64::try_from(token_wait.elapsed().as_micros()).unwrap_or(u64::MAX);
         let mut outcome = self
-            .execute_with_token(client, ctx, req, &token, ids, customer_name)
+            .execute_with_token(client, req, &token, ids, runtime, customer_name)
             .await;
         outcome.pre_send_wait_us = pre_send_wait_us;
         outcome
@@ -120,14 +121,14 @@ impl MazbriTenant {
     async fn execute_with_token(
         &self,
         client: &Client,
-        ctx: &RequestCtx,
         req: &PreparedRequest,
         token: &str,
         ids: &RequestIds,
+        runtime: &RuntimeVars,
         customer_name: Option<String>,
     ) -> ExecOutcome {
         let started = unix_now_ms();
-        let request = match self.build_call(client, ctx, req, token, ids) {
+        let request = match self.build_call(client, req, token, ids, runtime) {
             Ok(request) => request,
             // Never reached the wire: latency 0 keeps it out of the histogram.
             Err((class, message)) => {
@@ -198,6 +199,7 @@ impl MazbriTenant {
             request_id,
             trace_id: Some(ids.trace_id()),
             trace_echo,
+            captures: Captures::new(),
             body: None,
             customer_name,
             pre_send_wait_us: 0,
@@ -210,13 +212,12 @@ impl MazbriTenant {
     fn build_call(
         &self,
         client: &Client,
-        ctx: &RequestCtx,
         req: &PreparedRequest,
         token: &str,
         ids: &RequestIds,
+        runtime: &RuntimeVars,
     ) -> Result<reqwest::RequestBuilder, (&'static str, String)> {
-        let runtime = RuntimeVars::for_index(ctx.index);
-        let gw_req = build_gateway_request(req, &runtime);
+        let gw_req = build_gateway_request(req, runtime);
         let plaintext = serde_json::to_vec(&gw_req)
             .map_err(|error| ("config", format!("gateway request: {error}")))?;
         let encoded = self

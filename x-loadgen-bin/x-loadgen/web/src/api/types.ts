@@ -68,6 +68,12 @@ export interface FieldCheck {
   eq?: unknown;
 }
 
+/** Stores the value at `path` (same syntax as assertion checks) as `{{captures.<name>}}`. */
+export interface CaptureSpec {
+  name: string;
+  path: string;
+}
+
 export interface AssertionsSpec {
   expect_transport: "ok" | "reject" | string;
   checks: FieldCheck[];
@@ -125,6 +131,7 @@ export interface RequestDraft {
   mazbri: MazbriRequestSpec;
   tls: TlsSpec;
   assertions: AssertionsSpec;
+  captures: CaptureSpec[];
   weight: number;
   timeout_secs?: number | null;
 }
@@ -268,6 +275,8 @@ export interface ProbeResponse {
   error_class?: string | null;
   error?: string | null;
   assertions: DetailedCheckResult[];
+  /** Values this call captured (`{{captures.<name>}}` in later requests). */
+  captures: Record<string, string>;
   request_preview: ProbeRequestPreview;
   mazbri_wire?: MazbriWireDebug | null;
 }

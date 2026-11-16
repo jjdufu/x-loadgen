@@ -3,6 +3,8 @@
 pub mod html;
 pub mod redact;
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
@@ -596,6 +598,7 @@ struct SampleRow {
     trace_id: Option<String>,
     trace_echo: String,
     warmup: bool,
+    captures: Option<String>,
 }
 
 impl SampleRow {
@@ -621,8 +624,22 @@ impl SampleRow {
             "trace_id": self.trace_id,
             "trace_echo": self.trace_echo,
             "warmup": self.warmup,
+            "captures": captures_json(self.captures.as_deref(), secrets),
         })
     }
+}
+
+/// Stored captures as a JSON object with secrets scrubbed (`{}` when none).
+fn captures_json(raw: Option<&str>, secrets: &[String]) -> Value {
+    let captured: BTreeMap<String, String> = raw
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
+    Value::Object(
+        captured
+            .into_iter()
+            .map(|(name, value)| (name, Value::String(scrub_text(&value, secrets))))
+            .collect(),
+    )
 }
 
 fn load_worker_samples(
@@ -654,7 +671,7 @@ fn load_worker_samples(
     let sql = "SELECT seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
                       request_index, http_status, success, expected, reason, error_class,
                       request_id, error, response_bytes, customer_name, trace_id, trace_echo,
-                      warmup
+                      warmup, captures
                FROM samples
                WHERE (?1 IS NULL OR product_id = ?1)
                  AND (?2 IS NULL OR success = ?2)
@@ -719,6 +736,7 @@ fn load_worker_samples(
                     trace_id: row.get(16)?,
                     trace_echo: row.get(17)?,
                     warmup: row.get::<_, i64>(18)? != 0,
+                    captures: row.get(19)?,
                 })
             },
         )

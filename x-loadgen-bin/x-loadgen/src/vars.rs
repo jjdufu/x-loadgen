@@ -1,11 +1,14 @@
 //! Hoppscotch-compatible variable interpolation (`<<var>>` and `{{var}}`)
 //! plus load-test runtime tokens (`seq`, `$timestamp`, `$timestampMs`,
-//! `$randomUUID`, `$randomInt`).
+//! `$randomUUID`, `$randomInt`) and response captures (`captures.<name>`).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use uuid::Uuid;
+
+use crate::capture::{CAPTURE_VAR_PREFIX, Captures};
 
 /// Per-request runtime tokens (`{{seq}}` / `<<seq>>`, `$randomUUID`, etc.).
 #[derive(Debug, Clone)]
@@ -14,6 +17,8 @@ pub struct RuntimeVars {
     pub seq: u64,
     /// Pre-generated `UUIDv4` for this request execution.
     pub uuid: String,
+    /// Latest captured values (`{{captures.<name>}}`).
+    pub captures: Arc<Captures>,
 }
 
 impl RuntimeVars {
@@ -23,7 +28,15 @@ impl RuntimeVars {
         Self {
             seq,
             uuid: Uuid::new_v4().to_string(),
+            captures: Arc::default(),
         }
+    }
+
+    /// Same tokens with `captures` readable as `{{captures.<name>}}`.
+    #[must_use]
+    pub fn with_captures(mut self, captures: Arc<Captures>) -> Self {
+        self.captures = captures;
+        self
     }
 }
 
@@ -83,11 +96,14 @@ pub fn render_str(
 
 /// Return any unresolved variable names referenced via `<<name>>` or `{{name}}`.
 #[must_use]
-pub fn unresolved_tokens(template: &str, vars: &BTreeMap<String, String>) -> Vec<String> {
-    let runtime = RuntimeVars::for_index(0);
+pub fn unresolved_tokens(
+    template: &str,
+    vars: &BTreeMap<String, String>,
+    runtime: &RuntimeVars,
+) -> Vec<String> {
     let mut missing = Vec::new();
     for token in scan_tokens(template) {
-        if resolve_token(&token, vars, &runtime).is_none() && !missing.contains(&token) {
+        if resolve_token(&token, vars, runtime).is_none() && !missing.contains(&token) {
             missing.push(token);
         }
     }
@@ -180,7 +196,10 @@ fn resolve_token(
                     .map_or(0, |d| u64::from(d.subsec_nanos()));
             Some((mixed % 1000).to_string())
         }
-        _ => vars.get(name).cloned(),
+        _ => match name.strip_prefix(CAPTURE_VAR_PREFIX) {
+            Some(capture) => runtime.captures.get(capture).cloned(),
+            None => vars.get(name).cloned(),
+        },
     }
 }
 
@@ -219,8 +238,30 @@ mod tests {
             r#"{"id": 7, "missing": "<<unknownVar>>", "nested": {"a": 1}}"#
         );
         assert_eq!(
-            unresolved_tokens(raw, &vars),
+            unresolved_tokens(raw, &vars, &rt),
             vec!["unknownVar".to_string()]
+        );
+    }
+
+    #[test]
+    fn captures_resolve_only_from_the_runtime_map() {
+        let mut vars = BTreeMap::new();
+        vars.insert("captures.job_id".into(), "from-env".into());
+        let mut captured = crate::capture::Captures::new();
+        captured.insert("job_id".into(), "j-9".into());
+        let rt = RuntimeVars::for_index(0).with_captures(std::sync::Arc::new(captured));
+        assert_eq!(
+            render_str("/jobs/{{captures.job_id}}", &vars, &rt),
+            "/jobs/j-9"
+        );
+        let empty = RuntimeVars::for_index(0);
+        assert_eq!(
+            render_str("/jobs/<<captures.job_id>>", &vars, &empty),
+            "/jobs/<<captures.job_id>>"
+        );
+        assert_eq!(
+            unresolved_tokens("{{captures.job_id}}", &vars, &empty),
+            vec!["captures.job_id".to_string()]
         );
     }
 }

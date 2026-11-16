@@ -455,6 +455,7 @@ export function createDefaultRequestDraft(
     mazbri: createDefaultMazbriSpec(),
     tls: createDefaultTls(),
     assertions: createDefaultAssertions(),
+    captures: [],
     weight: 1,
     timeout_secs: null,
   };
@@ -560,6 +561,9 @@ export function normalizeDraftForApi(draft: RequestDraft): RequestDraft {
       (c) => c.path.trim() !== "",
     ),
   };
+  copy.captures = (copy.captures ?? [])
+    .map((c) => ({ name: c.name.trim(), path: c.path.trim() }))
+    .filter((c) => c.name !== "" || c.path !== "");
   return copy;
 }
 

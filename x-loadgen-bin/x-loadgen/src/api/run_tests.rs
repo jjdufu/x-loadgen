@@ -741,3 +741,81 @@ async fn resume_imports_pending_dump_and_collection_and_adhoc_runs_succeed() {
 
     let _ = shutdown.send(());
 }
+
+#[tokio::test]
+async fn probe_captures_are_saved_with_requests_and_feed_later_probes() {
+    let tmp = TempDir::new("captures");
+    let (mock, _mock_shutdown) = start_mock().await;
+    let (base, shutdown) = start_api(&tmp.path, None).await;
+    let client = client();
+
+    let (st, col) = post_json(
+        &client,
+        &format!("{base}/api/v1/collections"),
+        &json!({"name": "chain"}),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{col}");
+    let (st, saved) = post_json(
+        &client,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "submit",
+            "method": "GET",
+            "endpoint": format!("{mock}/json-echo"),
+            "params": [{"key": "seq", "value": "job-{{seq}}", "active": true}],
+            "captures": [
+                {"name": "job_id", "path": "seq"},
+                {"name": "state", "path": "status"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{saved}");
+    assert_eq!(saved["captures"][0]["name"], "job_id");
+
+    let (st, first) = post_json(
+        &client,
+        &format!("{base}/api/v1/probe"),
+        &json!({"request_id": saved["id"], "seq": 5}),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{first}");
+    assert_eq!(
+        first["captures"],
+        json!({"job_id": "job-5", "state": "ready"})
+    );
+
+    let (st, second) = post_json(
+        &client,
+        &format!("{base}/api/v1/probe"),
+        &json!({
+            "request": {
+                "name": "poll",
+                "method": "GET",
+                "endpoint": format!("{mock}/json-echo"),
+                "params": [{"key": "seq", "value": "{{captures.job_id}}", "active": true}]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{second}");
+    assert_eq!(second["body_json"]["seq"], "job-5");
+    assert_eq!(second["request_preview"]["unresolved_variables"], json!([]));
+    assert_eq!(second["captures"], json!({}));
+
+    let (st, bad) = post_json(
+        &client,
+        &format!("{base}/api/v1/requests"),
+        &json!({
+            "collection_id": col["id"],
+            "name": "bad",
+            "endpoint": format!("{mock}/ok"),
+            "captures": [{"name": "a.b", "path": "x"}]
+        }),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::BAD_REQUEST, "{bad}");
+    let _ = shutdown.send(());
+}

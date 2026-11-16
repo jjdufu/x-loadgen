@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod capture;
 pub mod cli;
 pub mod db;
 pub mod engine;

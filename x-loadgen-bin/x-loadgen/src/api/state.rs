@@ -11,6 +11,7 @@ use crate::auth::{
     AUTH_COOKIE, AuthRateLimiter, AuthState, SESSION_TOKEN_PREFIX, SessionStore, TokenCache,
     current_credential, load_auth_state,
 };
+use crate::capture::Captures;
 use crate::db::DataPaths;
 use crate::engine::Supervisor;
 
@@ -38,6 +39,8 @@ pub struct AppState {
     pub active_sse: Arc<AtomicUsize>,
     /// True when the HTTP listener is bound to a loopback address (`127.0.0.1` / `::1`).
     pub loopback_only: bool,
+    /// Latest values captured by single probes (`{{captures.<name>}}`), kept in memory.
+    probe_captures: Arc<Mutex<Arc<Captures>>>,
 }
 
 impl AppState {
@@ -64,6 +67,7 @@ impl AppState {
             auth_limiter: AuthRateLimiter::new(),
             active_sse: Arc::new(AtomicUsize::new(0)),
             loopback_only: false,
+            probe_captures: Arc::default(),
         }
     }
 
@@ -72,6 +76,31 @@ impl AppState {
     pub fn with_loopback_only(mut self, loopback_only: bool) -> Self {
         self.loopback_only = loopback_only;
         self
+    }
+
+    /// Latest values captured by single probes.
+    #[must_use]
+    pub fn probe_captures(&self) -> Arc<Captures> {
+        Arc::clone(
+            &self
+                .probe_captures
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Merge values captured by a single probe into the latest values.
+    pub fn remember_probe_captures(&self, captured: &Captures) {
+        if captured.is_empty() {
+            return;
+        }
+        let mut latest = self
+            .probe_captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut next = Captures::clone(&latest);
+        next.extend(captured.iter().map(|(k, v)| (k.clone(), v.clone())));
+        *latest = Arc::new(next);
     }
 
     /// Lock the central database connection.

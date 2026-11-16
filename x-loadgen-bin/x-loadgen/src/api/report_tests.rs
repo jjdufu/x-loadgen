@@ -497,6 +497,8 @@ async fn assert_keyset_walk_and_new_filters(http: &reqwest::Client, base: &str, 
             .all(|r| r["latency_us"].as_i64().unwrap() >= 100)
     );
 
+    assert_identity_filters(http, base, id).await;
+
     for bad in [
         "after_worker=0&after_seq=3",
         "after_end_unix_ms=10000",
@@ -506,6 +508,41 @@ async fn assert_keyset_walk_and_new_filters(http: &reqwest::Client, base: &str, 
         let (code, body) = get_json(http, &format!("{base}/api/v1/runs/{id}/samples?{bad}")).await;
         assert_eq!(code, reqwest::StatusCode::BAD_REQUEST, "{bad}: {body}");
     }
+}
+
+/// Exact filters on tenant / request id / trace id, and scrubbed captures.
+async fn assert_identity_filters(http: &reqwest::Client, base: &str, id: &str) {
+    let (code, tenant) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?tenant=t-a&limit=1000"),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{tenant}");
+    assert_eq!(tenant["items"].as_array().map(Vec::len), Some(20));
+    let (code, one) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?request_id=rid-7"),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{one}");
+    assert_eq!(one["items"].as_array().map(Vec::len), Some(1));
+    let row = &one["items"][0];
+    assert_eq!(row["trace_id"], format!("{:032x}", 8));
+    assert_eq!(row["captures"]["job"], "j-7");
+    assert_ne!(
+        row["captures"]["key"], API_KEY,
+        "captured secrets are scrubbed"
+    );
+    let (code, by_trace) = get_json(
+        http,
+        &format!("{base}/api/v1/runs/{id}/samples?trace_id={:032X}", 10),
+    )
+    .await;
+    assert_eq!(code, reqwest::StatusCode::OK, "{by_trace}");
+    assert_eq!(
+        by_trace["items"][0]["request_id"], "rid-9",
+        "trace_id matches case-insensitively"
+    );
 }
 
 #[tokio::test]
@@ -587,14 +624,16 @@ fn seed_pages(paths: &DataPaths, run_id: &str) {
             } else {
                 None
             },
-            request_id: None,
+            request_id: Some(format!("rid-{i}")),
             error: if i % 5 == 0 {
                 Some(format!("failed for {API_KEY}"))
             } else {
                 None
             },
             response_bytes: Some(8),
-            customer_name: None,
+            customer_name: Some(if i % 3 == 0 { "t-a" } else { "t-b" }.into()),
+            trace_id: Some(format!("{:032x}", i + 1)),
+            captures: (i == 7).then(|| json!({"job": "j-7", "key": API_KEY}).to_string()),
             ..Sample::default()
         };
         if i % 2 == 0 {

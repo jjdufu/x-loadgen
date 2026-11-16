@@ -1,5 +1,6 @@
 //! One-request execution: pick tenant/request, call the executor, classify.
 
+use crate::capture;
 use crate::db::Sample;
 use crate::engine::metrics::OutcomeClass;
 use crate::engine::transport::{ExecOutcome, RequestCtx, RequestExecutor, Weighted, pick_weighted};
@@ -111,6 +112,7 @@ fn classify(
         trace_id: outcome.trace_id,
         trace_echo: outcome.trace_echo,
         warmup: false,
+        captures: capture::to_json(&outcome.captures),
     };
     let _ = outcome.body;
     Executed {

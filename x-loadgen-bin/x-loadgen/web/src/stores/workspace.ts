@@ -29,6 +29,7 @@ export interface WorkspaceTab {
     | "headers"
     | "auth"
     | "assertions"
+    | "captures"
     | "tls";
   responseSubTab:
     | "json"

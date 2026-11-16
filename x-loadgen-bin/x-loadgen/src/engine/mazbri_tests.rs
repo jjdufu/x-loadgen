@@ -528,3 +528,40 @@ async fn sampled_flag_and_request_id_switch_follow_the_template() {
     gateway.stop().await;
     assert_eq!((stats.traces_continued, stats.traces_sampled), (1, 1));
 }
+
+#[tokio::test]
+async fn captures_are_recorded_and_feed_later_requests() {
+    let case = Case::encrypted("full", Some("suite/tenant-default-2026-11"), None, None);
+    let (outcomes, _) = run_with(&case, None, |target| {
+        let body = serde_json::to_string(&json!({
+            "seq": "{{seq}}",
+            "prev": "{{captures.last_seq}}",
+            "note": "压测"
+        }))
+        .unwrap();
+        target.requests[0].body.body = Some(body);
+        target.requests[0].captures = serde_json::from_value(json!([
+            {"name": "last_seq", "path": "echo.body.seq"},
+            {"name": "missing", "path": "echo.body.nope"}
+        ]))
+        .unwrap();
+    })
+    .await;
+    let prev: Vec<String> = outcomes
+        .iter()
+        .map(|o| {
+            o.body.as_ref().expect("decrypted data")["echo"]["body"]["prev"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(prev, ["{{captures.last_seq}}", "0", "1"]);
+    for (index, outcome) in outcomes.iter().enumerate() {
+        assert_eq!(
+            outcome.captures.get("last_seq").map(String::as_str),
+            Some(index.to_string().as_str())
+        );
+        assert!(!outcome.captures.contains_key("missing"));
+    }
+}
