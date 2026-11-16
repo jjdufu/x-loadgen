@@ -20,5 +20,14 @@ export default defineConfig({
     outDir: "dist",
     assetsDir: "assets",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/echarts") || id.includes("node_modules/zrender")) {
+            return "echarts";
+          }
+        },
+      },
+    },
   },
 });
