@@ -44,7 +44,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-工具链见 `rust-toolchain.toml`（1.99.1）。前端在 `x-loadgen-bin/x-loadgen/web`：`pnpm lint`、`pnpm typecheck`、`pnpm build`。未构建前端时，debug 编译可以不嵌入页面；release 构建必须先有 `web/dist`。
+工具链见 `rust-toolchain.toml`（1.99.1）。前端在 `x-loadgen-bin/x-loadgen/web`：`pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm build`。未构建前端时，debug 编译可以不嵌入页面；release 构建必须先有 `web/dist`。
 
 ## 镜像
 
@@ -87,7 +87,7 @@ push 到 `main`、任何 PR 和手动触发时运行；同一分支或 PR 的新
 | 任务 | 内容 |
 | --- | --- |
 | Scripts and workflows lint | `shellcheck` 检查仓库内全部 `*.sh`，`actionlint` 检查工作流，执行发版脚本自测 `.github/scripts/release-test.sh` |
-| Frontend lint, typecheck, build | `pnpm install --frozen-lockfile`、`pnpm lint`、`pnpm typecheck`、`pnpm build`，把 `web/dist` 交给 Rust 任务 |
+| Frontend lint, typecheck, test, build | `pnpm install --frozen-lockfile`、`pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm build`，把 `web/dist` 交给 Rust 任务 |
 | Rust fmt, clippy -D warnings, test | 按 `rust-toolchain.toml` 安装工具链；`cargo fmt --all --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings`、`cargo test --locked --workspace`，编译时嵌入真实的前端产物 |
 
 Node、pnpm 走 `setup-node` 的 pnpm 缓存，cargo 走 `Swatinem/rust-cache`（只在 `main` 保存）。
