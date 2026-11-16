@@ -72,7 +72,7 @@ fn key_ref_and_nonce_policy_construct() {
 }
 
 /// 仅保证 traits 在类型系统中可作 bound（本步无具体实现）。
-fn _traits_are_object_safe(
+fn traits_are_object_safe(
     _aead: &dyn AeadSeal,
     _block: &dyn BlockCipher,
     _mac: &dyn Mac,
@@ -83,5 +83,5 @@ fn _traits_are_object_safe(
 #[test]
 fn traits_object_safe_symbol_linked() {
     // 引用私有函数符号，避免 dead_code；运行时不构造 dyn。
-    let _ = _traits_are_object_safe as fn(&dyn AeadSeal, &dyn BlockCipher, &dyn Mac, &dyn AsymSign);
+    let _ = traits_are_object_safe as fn(&dyn AeadSeal, &dyn BlockCipher, &dyn Mac, &dyn AsymSign);
 }
