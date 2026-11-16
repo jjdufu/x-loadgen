@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1](https://github.com/jjdufu/x-loadgen/compare/v0.5.0...v0.5.1) (2026-11-16)
+
+### Features
+
+* **docs:** 新增免 WebUI curl 调用手册并补全 OpenAPI 与鉴权说明 ([21316c9](https://github.com/jjdufu/x-loadgen/commit/21316c922fd2453584e6ed1720c634e4b0eab7b1))
+
+### Bug Fixes
+
+* **web:** 阻止 Dialog/Select 等默认抢焦点并补齐失焦与钥匙串防护 ([902e990](https://github.com/jjdufu/x-loadgen/commit/902e99047ffd42f5742184fc5a229bab2b992bfb))
+
 ## [0.5.0](https://github.com/jjdufu/x-loadgen/compare/v0.4.2...v0.5.0) (2026-11-14)
 
 ### ⚠ BREAKING CHANGES
