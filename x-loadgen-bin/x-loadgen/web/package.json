@@ -8,6 +8,7 @@
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
+    "test": "node --test src/modules/activityPolicy.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

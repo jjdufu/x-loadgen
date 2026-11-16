@@ -191,6 +191,7 @@ import RequestUrlBar from "../components/workspace/RequestUrlBar.vue";
 import ResponsePane from "../components/workspace/ResponsePane.vue";
 import WorkspaceRightSidebar from "../components/workspace/WorkspaceRightSidebar.vue";
 import { methodColorClass } from "../helpers/format";
+import { canProgrammaticallyFocus } from "../modules/activity";
 import {
   compactRightPanelOpen,
   isCompact,
@@ -228,6 +229,8 @@ function focusNeighborTab(idx: number, delta: number, event: KeyboardEvent): voi
   activeTabId.value = nextTab.tabId;
   const tablist = (event.currentTarget as HTMLElement | null)?.parentElement;
   const tabNodes = tablist?.querySelectorAll<HTMLElement>('[role="tab"]');
-  tabNodes?.[nextIdx]?.focus();
+  if (canProgrammaticallyFocus()) {
+    tabNodes?.[nextIdx]?.focus();
+  }
 }
 </script>

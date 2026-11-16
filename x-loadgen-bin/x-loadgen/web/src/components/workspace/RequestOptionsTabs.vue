@@ -197,6 +197,9 @@
               <UiInput
                 :model-value="draft.auth.password ?? ''"
                 type="password"
+                secret
+                name="xlg-http-basic-secret"
+                autocomplete="off"
                 mono
                 @update:model-value="(v) => (draft.auth.password = v)"
               />

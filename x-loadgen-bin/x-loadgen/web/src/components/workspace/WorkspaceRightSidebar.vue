@@ -498,6 +498,9 @@ async function onFileSelected(ev: Event): Promise<void> {
     toast.error(
       `导入失败：${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    const input = ev.target as HTMLInputElement;
+    input.value = "";
   }
 }
 

@@ -41,6 +41,7 @@
               contentClass,
             )
           "
+          @open-auto-focus="guardAutoFocusEvent"
           @close-auto-focus="guardAutoFocusEvent"
         >
           <SelectViewport class="max-h-72 overflow-y-auto p-1">

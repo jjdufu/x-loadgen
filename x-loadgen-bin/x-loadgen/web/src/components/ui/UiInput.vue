@@ -7,6 +7,14 @@
     :readonly="readonly"
     :placeholder="placeholder"
     :autocomplete="resolvedAutocomplete"
+    :name="resolvedName"
+    :autocapitalize="isSecretField ? 'off' : undefined"
+    :autocorrect="isSecretField ? 'off' : undefined"
+    :spellcheck="isSecretField ? false : undefined"
+    :data-lpignore="isSecretField ? 'true' : undefined"
+    :data-1p-ignore="isSecretField ? 'true' : undefined"
+    :data-bwignore="isSecretField ? 'true' : undefined"
+    :data-form-type="isSecretField ? 'other' : undefined"
     :class="
       cn(
         'flex w-full rounded-md border border-input bg-background text-foreground shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring aria-[invalid=true]:border-rose-500 aria-[invalid=true]:focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-50',
@@ -40,6 +48,9 @@ const props = withDefaults(
     mono?: boolean;
     size?: "default" | "sm";
     autocomplete?: string;
+    /** Treat as a secret field: suppress browser / OS password-manager autofill. */
+    secret?: boolean;
+    name?: string;
     class?: string;
   }>(),
   {
@@ -51,6 +62,8 @@ const props = withDefaults(
     mono: false,
     size: "default",
     autocomplete: undefined,
+    secret: false,
+    name: undefined,
     class: undefined,
   },
 );
@@ -68,13 +81,32 @@ const draftText = ref(String(props.modelValue ?? ""));
 const forwardedAttrs = computed(() => {
   const rest = { ...attrs };
   delete rest.autocomplete;
+  delete rest.name;
+  delete rest.autocapitalize;
+  delete rest.autocorrect;
+  delete rest.spellcheck;
+  delete rest["data-lpignore"];
+  delete rest["data-1p-ignore"];
+  delete rest["data-bwignore"];
+  delete rest["data-form-type"];
   return rest;
 });
 
+const isSecretField = computed(
+  () => props.secret || props.type === "password",
+);
+
 const resolvedAutocomplete = computed(() => {
+  if (isSecretField.value) return "off";
   if (props.autocomplete !== undefined) return props.autocomplete;
   if (typeof attrs.autocomplete === "string") return attrs.autocomplete;
   return "off";
+});
+
+const resolvedName = computed(() => {
+  if (props.name !== undefined && props.name !== "") return props.name;
+  if (typeof attrs.name === "string" && attrs.name !== "") return attrs.name;
+  return isSecretField.value ? "xlg-secret-field" : undefined;
 });
 
 const displayValue = computed(() => {

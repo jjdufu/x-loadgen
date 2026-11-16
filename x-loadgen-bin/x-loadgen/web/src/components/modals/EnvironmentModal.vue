@@ -266,7 +266,7 @@
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               密码
             </label>
-            <UiInput v-model="httpAuthPass" type="password" mono aria-label="密码" />
+            <UiInput v-model="httpAuthPass" type="password" secret name="xlg-env-http-pass" autocomplete="off" mono aria-label="密码" />
           </div>
         </div>
 
@@ -281,7 +281,7 @@
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               参数值
             </label>
-            <UiInput v-model="httpAuthVal" type="password" mono aria-label="API Key 参数值" />
+            <UiInput v-model="httpAuthVal" type="password" secret name="xlg-env-api-key" autocomplete="off" mono aria-label="API Key 参数值" />
           </div>
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">

@@ -13,6 +13,7 @@
             props.class,
           )
         "
+        @open-auto-focus="guardAutoFocusEvent"
         @close-auto-focus="guardAutoFocusEvent"
       >
         <slot />

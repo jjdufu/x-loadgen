@@ -37,7 +37,7 @@
         </p>
       </div>
 
-      <form class="space-y-4" @submit.prevent="submit">
+      <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
         <div class="space-y-1.5">
           <div class="flex h-5 items-center justify-between gap-2">
             <label
@@ -53,7 +53,9 @@
               v-model="oldToken"
               :type="showOld ? 'text' : 'password'"
               mono
-              autocomplete="current-password"
+              secret
+              name="xlg-current-token"
+              autocomplete="off"
               placeholder="输入初始口令"
               :aria-invalid="errorField === 'old'"
               class="flex-1"
@@ -97,7 +99,9 @@
               v-model="newToken"
               :type="showNew ? 'text' : 'password'"
               mono
-              autocomplete="new-password"
+              secret
+              name="xlg-new-token"
+              autocomplete="off"
               placeholder="输入至少 24 位新口令"
               :aria-invalid="errorField === 'new'"
               class="flex-1"
@@ -130,7 +134,9 @@
             v-model="confirmToken"
             :type="showNew ? 'text' : 'password'"
             mono
-            autocomplete="new-password"
+            secret
+            name="xlg-confirm-token"
+            autocomplete="off"
             placeholder="再次输入新口令以确认"
             :aria-invalid="errorField === 'confirm'"
             @update:model-value="clearFieldError('confirm')"

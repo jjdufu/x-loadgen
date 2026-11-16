@@ -38,7 +38,7 @@
         </p>
       </div>
 
-      <form class="space-y-4" @submit.prevent="submit">
+      <form class="space-y-4" autocomplete="off" @submit.prevent="submit">
         <div class="space-y-1.5">
           <label
             :for="tokenInputId"
@@ -52,7 +52,9 @@
               v-model="token"
               :type="show ? 'text' : 'password'"
               mono
-              autocomplete="current-password"
+              secret
+              name="xlg-admin-token"
+              autocomplete="off"
               placeholder="输入管理员口令..."
               :aria-invalid="Boolean(fieldError)"
               class="flex-1"

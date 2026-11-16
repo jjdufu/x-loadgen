@@ -267,7 +267,7 @@
               免密模式运行。生产或公网部署请移除该启动参数以启用口令保护。
             </div>
 
-            <form v-else class="space-y-4" @submit.prevent="changePwd">
+            <form v-else class="space-y-4" autocomplete="off" @submit.prevent="changePwd">
               <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div class="space-y-1.5">
                   <div class="flex h-6 items-center justify-between gap-2">
@@ -284,7 +284,9 @@
                       v-model="oldToken"
                       :type="showOld ? 'text' : 'password'"
                       mono
-                      autocomplete="current-password"
+                      secret
+                      name="xlg-current-token"
+                      autocomplete="off"
                       placeholder="输入当前口令"
                       :aria-invalid="errorField === 'old'"
                       class="flex-1"
@@ -328,7 +330,9 @@
                       v-model="newToken"
                       :type="showNew ? 'text' : 'password'"
                       mono
-                      autocomplete="new-password"
+                      secret
+                      name="xlg-new-token"
+                      autocomplete="off"
                       placeholder="至少 24 位可打印 ASCII"
                       :aria-invalid="errorField === 'new'"
                       class="flex-1"
@@ -362,7 +366,9 @@
                   v-model="confirmToken"
                   :type="showNew ? 'text' : 'password'"
                   mono
-                  autocomplete="new-password"
+                  secret
+                  name="xlg-confirm-token"
+                  autocomplete="off"
                   placeholder="再次输入新口令以确认"
                   :aria-invalid="errorField === 'confirm'"
                   @update:model-value="clearFieldError('confirm')"

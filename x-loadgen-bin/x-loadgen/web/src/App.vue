@@ -5,7 +5,7 @@
   <!-- Shadcn / Sonner-inspired Swiss Minimalist Toast Stack -->
   <div
     class="fixed bottom-10 right-4 z-[10000] flex flex-col gap-2.5 w-[calc(100%-2rem)] max-w-[360px] pointer-events-none"
-    aria-live="polite"
+    :aria-live="isWindowFocused ? 'polite' : 'off'"
   >
     <TransitionGroup
       enter-active-class="transition duration-150 ease-out"
@@ -18,7 +18,7 @@
       <div
         v-for="item in activeToasts"
         :key="item.id"
-        :role="item.kind === 'error' ? 'alert' : 'status'"
+        :role="isWindowFocused && item.kind === 'error' ? 'alert' : 'status'"
         class="pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover px-4 py-3 text-popover-foreground shadow-lg"
         :class="toastBorderClass(item.kind)"
       >
@@ -53,6 +53,7 @@
 <script setup lang="ts">
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-vue-next";
 import UiConfirmDialog from "./components/ui/UiConfirmDialog.vue";
+import { isWindowFocused } from "./modules/activity";
 import {
   activeToasts,
   dismissToast,
