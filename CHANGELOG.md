@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.3](https://github.com/jjdufu/x-loadgen/compare/v0.5.2...v0.5.3) (2026-11-16)
+
+### Bug Fixes
+
+* mazbri 信封 AEAD AAD 恢复为仅 tenant_id，与网关一致 ([94b3776](https://github.com/jjdufu/x-loadgen/commit/94b3776f424fb68f24a87ff193890882f5eae147))
+
 ## [0.5.2](https://github.com/jjdufu/x-loadgen/compare/v0.5.1...v0.5.2) (2026-11-16)
 
 ### Features
