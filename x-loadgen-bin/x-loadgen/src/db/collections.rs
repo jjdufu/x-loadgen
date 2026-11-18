@@ -919,10 +919,7 @@ fn import_one_node(
         .and_then(Value::as_str)
         .unwrap_or("http")
         .to_string();
-    let auth = item
-        .get("auth")
-        .map(parse_hopp_or_native_auth)
-        .unwrap_or_default();
+    let auth = item.get("auth").map_or_default(parse_hopp_or_native_auth);
     let headers: Vec<KeyValueRow> = item
         .get("headers")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -1038,10 +1035,7 @@ fn parse_hopp_or_native_request(val: &Value, collection_id: &str) -> RequestDraf
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
     let body = parse_hopp_or_native_body(val.get("body"));
-    let auth = val
-        .get("auth")
-        .map(parse_hopp_or_native_auth)
-        .unwrap_or_default();
+    let auth = val.get("auth").map_or_default(parse_hopp_or_native_auth);
     let mazbri: MazbriRequestSpec = val
         .get("mazbri")
         .and_then(|v| serde_json::from_value(v.clone()).ok())

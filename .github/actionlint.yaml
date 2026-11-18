@@ -1,0 +1,8 @@
+# actionlint 配置。
+# GitHub 托管 runner ubuntu-26.04 / ubuntu-26.04-arm 已 GA（actions/runner-images#14747），
+# 但 actionlint v1.7.12 的内置标签表尚未收录，这里显式登记，避免 runner-label 误报。
+# actionlint 新版本收录后可删除本文件。
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

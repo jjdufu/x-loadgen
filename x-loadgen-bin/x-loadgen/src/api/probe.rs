@@ -86,8 +86,8 @@ impl HistoryContext {
                 .request_id
                 .clone()
                 .or_else(|| req.request.as_ref().and_then(|draft| draft.id.clone())),
-            request_name: request.map(|r| r.name.clone()).unwrap_or_default(),
-            protocol: request.map(|r| r.protocol.clone()).unwrap_or_default(),
+            request_name: request.map_or_default(|r| r.name.clone()),
+            protocol: request.map_or_default(|r| r.protocol.clone()),
             environment_id: target.environment_id.clone(),
             environment_name: target.environment_name.clone(),
             product_id: request.map(crate::engine::snapshot::ExecutionRequest::sample_product_id),

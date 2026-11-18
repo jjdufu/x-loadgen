@@ -169,14 +169,8 @@ pub fn compile_single_request_target(
     );
 
     let target_base_url = env_detail.as_ref().and_then(|e| e.gateway_base_url.clone());
-    let target_tls = env_detail
-        .as_ref()
-        .map(|e| e.tls.clone())
-        .unwrap_or_default();
-    let target_tenants = env_detail
-        .as_ref()
-        .map(|e| e.tenants.clone())
-        .unwrap_or_default();
+    let target_tls = env_detail.as_ref().map_or_default(|e| e.tls.clone());
+    let target_tenants = env_detail.as_ref().map_or_default(|e| e.tenants.clone());
 
     validate_compiled_request(
         &exec_req,
@@ -260,14 +254,8 @@ pub fn compile_run_snapshot(
         resolve_environment_context(conn, create.environment_id.as_deref())?;
     let base_secrets = base_secret_var_keys(&global_env, env_detail.as_ref());
     let target_base_url = env_detail.as_ref().and_then(|e| e.gateway_base_url.clone());
-    let target_tls = env_detail
-        .as_ref()
-        .map(|e| e.tls.clone())
-        .unwrap_or_default();
-    let target_tenants = env_detail
-        .as_ref()
-        .map(|e| e.tenants.clone())
-        .unwrap_or_default();
+    let target_tls = env_detail.as_ref().map_or_default(|e| e.tls.clone());
+    let target_tenants = env_detail.as_ref().map_or_default(|e| e.tenants.clone());
 
     let env_ctx = CompileEnvCtx {
         env_detail: env_detail.as_ref(),

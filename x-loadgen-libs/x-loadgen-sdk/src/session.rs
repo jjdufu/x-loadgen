@@ -489,8 +489,7 @@ mod tests {
                 .headers
                 .iter()
                 .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.clone())
-                .unwrap_or_default()
+                .map_or_default(|(_, value)| value.clone())
         };
         let canonical = canonical_http_binding(
             "POST",

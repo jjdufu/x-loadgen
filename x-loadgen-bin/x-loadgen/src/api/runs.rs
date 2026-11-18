@@ -354,9 +354,7 @@ pub async fn get_timeseries(
     let mut slots = if let Some(task) = state.supervisor.get(&id) {
         if task.processes() > 1 {
             let snaps = crate::engine::load_live_snapshots(&state.paths, &id, task.processes());
-            crate::engine::merge_live(&snaps, 60_000_000)
-                .map(|m| m.timeseries)
-                .unwrap_or_default()
+            crate::engine::merge_live(&snaps, 60_000_000).map_or_default(|m| m.timeseries)
         } else {
             task.metrics.timeseries_slots()
         }

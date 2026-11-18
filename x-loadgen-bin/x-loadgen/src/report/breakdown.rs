@@ -154,8 +154,7 @@ pub fn build_breakdown(paths: &DataPaths, run_id: &str, secrets: &[String]) -> R
                 let message = row
                     .error
                     .as_deref()
-                    .map(|text| scrub_text(text, secrets))
-                    .unwrap_or_default();
+                    .map_or_default(|text| scrub_text(text, secrets));
                 let entry = errors.entry((class, message)).or_default();
                 entry.count += 1;
                 *entry.status.entry(status).or_default() += 1;
