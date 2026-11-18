@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/jjdufu/x-loadgen/compare/v0.5.3...v0.6.0) (2026-11-18)
+
+### ⚠ BREAKING CHANGES
+
+* 请求流水号改为 UUIDv7 并主动发送 W3C traceparent，库结构升到 v3 不做迁移 ([bcb179b](https://github.com/jjdufu/x-loadgen/commit/bcb179b09253d733ba990f4ebe57004c05f5ee0c))
+
+### Features
+
+* 失败样本保留 2KB 响应体，报告新增按接口/租户分项、状态码分布与错误 Top N ([f68599c](https://github.com/jjdufu/x-loadgen/commit/f68599cabbeecbd9241eb7111b9b070f65d6285a))
+* 单发落库为单发历史，新增 /api/v1/probes 接口与工作台「单发历史」侧栏 ([d08cfd1](https://github.com/jjdufu/x-loadgen/commit/d08cfd10b4c3759314372cd44c1257a583321f91))
+* 请求新增 captures 提取变量，取值写入样本与单发结果并可在后续请求中引用 ([8bbe3dc](https://github.com/jjdufu/x-loadgen/commit/8bbe3dc62362a54ef80701ba3cd1aa9eea0fd1b2))
+* 请求流水号改为 UUIDv7 并主动发送 W3C traceparent，库结构升到 v3 不做迁移 ([bcb179b](https://github.com/jjdufu/x-loadgen/commit/bcb179b09253d733ba990f4ebe57004c05f5ee0c))
+
 ## [0.5.3](https://github.com/jjdufu/x-loadgen/compare/v0.5.2...v0.5.3) (2026-11-16)
 
 ### Bug Fixes
