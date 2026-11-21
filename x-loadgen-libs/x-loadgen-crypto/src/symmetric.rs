@@ -9,10 +9,7 @@
 
 use aes::{Aes128, Aes256};
 use cbc::{Decryptor as CbcDecryptor, Encryptor as CbcEncryptor};
-use cipher::{
-    AsyncStreamCipher, BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher,
-    block_padding::Pkcs7,
-};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher, block_padding::Pkcs7};
 use ctr::Ctr128BE;
 
 use crate::id::AlgorithmId;
@@ -144,7 +141,7 @@ fn encrypt_cbc_128(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, C
         CbcEncryptor::<Aes128>::new_from_slices(key, iv).map_err(|_| CryptoError::InvalidKey {
             reason: "aes-128-cbc key/iv init failed".to_owned(),
         })?;
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 fn decrypt_cbc_128(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -153,7 +150,7 @@ fn decrypt_cbc_128(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, 
             reason: "aes-128-cbc key/iv init failed".to_owned(),
         })?;
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "aes-128-cbc PKCS7 unpad failed".to_owned(),
         })
@@ -164,7 +161,7 @@ fn encrypt_cbc_256(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, C
         CbcEncryptor::<Aes256>::new_from_slices(key, iv).map_err(|_| CryptoError::InvalidKey {
             reason: "aes-256-cbc key/iv init failed".to_owned(),
         })?;
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 fn decrypt_cbc_256(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -173,7 +170,7 @@ fn decrypt_cbc_256(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, 
             reason: "aes-256-cbc key/iv init failed".to_owned(),
         })?;
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "aes-256-cbc PKCS7 unpad failed".to_owned(),
         })

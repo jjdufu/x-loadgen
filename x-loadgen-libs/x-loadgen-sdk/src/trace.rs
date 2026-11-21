@@ -142,7 +142,7 @@ impl fmt::Display for TraceParent {
 
 fn random_bytes<const N: usize>() -> [u8; N] {
     let mut out = [0_u8; N];
-    if getrandom::getrandom(&mut out).is_err() {
+    if getrandom::fill(&mut out).is_err() {
         // 系统随机源不可用时退回 UUIDv4 的随机位，仍满足「非全零、足够随机」。
         let mut filled = 0;
         while filled < N {

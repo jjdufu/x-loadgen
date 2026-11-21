@@ -88,8 +88,9 @@ fn public_validation_rejects_private_pem_wrong_curve_and_non_sign_alg() {
 #[test]
 fn rsa_public_key_below_minimum_bits_is_rejected() {
     use rsa::pkcs8::{EncodePublicKey, LineEnding};
-    let small = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).expect("rsa 1024");
-    let pem = rsa::RsaPublicKey::from(&small)
+    let small = rsa::PrivateKey::new(&mut rand::rngs::SysRng, 1024).expect("rsa 1024");
+    let pem = small
+        .to_public_key()
         .to_public_key_pem(LineEnding::LF)
         .expect("pem");
     let err = validate_sign_public_key(AlgorithmId::RsaPkcs1v15SignSha256, &pem).unwrap_err();

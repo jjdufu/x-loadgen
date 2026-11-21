@@ -8,6 +8,7 @@ license.workspace = true
 description = "Closed-set algorithm registry and software primitives used by the x-loadgen mazbri gateway client"
 
 [dependencies]
+rand = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }

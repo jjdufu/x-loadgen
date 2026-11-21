@@ -1,6 +1,6 @@
 //! HMAC 原语：`hmac-sha256` / `hmac-sha384` / `hmac-sha512` / `hmac-sm3`。
 
-use hmac::{Hmac, Mac as HmacMac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac as HmacMac};
 use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 
@@ -71,38 +71,42 @@ impl Mac for MacAlgorithm {
         let key_bytes = key.raw_bytes()?;
         match self {
             Self::HmacSha256 => {
-                let mut mac = <HmacSha256 as HmacMac>::new_from_slice(key_bytes).map_err(|_| {
-                    CryptoError::InvalidKey {
-                        reason: "hmac-sha256 key init failed".to_owned(),
-                    }
-                })?;
+                let mut mac =
+                    <HmacSha256 as HmacKeyInit>::new_from_slice(key_bytes).map_err(|_| {
+                        CryptoError::InvalidKey {
+                            reason: "hmac-sha256 key init failed".to_owned(),
+                        }
+                    })?;
                 mac.update(message);
                 Ok(mac.finalize().into_bytes().to_vec())
             }
             Self::HmacSha384 => {
-                let mut mac = <HmacSha384 as HmacMac>::new_from_slice(key_bytes).map_err(|_| {
-                    CryptoError::InvalidKey {
-                        reason: "hmac-sha384 key init failed".to_owned(),
-                    }
-                })?;
+                let mut mac =
+                    <HmacSha384 as HmacKeyInit>::new_from_slice(key_bytes).map_err(|_| {
+                        CryptoError::InvalidKey {
+                            reason: "hmac-sha384 key init failed".to_owned(),
+                        }
+                    })?;
                 mac.update(message);
                 Ok(mac.finalize().into_bytes().to_vec())
             }
             Self::HmacSha512 => {
-                let mut mac = <HmacSha512 as HmacMac>::new_from_slice(key_bytes).map_err(|_| {
-                    CryptoError::InvalidKey {
-                        reason: "hmac-sha512 key init failed".to_owned(),
-                    }
-                })?;
+                let mut mac =
+                    <HmacSha512 as HmacKeyInit>::new_from_slice(key_bytes).map_err(|_| {
+                        CryptoError::InvalidKey {
+                            reason: "hmac-sha512 key init failed".to_owned(),
+                        }
+                    })?;
                 mac.update(message);
                 Ok(mac.finalize().into_bytes().to_vec())
             }
             Self::HmacSm3 => {
-                let mut mac = <HmacSm3 as HmacMac>::new_from_slice(key_bytes).map_err(|_| {
-                    CryptoError::InvalidKey {
-                        reason: "hmac-sm3 key init failed".to_owned(),
-                    }
-                })?;
+                let mut mac =
+                    <HmacSm3 as HmacKeyInit>::new_from_slice(key_bytes).map_err(|_| {
+                        CryptoError::InvalidKey {
+                            reason: "hmac-sm3 key init failed".to_owned(),
+                        }
+                    })?;
                 mac.update(message);
                 Ok(mac.finalize().into_bytes().to_vec())
             }

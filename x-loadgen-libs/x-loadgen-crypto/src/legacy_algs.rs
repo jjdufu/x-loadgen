@@ -5,9 +5,9 @@
 use aes::Aes128;
 use aes::Aes256;
 use cbc::{Decryptor as CbcDecryptor, Encryptor as CbcEncryptor};
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, block_padding::Pkcs7};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyInit, KeyIvInit, block_padding::Pkcs7};
 use des::Des;
-use hmac::{Hmac, Mac as HmacMac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac as HmacMac};
 use md5::Md5;
 use subtle::ConstantTimeEq;
 
@@ -46,7 +46,7 @@ pub fn aes128_ecb_encrypt(
         reason: "aes-128-ecb key".to_owned(),
     })?;
     let encryptor = ecb::Encryptor::<Aes128>::new(&arr.into());
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 /// AES-128-ECB-PKCS7 解密（legacy）。
@@ -66,7 +66,7 @@ pub fn aes128_ecb_decrypt(
     })?;
     let decryptor = ecb::Decryptor::<Aes128>::new(&arr.into());
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "aes-128-ecb PKCS7 unpad failed".to_owned(),
         })
@@ -88,7 +88,7 @@ pub fn aes256_ecb_encrypt(
         reason: "aes-256-ecb key".to_owned(),
     })?;
     let encryptor = ecb::Encryptor::<Aes256>::new(&arr.into());
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 /// AES-256-ECB-PKCS7 解密（legacy）。
@@ -108,7 +108,7 @@ pub fn aes256_ecb_decrypt(
     })?;
     let decryptor = ecb::Decryptor::<Aes256>::new(&arr.into());
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "aes-256-ecb PKCS7 unpad failed".to_owned(),
         })
@@ -137,7 +137,7 @@ pub fn des_cbc_encrypt(
             reason: "des-cbc key/iv init failed".to_owned(),
         }
     })?;
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 /// DES-CBC-PKCS5 解密（legacy）。
@@ -164,7 +164,7 @@ pub fn des_cbc_decrypt(
         }
     })?;
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "des-cbc PKCS7 unpad failed".to_owned(),
         })
@@ -182,10 +182,11 @@ pub fn hmac_md5_sign(
 ) -> Result<Vec<u8>, CryptoError> {
     assert_not_legacy_or_allowed(AlgorithmId::HmacMd5, allow_insecure)?;
     let key_bytes = key.raw_bytes()?;
-    let mut mac =
-        <HmacMd5 as HmacMac>::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
+    let mut mac = <HmacMd5 as HmacKeyInit>::new_from_slice(key_bytes).map_err(|_| {
+        CryptoError::InvalidKey {
             reason: "hmac-md5 key init failed".to_owned(),
-        })?;
+        }
+    })?;
     mac.update(message);
     Ok(mac.finalize().into_bytes().to_vec())
 }

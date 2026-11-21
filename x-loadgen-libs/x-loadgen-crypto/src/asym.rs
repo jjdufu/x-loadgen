@@ -18,7 +18,7 @@ use p384::ecdsa::{
 use rsa::pkcs1v15::{SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey};
 use rsa::sha2::{Sha256, Sha384, Sha512};
 use rsa::signature::{SignatureEncoding, Signer as RsaSigner, Verifier as RsaVerifier};
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 
 use crate::id::AlgorithmId;
 use crate::material::KeyRef;
@@ -133,18 +133,12 @@ pub(crate) fn parse_p256_verifying(key: &KeyRef) -> Result<P256VerifyingKey, Cry
             })
         }
         KeyRef::Raw { bytes, .. } => {
-            use p256::elliptic_curve::sec1::FromEncodedPoint;
-            use p256::{EncodedPoint, PublicKey};
-            let point = EncodedPoint::from_bytes(bytes.as_slice()).map_err(|_| {
+            let public = p256::PublicKey::from_sec1_bytes(bytes.as_slice()).map_err(|_| {
                 CryptoError::InvalidKey {
-                    reason: "invalid P-256 SEC1 public key bytes".to_owned(),
+                    reason: "invalid P-256 SEC1 public key (bad encoding or not on curve)"
+                        .to_owned(),
                 }
             })?;
-            let public = PublicKey::from_encoded_point(&point)
-                .into_option()
-                .ok_or_else(|| CryptoError::InvalidKey {
-                    reason: "P-256 public point not on curve".to_owned(),
-                })?;
             Ok(P256VerifyingKey::from(public))
         }
     }
@@ -188,18 +182,12 @@ pub(crate) fn parse_p384_verifying(key: &KeyRef) -> Result<P384VerifyingKey, Cry
             })
         }
         KeyRef::Raw { bytes, .. } => {
-            use p384::elliptic_curve::sec1::FromEncodedPoint;
-            use p384::{EncodedPoint, PublicKey};
-            let point = EncodedPoint::from_bytes(bytes.as_slice()).map_err(|_| {
+            let public = p384::PublicKey::from_sec1_bytes(bytes.as_slice()).map_err(|_| {
                 CryptoError::InvalidKey {
-                    reason: "invalid P-384 SEC1 public key bytes".to_owned(),
+                    reason: "invalid P-384 SEC1 public key (bad encoding or not on curve)"
+                        .to_owned(),
                 }
             })?;
-            let public = PublicKey::from_encoded_point(&point)
-                .into_option()
-                .ok_or_else(|| CryptoError::InvalidKey {
-                    reason: "P-384 public point not on curve".to_owned(),
-                })?;
             Ok(P384VerifyingKey::from(public))
         }
     }

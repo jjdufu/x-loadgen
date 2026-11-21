@@ -11,7 +11,9 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use rsa::rand_core::{OsRng, RngCore};
+use rand::TryRng;
+use rand::rngs::SysRng;
+use rsa::Generate;
 use rsa::traits::PublicKeyParts;
 use zeroize::Zeroizing;
 
@@ -136,6 +138,12 @@ fn pem_error(what: &str) -> CryptoError {
     }
 }
 
+fn rng_error(e: rand::rngs::SysError) -> CryptoError {
+    CryptoError::OperationFailed {
+        reason: format!("system rng: {e}"),
+    }
+}
+
 /// 生成签名密钥对（统一 PEM：私钥 PKCS#8、公钥 SPKI）。
 ///
 /// # Errors
@@ -148,12 +156,12 @@ pub fn generate_sign_keypair(id: AlgorithmId) -> Result<SignKeyPair, CryptoError
         AlgorithmId::RsaPkcs1v15SignSha256
         | AlgorithmId::RsaPkcs1v15SignSha384
         | AlgorithmId::RsaPkcs1v15SignSha512 => {
-            let private = rsa::RsaPrivateKey::new(&mut OsRng, RSA_SIGN_KEY_BITS).map_err(|e| {
+            let private = rsa::PrivateKey::new(&mut SysRng, RSA_SIGN_KEY_BITS).map_err(|e| {
                 CryptoError::OperationFailed {
                     reason: format!("rsa keygen: {e}"),
                 }
             })?;
-            let public = rsa::RsaPublicKey::from(&private);
+            let public = private.to_public_key();
             (
                 private
                     .to_pkcs8_pem(LineEnding::LF)
@@ -164,7 +172,7 @@ pub fn generate_sign_keypair(id: AlgorithmId) -> Result<SignKeyPair, CryptoError
             )
         }
         AlgorithmId::EcdsaP256Sha256 => {
-            let secret = p256::SecretKey::random(&mut OsRng);
+            let secret = p256::SecretKey::try_generate_from_rng(&mut SysRng).map_err(rng_error)?;
             (
                 secret
                     .to_pkcs8_pem(LineEnding::LF)
@@ -176,7 +184,7 @@ pub fn generate_sign_keypair(id: AlgorithmId) -> Result<SignKeyPair, CryptoError
             )
         }
         AlgorithmId::EcdsaP384Sha384 => {
-            let secret = p384::SecretKey::random(&mut OsRng);
+            let secret = p384::SecretKey::try_generate_from_rng(&mut SysRng).map_err(rng_error)?;
             (
                 secret
                     .to_pkcs8_pem(LineEnding::LF)
@@ -190,7 +198,7 @@ pub fn generate_sign_keypair(id: AlgorithmId) -> Result<SignKeyPair, CryptoError
         AlgorithmId::Ed25519 => {
             use ed25519_dalek::pkcs8::{EncodePrivateKey as _, EncodePublicKey as _};
             let mut seed = Zeroizing::new([0_u8; 32]);
-            OsRng.fill_bytes(seed.as_mut());
+            SysRng.try_fill_bytes(seed.as_mut()).map_err(rng_error)?;
             let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
             let private = signing
                 .to_pkcs8_pem(ed25519_dalek::pkcs8::spki::der::pem::LineEnding::LF)

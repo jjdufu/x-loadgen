@@ -22,14 +22,14 @@ x-loadgen-sdk = { version = "0.6.0", path = "x-loadgen-libs/x-loadgen-sdk" }
 x-loadgen-mockgw = { version = "0.6.0", path = "x-loadgen-bin/x-loadgen-mockgw" }
 
 anyhow = "1.0"
-base64 = "0.22"
+base64 = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
-reqwest = { version = "0.13.2", default-features = false, features = ["json", "gzip", "rustls", "blocking"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "gzip", "rustls", "blocking"] }
 axum = { version = "0.8.8", features = ["macros"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 hdrhistogram = "7.5"
-argon2 = "0.5"
+argon2 = "0.6"
 rust-embed = { version = "8.7", features = ["interpolate-folder-path"] }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -40,38 +40,38 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 uuid = { version = "1.21", features = ["v4", "v7"] }
-getrandom = "0.2"
-sha2 = "0.10"
+getrandom = "0.4"
+sha2 = "0.11"
 subtle = "2.6"
 
 # 密码学原语（x-loadgen-libs 使用）。
 rand = "0.10.0"
 hex = "0.4"
-hmac = "0.12"
-aes-gcm = "0.10"
-zeroize = { version = "1.8", features = ["derive"] }
+hmac = "0.13"
+aes-gcm = "0.11"
+zeroize = { version = "1.9", features = ["derive"] }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc", "pkcs8", "pem", "zeroize"] }
-chacha20poly1305 = "0.10"
-cbc = { version = "0.1", features = ["alloc"] }
-cipher = "0.4"
-ctr = "0.9"
-aes = "0.8"
-cfb-mode = "0.8"
-cfb8 = "0.8"
-digest = "0.10"
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
-rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2", "getrandom"] }
-sm3 = "0.4"
-sm4 = "0.5"
+chacha20poly1305 = "0.11"
+cbc = { version = "0.2", features = ["alloc", "block-padding"] }
+cipher = { version = "0.5", features = ["alloc", "block-padding"] }
+ctr = "0.10"
+aes = "0.9"
+cfb-mode = "0.9"
+cfb8 = "0.9"
+digest = "0.11"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "pem"] }
+rsa = { version = "0.10", default-features = false, features = ["std", "encoding", "getrandom", "pkcs1v15"] }
+sm3 = "0.5"
+sm4 = "0.6"
 libsm = "0.6"
-des = "0.8"
-md-5 = "0.10"
-ecb = { version = "0.1", features = ["alloc"] }
-der = { version = "0.7", features = ["alloc", "pem", "oid"] }
-spki = { version = "0.7", features = ["alloc", "pem"] }
-pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
-sec1 = { version = "0.7", features = ["der", "alloc"] }
+des = "0.9"
+md-5 = "0.11"
+ecb = { version = "0.2", features = ["alloc", "block-padding"] }
+der = { version = "0.8", features = ["alloc", "pem", "oid"] }
+spki = { version = "0.8", features = ["alloc", "pem"] }
+pkcs8 = { version = "0.11", features = ["alloc", "pem"] }
+sec1 = { version = "0.8", features = ["der", "alloc"] }
 
 [workspace.lints.rust]
 unsafe_code = "warn"
@@ -95,9 +95,6 @@ overflow-checks = true
 rpath = true
 
 # RSA / SM2 大数运算在 debug 下极慢（keygen / 签名可达分钟级），仅对这些依赖开启优化。
-[profile.dev.package.num-bigint-dig]
-opt-level = 3
-
 [profile.dev.package.rsa]
 opt-level = 3
 

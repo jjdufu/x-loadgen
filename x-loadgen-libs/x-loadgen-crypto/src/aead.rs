@@ -4,8 +4,8 @@
 
 use aes::Aes192;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::{Aes128Gcm, Aes256Gcm, AesGcm, Nonce as AesGcmNonce};
-use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChaNonce};
+use aes_gcm::{Aes128Gcm, Aes256Gcm, AesGcm};
+use chacha20poly1305::ChaCha20Poly1305;
 
 use crate::id::AlgorithmId;
 use crate::material::KeyRef;
@@ -79,16 +79,13 @@ fn expect_raw_key(key: &KeyRef, expected_len: usize) -> Result<&[u8], CryptoErro
     Ok(bytes)
 }
 
-fn expect_nonce(nonce: &[u8]) -> Result<&[u8], CryptoError> {
-    if nonce.len() != AEAD_NONCE_LEN {
-        return Err(CryptoError::InvalidNonce {
-            reason: format!(
-                "AEAD nonce must be {AEAD_NONCE_LEN} bytes, got {}",
-                nonce.len()
-            ),
-        });
-    }
-    Ok(nonce)
+fn expect_nonce(nonce: &[u8]) -> Result<[u8; AEAD_NONCE_LEN], CryptoError> {
+    nonce.try_into().map_err(|_| CryptoError::InvalidNonce {
+        reason: format!(
+            "AEAD nonce must be {AEAD_NONCE_LEN} bytes, got {}",
+            nonce.len()
+        ),
+    })
 }
 
 fn map_aead_encrypt(err: aes_gcm::Error) -> CryptoError {
@@ -112,7 +109,8 @@ impl AeadSeal for AeadAlgorithm {
         plaintext: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
         let key_bytes = expect_raw_key(key, self.key_len())?;
-        let nonce = expect_nonce(nonce)?;
+        let nonce_arr = expect_nonce(nonce)?;
+        let nonce_ga = nonce_arr.into();
         let payload = Payload {
             msg: plaintext,
             aad,
@@ -123,27 +121,21 @@ impl AeadSeal for AeadAlgorithm {
                     Aes128Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-128-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .encrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_encrypt)
+                cipher.encrypt(&nonce_ga, payload).map_err(map_aead_encrypt)
             }
             Self::Aes192Gcm => {
                 let cipher =
                     Aes192Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-192-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .encrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_encrypt)
+                cipher.encrypt(&nonce_ga, payload).map_err(map_aead_encrypt)
             }
             Self::Aes256Gcm => {
                 let cipher =
                     Aes256Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-256-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .encrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_encrypt)
+                cipher.encrypt(&nonce_ga, payload).map_err(map_aead_encrypt)
             }
             Self::Chacha20Poly1305 => {
                 let cipher = ChaCha20Poly1305::new_from_slice(key_bytes).map_err(|_| {
@@ -151,14 +143,12 @@ impl AeadSeal for AeadAlgorithm {
                         reason: "chacha20-poly1305 key init failed".to_owned(),
                     }
                 })?;
-                cipher
-                    .encrypt(ChaNonce::from_slice(nonce), payload)
-                    .map_err(|e| {
-                        let _ = e;
-                        CryptoError::OperationFailed {
-                            reason: "AEAD encrypt failed".to_owned(),
-                        }
-                    })
+                cipher.encrypt(&nonce_ga, payload).map_err(|e| {
+                    let _ = e;
+                    CryptoError::OperationFailed {
+                        reason: "AEAD encrypt failed".to_owned(),
+                    }
+                })
             }
         }
     }
@@ -176,7 +166,8 @@ impl AeadSeal for AeadAlgorithm {
             });
         }
         let key_bytes = expect_raw_key(key, self.key_len())?;
-        let nonce = expect_nonce(nonce)?;
+        let nonce_arr = expect_nonce(nonce)?;
+        let nonce_ga = nonce_arr.into();
         let payload = Payload {
             msg: ciphertext,
             aad,
@@ -187,27 +178,21 @@ impl AeadSeal for AeadAlgorithm {
                     Aes128Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-128-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .decrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_decrypt)
+                cipher.decrypt(&nonce_ga, payload).map_err(map_aead_decrypt)
             }
             Self::Aes192Gcm => {
                 let cipher =
                     Aes192Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-192-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .decrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_decrypt)
+                cipher.decrypt(&nonce_ga, payload).map_err(map_aead_decrypt)
             }
             Self::Aes256Gcm => {
                 let cipher =
                     Aes256Gcm::new_from_slice(key_bytes).map_err(|_| CryptoError::InvalidKey {
                         reason: "aes-256-gcm key init failed".to_owned(),
                     })?;
-                cipher
-                    .decrypt(AesGcmNonce::from_slice(nonce), payload)
-                    .map_err(map_aead_decrypt)
+                cipher.decrypt(&nonce_ga, payload).map_err(map_aead_decrypt)
             }
             Self::Chacha20Poly1305 => {
                 let cipher = ChaCha20Poly1305::new_from_slice(key_bytes).map_err(|_| {
@@ -215,12 +200,10 @@ impl AeadSeal for AeadAlgorithm {
                         reason: "chacha20-poly1305 key init failed".to_owned(),
                     }
                 })?;
-                cipher
-                    .decrypt(ChaNonce::from_slice(nonce), payload)
-                    .map_err(|e| {
-                        let _ = e;
-                        CryptoError::AuthenticationFailed
-                    })
+                cipher.decrypt(&nonce_ga, payload).map_err(|e| {
+                    let _ = e;
+                    CryptoError::AuthenticationFailed
+                })
             }
         }
     }

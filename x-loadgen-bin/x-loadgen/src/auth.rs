@@ -13,8 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::{Argon2, password_hash::rand_core::OsRng};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rusqlite::{Connection, OptionalExtension, params};
 use subtle::ConstantTimeEq;
 use x_loadgen_core::crypto::{AlgorithmId, AlgorithmRegistry, KeyPurpose, KeyRef, Mac};
@@ -56,7 +55,7 @@ pub fn password_file_log_line(path: &Path) -> String {
 /// Returns an error if the operating system random generator fails.
 pub fn random_token() -> Result<String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).context("read CSPRNG for token")?;
+    getrandom::fill(&mut bytes).context("read CSPRNG for token")?;
     Ok(hex_encode(&bytes))
 }
 
@@ -160,9 +159,8 @@ pub fn tokens_equal(left: &str, right: &str) -> bool {
 ///
 /// Returns an error if hashing fails.
 pub fn hash_password(token: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(token.as_bytes(), &salt)
+        .hash_password(token.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|err| anyhow::anyhow!("hash admin token with argon2id: {err}"))
 }
@@ -177,7 +175,7 @@ pub fn verify_password(token: &str, hash: &str) -> Result<bool> {
         .map_err(|err| anyhow::anyhow!("parse stored password hash: {err}"))?;
     match Argon2::default().verify_password(token.as_bytes(), &parsed) {
         Ok(()) => Ok(true),
-        Err(argon2::password_hash::Error::Password) => Ok(false),
+        Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
         Err(err) => Err(anyhow::anyhow!("verify password hash: {err}")),
     }
 }
@@ -287,7 +285,7 @@ pub fn verify_credential(presented: &str, credential: &Credential) -> Result<boo
 
 fn new_ephemeral_hmac_key() -> KeyRef {
     let mut key = vec![0u8; 32];
-    let _ = getrandom::getrandom(&mut key);
+    let _ = getrandom::fill(&mut key);
     KeyRef::raw(KeyPurpose::Mac, key)
 }
 

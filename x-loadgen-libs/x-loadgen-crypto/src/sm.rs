@@ -12,7 +12,7 @@
 
 use cbc::{Decryptor as CbcDecryptor, Encryptor as CbcEncryptor};
 use cipher::{
-    BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, StreamCipher, block_padding::Pkcs7,
+    BlockModeDecrypt, BlockModeEncrypt, KeyInit, KeyIvInit, StreamCipher, block_padding::Pkcs7,
 };
 use ctr::Ctr128BE;
 use libsm::sm2::signature::{SigCtx, Signature as Sm2Signature};
@@ -94,7 +94,7 @@ fn encrypt_sm4_cbc(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, C
         CbcEncryptor::<Sm4>::new_from_slices(key, iv).map_err(|_| CryptoError::InvalidKey {
             reason: "sm4-cbc key/iv init failed".to_owned(),
         })?;
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 fn decrypt_sm4_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -103,7 +103,7 @@ fn decrypt_sm4_cbc(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, 
             reason: "sm4-cbc key/iv init failed".to_owned(),
         })?;
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "sm4-cbc PKCS7 unpad failed".to_owned(),
         })
@@ -196,15 +196,15 @@ fn sm2_private_scalar_from_pem(pem: &str) -> Result<zeroize::Zeroizing<Vec<u8>>,
     if label != "PRIVATE KEY" {
         return Err(sm2_pem_error("private"));
     }
-    let info = pkcs8::PrivateKeyInfo::from_der(&doc).map_err(|_| sm2_pem_error("private"))?;
+    let info = pkcs8::PrivateKeyInfoRef::from_der(&doc).map_err(|_| sm2_pem_error("private"))?;
     let params = info
         .algorithm
         .parameters
         .map(der::AnyRef::decode_as::<der::asn1::ObjectIdentifier>)
         .transpose()
         .map_err(|_| sm2_pem_error("private"))?;
-    let ec =
-        sec1::EcPrivateKey::from_der(info.private_key).map_err(|_| sm2_pem_error("private"))?;
+    let ec = sec1::EcPrivateKey::from_der(info.private_key.as_bytes())
+        .map_err(|_| sm2_pem_error("private"))?;
     let curve = params.or_else(|| ec.parameters.and_then(sec1::EcParameters::named_curve));
     ensure_sm2_algorithm(info.algorithm.oid, curve, "private")?;
     if ec.private_key.len() != SM2_PRIVATE_LEN {
@@ -267,14 +267,13 @@ pub fn sm2_private_key_to_pem(scalar: &[u8]) -> Result<zeroize::Zeroizing<String
     };
     let ec_der = zeroize::Zeroizing::new(ec.to_der().map_err(|_| sm2_pem_error("private"))?);
     let params = der::AnyRef::from(&SM2_CURVE_OID);
-    let info = pkcs8::PrivateKeyInfo {
-        algorithm: spki::AlgorithmIdentifierRef {
+    let info = pkcs8::PrivateKeyInfoRef::new(
+        spki::AlgorithmIdentifierRef {
             oid: EC_PUBLIC_KEY_OID,
             parameters: Some(params),
         },
-        private_key: &ec_der,
-        public_key: None,
-    };
+        der::asn1::OctetStringRef::new(&ec_der).map_err(|_| sm2_pem_error("private"))?,
+    );
     let doc = zeroize::Zeroizing::new(info.to_der().map_err(|_| sm2_pem_error("private"))?);
     der::pem::encode_string("PRIVATE KEY", der::pem::LineEnding::LF, &doc)
         .map(zeroize::Zeroizing::new)
@@ -421,7 +420,7 @@ pub fn sm4_ecb_encrypt(
         reason: "sm4-ecb key length".to_owned(),
     })?;
     let encryptor = ecb::Encryptor::<Sm4>::new(&key_arr.into());
-    Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(encryptor.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 /// SM4-ECB-PKCS7 解密（legacy）。
@@ -442,7 +441,7 @@ pub fn sm4_ecb_decrypt(
     })?;
     let decryptor = ecb::Decryptor::<Sm4>::new(&key_arr.into());
     decryptor
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| CryptoError::InvalidInput {
             reason: "sm4-ecb PKCS7 unpad failed".to_owned(),
         })
