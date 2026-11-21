@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1](https://github.com/jjdufu/x-loadgen/compare/v0.6.0...v0.6.1) (2026-11-22)
+
+### Bug Fixes
+
+* **deps:** 升级密码学栈、argon2 0.6、getrandom 0.4、reqwest 0.13.5 与 base64 0.23 ([3b2be52](https://github.com/jjdufu/x-loadgen/commit/3b2be5265cc22c0832e1fac481782e0eb529d425))
+
 ## [0.6.0](https://github.com/jjdufu/x-loadgen/compare/v0.5.3...v0.6.0) (2026-11-18)
 
 ### ⚠ BREAKING CHANGES
