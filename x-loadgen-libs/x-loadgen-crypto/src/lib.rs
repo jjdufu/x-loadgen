@@ -38,7 +38,7 @@ pub mod traits;
 pub use aead::AeadAlgorithm;
 pub use asym::AsymSignAlgorithm;
 pub use id::{AlgorithmId, AlgorithmKind};
-pub use mac::MacAlgorithm;
+pub use mac::{MacAlgorithm, hkdf_sha256};
 pub use material::{KeyPurpose, KeyRef, NoncePolicy, ZeroizingBytes};
 pub use profile::{
     BindingSpec, DEFAULT_CLOCK_SKEW_SECS, DEFAULT_NONCE_TTL_SECS, KeySelection, PROFILE_VERSION_V1,

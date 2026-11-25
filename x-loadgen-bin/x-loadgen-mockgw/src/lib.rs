@@ -46,7 +46,7 @@ use x_loadgen_core::crypto::request_binding::{
     parse_unix_timestamp, unix_now_secs, validate_binding_nonce, verify_binding,
 };
 use x_loadgen_core::crypto::transport::{
-    SealEnvelopeParams, TransportEnvelope, open_envelope, seal_envelope,
+    EnvelopeDirection, SealEnvelopeParams, TransportEnvelope, open_envelope, seal_envelope,
 };
 use x_loadgen_core::crypto::{
     AlgorithmId, AlgorithmKind, AlgorithmRegistry, KeyRef, TenantTransportProfile, TransportMode,
@@ -567,10 +567,7 @@ fn handle_invoke(
                 &tenant.profile,
                 &shared.registry,
                 &tenant.tenant_key,
-                envelope
-                    .mac_alg
-                    .as_ref()
-                    .map(|_| tenant.tenant_key.as_slice()),
+                EnvelopeDirection::ClientToGateway,
                 &tenant.tenant_id,
                 GATEWAY_INVOKE_PATH,
                 &envelope,
@@ -699,15 +696,15 @@ fn seal_reply(
     tenant: &PreparedTenant,
     plaintext: &[u8],
 ) -> Result<TransportEnvelope, Rejection> {
-    let (_, mac_alg) = tenant
+    let _ = tenant
         .profile
         .effective_algs()
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "profile"))?;
     seal_envelope(SealEnvelopeParams {
         profile: &tenant.profile,
         registry: &shared.registry,
-        data_key: &tenant.tenant_key,
-        mac_key: mac_alg.map(|_| tenant.tenant_key.as_slice()),
+        master_key: &tenant.tenant_key,
+        direction: EnvelopeDirection::GatewayToClient,
         key_version: &tenant.key_version,
         tenant_id: &tenant.tenant_id,
         http_path: GATEWAY_INVOKE_PATH,

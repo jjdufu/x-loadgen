@@ -4,7 +4,8 @@
 
 use x_loadgen_core::crypto::request_binding::{RequestBindingError, RequestSigner};
 use x_loadgen_core::crypto::transport::{
-    SealEnvelopeParams, TransportCryptoError, TransportEnvelope, open_envelope, seal_envelope,
+    EnvelopeDirection, SealEnvelopeParams, TransportCryptoError, TransportEnvelope, open_envelope,
+    seal_envelope,
 };
 use x_loadgen_core::crypto::{
     AlgorithmRegistry, CryptoError, TenantTransportProfile, TransportMode,
@@ -160,17 +161,16 @@ impl GatewaySession {
     }
 
     fn seal_request(&self, plaintext: &[u8], timestamp: i64) -> Result<TransportEnvelope, Error> {
-        let (_, mac_alg) = self
+        let _ = self
             .config
             .transport
             .effective_algs()
             .map_err(map_profile_error)?;
-        let mac_key = mac_alg.map(|_| self.config.tenant_key.as_slice());
         seal_envelope(SealEnvelopeParams {
             profile: &self.config.transport,
             registry: &self.registry,
-            data_key: &self.config.tenant_key,
-            mac_key,
+            master_key: &self.config.tenant_key,
+            direction: EnvelopeDirection::ClientToGateway,
             key_version: &self.config.key_version,
             tenant_id: &self.config.tenant_id,
             http_path: GATEWAY_INVOKE_PATH,
@@ -181,15 +181,11 @@ impl GatewaySession {
     }
 
     fn open_response(&self, envelope: &TransportEnvelope) -> Result<Vec<u8>, Error> {
-        let mac_key = envelope
-            .mac_alg
-            .as_ref()
-            .map(|_| self.config.tenant_key.as_slice());
         open_envelope(
             &self.config.transport,
             &self.registry,
             &self.config.tenant_key,
-            mac_key,
+            EnvelopeDirection::GatewayToClient,
             &self.config.tenant_id,
             GATEWAY_INVOKE_PATH,
             envelope,
@@ -321,8 +317,8 @@ mod tests {
         let sealed = seal_envelope(SealEnvelopeParams {
             profile: &profile,
             registry: &registry,
-            data_key: &[7u8; 32],
-            mac_key: None,
+            master_key: &[7u8; 32],
+            direction: EnvelopeDirection::GatewayToClient,
             key_version: "v1",
             tenant_id: "tenant-1",
             http_path: GATEWAY_INVOKE_PATH,
@@ -339,7 +335,7 @@ mod tests {
                 &profile,
                 &registry,
                 &[7u8; 32],
-                None,
+                EnvelopeDirection::GatewayToClient,
                 "tenant-1",
                 GATEWAY_INVOKE_PATH,
                 env,
@@ -359,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn full_session_roundtrips_through_peer_seal() {
+    fn full_session_roundtrips_through_peer_seal_and_rejects_reflected_request() {
         let sdk = session(aes_full_profile(), None);
         let encoded = sdk
             .encode_request(br#"{"product_id":"demo"}"#, 1_710_000_000)
@@ -367,12 +363,15 @@ mod tests {
         let envelope: TransportEnvelope = serde_json::from_slice(&encoded.body).expect("envelope");
         assert_eq!(envelope.data_alg, "aes-256-gcm");
         assert!(envelope.mac_alg.is_none());
+        // Reflecting c2g request envelope as 200 response must be rejected!
+        assert!(sdk.decode_response(200, &encoded.body).is_err());
+
         let registry = AlgorithmRegistry::default_registry();
         let opened = open_envelope(
             &aes_full_profile(),
             &registry,
             &[7u8; 32],
-            None,
+            EnvelopeDirection::ClientToGateway,
             "00000000-0000-0000-0000-000000000001",
             GATEWAY_INVOKE_PATH,
             &envelope,
@@ -383,8 +382,8 @@ mod tests {
         let reply = seal_envelope(SealEnvelopeParams {
             profile: &aes_full_profile(),
             registry: &registry,
-            data_key: &[7u8; 32],
-            mac_key: None,
+            master_key: &[7u8; 32],
+            direction: EnvelopeDirection::GatewayToClient,
             key_version: "v1",
             tenant_id: "00000000-0000-0000-0000-000000000001",
             http_path: GATEWAY_INVOKE_PATH,

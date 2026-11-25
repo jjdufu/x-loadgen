@@ -3,6 +3,7 @@
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac as HmacMac};
 use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::id::AlgorithmId;
 use crate::material::KeyRef;
@@ -12,6 +13,62 @@ type HmacSha256 = Hmac<Sha256>;
 type HmacSha384 = Hmac<Sha384>;
 type HmacSha512 = Hmac<Sha512>;
 type HmacSm3 = Hmac<sm3::Sm3>;
+
+/// RFC 5869 `HKDF-SHA256` 派生函数（不引入额外依赖，基于 `Hmac<Sha256>` 实现）。
+///
+/// # Errors
+///
+/// 当 `okm.len() > 255 * 32` 时返回 [`CryptoError::InvalidKey`]。
+pub fn hkdf_sha256(
+    salt: Option<&[u8]>,
+    ikm: &[u8],
+    info: &[u8],
+    okm: &mut [u8],
+) -> Result<(), CryptoError> {
+    if okm.len() > 255 * 32 {
+        return Err(CryptoError::InvalidKey {
+            reason: "hkdf-sha256 output length exceeds 255 * 32".to_owned(),
+        });
+    }
+    let zero_salt = [0u8; 32];
+    let effective_salt = match salt {
+        Some(s) if !s.is_empty() => s,
+        _ => &zero_salt,
+    };
+    let mut prk_mac =
+        <HmacSha256 as HmacKeyInit>::new_from_slice(effective_salt).map_err(|_| {
+            CryptoError::InvalidKey {
+                reason: "hkdf-sha256 extract key init failed".to_owned(),
+            }
+        })?;
+    prk_mac.update(ikm);
+    let prk = Zeroizing::new(prk_mac.finalize().into_bytes());
+
+    let mut prev = Zeroizing::new([0u8; 32]);
+    let mut has_prev = false;
+    let mut written = 0usize;
+    let mut counter = 1u8;
+    while written < okm.len() {
+        let mut mac = <HmacSha256 as HmacKeyInit>::new_from_slice(&prk).map_err(|_| {
+            CryptoError::InvalidKey {
+                reason: "hkdf-sha256 expand key init failed".to_owned(),
+            }
+        })?;
+        if has_prev {
+            mac.update(prev.as_slice());
+        }
+        mac.update(info);
+        mac.update(&[counter]);
+        let block = mac.finalize().into_bytes();
+        prev.copy_from_slice(&block);
+        has_prev = true;
+        let to_copy = (okm.len() - written).min(32);
+        okm[written..written + to_copy].copy_from_slice(&prev[..to_copy]);
+        written += to_copy;
+        counter = counter.saturating_add(1);
+    }
+    Ok(())
+}
 
 /// 本步已实现的 MAC 算法句柄。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
