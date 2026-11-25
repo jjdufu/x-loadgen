@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.2](https://github.com/jjdufu/x-loadgen/compare/v0.6.1...v0.6.2) (2026-11-26)
+
+### Bug Fixes
+
+* **crypto:** 同步对齐 TransportEnvelope v1 四向子密钥派生、AAD/MAC 域绑定与黄金向量 ([542de0b](https://github.com/jjdufu/x-loadgen/commit/542de0ba9fe4950c322190816044717943469de6))
+
 ## [0.6.1](https://github.com/jjdufu/x-loadgen/compare/v0.6.0...v0.6.1) (2026-11-22)
 
 ### Bug Fixes
