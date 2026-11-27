@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1](https://github.com/jjdufu/x-loadgen/compare/v0.7.0...v0.7.1) (2026-11-27)
+
+### Bug Fixes
+
+* **web:** 统一亮暗双模式悬停交互令牌、消除按钮悬停微闪与暗色主按钮光渗并精简修改密码表单 ([f08ab8e](https://github.com/jjdufu/x-loadgen/commit/f08ab8e929dd379633dd13c53a36abe177936fac))
+
 ## [0.7.0](https://github.com/jjdufu/x-loadgen/compare/v0.6.2...v0.7.0) (2026-11-27)
 
 ### ⚠ BREAKING CHANGES
