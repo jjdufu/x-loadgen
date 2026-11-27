@@ -165,13 +165,21 @@ pub struct ExecOutcome {
     pub start_unix_ms: i64,
     pub end_unix_ms: i64,
     pub latency_us: i64,
+    pub protocol: String,
+    pub http_method: Option<String>,
     pub http_status: Option<i64>,
     pub transport_ok: bool,
     pub expected: bool,
     pub reason: Option<String>,
     pub error_class: Option<String>,
     pub error: Option<String>,
+    pub request_bytes: Option<i64>,
     pub response_bytes: Option<i64>,
+    pub ttfb_us: Option<i64>,
+    pub transfer_us: Option<i64>,
+    pub crypto_seal_us: Option<i64>,
+    pub crypto_unseal_us: Option<i64>,
+    pub token_wait_us: Option<i64>,
     pub request_id: Option<String>,
     /// Trace-id of the `traceparent` sent with this request.
     pub trace_id: Option<String>,
@@ -806,6 +814,10 @@ impl HttpExecutor {
         if let Some(ct) = call.content_type {
             builder = builder.header(reqwest::header::CONTENT_TYPE, ct);
         }
+        let req_bytes = call
+            .body_bytes
+            .as_ref()
+            .and_then(|b| i64::try_from(b.len()).ok());
         if let Some(bytes) = call.body_bytes {
             builder = builder.body(bytes);
         }
@@ -813,18 +825,35 @@ impl HttpExecutor {
         let sent = Instant::now();
         match builder.send().await {
             Ok(response) => {
-                classify_response(started, sent, ids, req, response, ctx.tenant_name.clone()).await
+                let ttfb_us = elapsed_us(sent);
+                classify_response(
+                    started,
+                    sent,
+                    ttfb_us,
+                    req_bytes,
+                    ids,
+                    req,
+                    response,
+                    ctx.tenant_name.clone(),
+                )
+                .await
             }
-            Err(err) => failed_outcome(
-                started,
-                unix_now_ms(),
-                elapsed_us(sent),
-                ids,
-                Some("transport".into()),
-                Some(err.to_string()),
-                None,
-                ctx.tenant_name.clone(),
-            ),
+            Err(err) => {
+                let mut failed = failed_outcome(
+                    started,
+                    unix_now_ms(),
+                    elapsed_us(sent),
+                    ids,
+                    Some("transport".into()),
+                    Some(err.to_string()),
+                    None,
+                    ctx.tenant_name.clone(),
+                );
+                failed.protocol = PROTOCOL_HTTP.to_string();
+                failed.http_method = Some(req.method.as_str().to_string());
+                failed.request_bytes = req_bytes;
+                failed
+            }
         }
     }
 
@@ -877,9 +906,12 @@ impl HttpExecutor {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn classify_response(
     started: i64,
     sent: Instant,
+    ttfb_us: i64,
+    request_bytes: Option<i64>,
     ids: &RequestIds,
     req: &PreparedRequest,
     response: reqwest::Response,
@@ -895,16 +927,22 @@ async fn classify_response(
     let raw_bytes = match response.bytes().await {
         Ok(b) => b,
         Err(err) => {
+            let total_us = elapsed_us(sent);
             let mut failed = failed_outcome(
                 started,
                 unix_now_ms(),
-                elapsed_us(sent),
+                total_us,
                 ids,
                 Some("transport".into()),
                 Some(err.to_string()),
                 Some(status),
                 customer_name,
             );
+            failed.protocol = PROTOCOL_HTTP.to_string();
+            failed.http_method = Some(req.method.as_str().to_string());
+            failed.request_bytes = request_bytes;
+            failed.ttfb_us = Some(ttfb_us);
+            failed.transfer_us = Some(total_us.saturating_sub(ttfb_us).max(0));
             failed.request_id = request_id;
             failed.trace_echo = trace_echo;
             return failed;
@@ -913,6 +951,7 @@ async fn classify_response(
     // Stop the clock once the last body byte arrived: JSON parsing below is
     // client-side CPU work and must not be charged to the target.
     let latency_us = elapsed_us(sent);
+    let transfer_us = latency_us.saturating_sub(ttfb_us).max(0);
     let end_unix_ms = unix_now_ms();
     let bytes = i64::try_from(raw_bytes.len()).ok();
     let body = serde_json::from_slice::<Value>(&raw_bytes).ok();
@@ -920,13 +959,21 @@ async fn classify_response(
         start_unix_ms: started,
         end_unix_ms,
         latency_us,
+        protocol: PROTOCOL_HTTP.to_string(),
+        http_method: Some(req.method.as_str().to_string()),
         http_status: Some(status),
         transport_ok,
         expected: false,
         reason: None,
         error_class: None,
         error: None,
+        request_bytes,
         response_bytes: bytes,
+        ttfb_us: Some(ttfb_us),
+        transfer_us: Some(transfer_us),
+        crypto_seal_us: None,
+        crypto_unseal_us: None,
+        token_wait_us: None,
         request_id,
         trace_id: Some(ids.trace_id()),
         trace_echo,

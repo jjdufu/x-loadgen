@@ -80,6 +80,7 @@ pub struct MergedStats {
     pub p95_us: Option<u64>,
     pub p99_us: Option<u64>,
     pub max_us: Option<u64>,
+    pub latency_stats: super::metrics::LatencyStats,
     pub window_index: Option<i64>,
     pub missed_sends: u64,
     pub timeseries: Vec<crate::engine::RingSlot>,
@@ -128,17 +129,44 @@ pub fn merge_live(snaps: &[LiveSnapshot], highest_trackable_us: u64) -> Result<M
             .iter()
             .flat_map(|snap| snap.timeseries.iter().cloned()),
     );
-    if let Ok((p50, p95, p99, max)) = merge_percentiles(&blobs, highest_trackable_us) {
-        merged.p50_us = p50;
-        merged.p95_us = p95;
-        merged.p99_us = p99;
-        merged.max_us = max;
+    if let Ok(stats) = merge_latency_stats(&blobs, highest_trackable_us) {
+        merged.latency_stats = stats;
+        merged.p50_us = stats.p50_us;
+        merged.p95_us = stats.p95_us;
+        merged.p99_us = stats.p99_us;
+        merged.max_us = stats.max_us;
     }
     Ok(merged)
 }
 
 /// Percentiles `(p50, p95, p99, max)` in microseconds.
 pub type HistogramPercentiles = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
+
+/// Decode each V2 blob and add them into one histogram, then read full [`super::metrics::LatencyStats`].
+///
+/// # Errors
+///
+/// Returns an error if a blob is not a valid histogram or the histograms cannot
+/// be added together.
+pub fn merge_latency_stats(
+    blobs: &[Vec<u8>],
+    highest_trackable_us: u64,
+) -> Result<super::metrics::LatencyStats> {
+    if blobs.is_empty() {
+        return Ok(super::metrics::LatencyStats::default());
+    }
+    let mut acc = super::metrics::new_latency_histogram(highest_trackable_us)
+        .context("create merge histogram")?;
+    let mut deserializer = Deserializer::new();
+    for blob in blobs {
+        let mut cursor = std::io::Cursor::new(blob.as_slice());
+        let next = deserializer
+            .deserialize(&mut cursor)
+            .context("deserialize worker histogram")?;
+        acc.add(&next).context("merge worker histogram")?;
+    }
+    Ok(super::metrics::LatencyStats::from_histogram(&acc))
+}
 
 /// Decode each V2 blob and add them into one histogram, then read percentiles.
 ///
@@ -154,28 +182,7 @@ pub fn merge_percentiles(
     blobs: &[Vec<u8>],
     highest_trackable_us: u64,
 ) -> Result<HistogramPercentiles> {
-    if blobs.is_empty() {
-        return Ok((None, None, None, None));
-    }
-    let mut acc = super::metrics::new_latency_histogram(highest_trackable_us)
-        .context("create merge histogram")?;
-    let mut deserializer = Deserializer::new();
-    for blob in blobs {
-        let mut cursor = std::io::Cursor::new(blob.as_slice());
-        let next = deserializer
-            .deserialize(&mut cursor)
-            .context("deserialize worker histogram")?;
-        acc.add(&next).context("merge worker histogram")?;
-    }
-    if acc.is_empty() {
-        return Ok((None, None, None, None));
-    }
-    Ok((
-        Some(acc.value_at_quantile(0.50)),
-        Some(acc.value_at_quantile(0.95)),
-        Some(acc.value_at_quantile(0.99)),
-        Some(acc.max()),
-    ))
+    Ok(merge_latency_stats(blobs, highest_trackable_us)?.tuple4())
 }
 
 /// Encode a histogram blob as standard base64.

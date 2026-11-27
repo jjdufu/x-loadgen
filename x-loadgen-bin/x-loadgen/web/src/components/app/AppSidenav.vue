@@ -74,7 +74,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { useRoute } from "vue-router";
-import { Activity, BookOpen, Gauge, Globe, Settings } from "lucide-vue-next";
+import { Activity, BookOpen, Gauge, Globe, History, Settings } from "lucide-vue-next";
 import { isCompact, isMobile, mobileNavOpen } from "../../modules/viewport";
 import { leftSidebarExpanded } from "../../stores/workspace";
 
@@ -100,8 +100,13 @@ const navItems = [
     icon: Globe,
   },
   {
+    name: "history",
+    label: "历史记录",
+    icon: History,
+  },
+  {
     name: "runs",
-    label: "压测任务",
+    label: "压测报告",
     icon: Activity,
   },
   {
@@ -126,7 +131,8 @@ function isActive(targetName: string): boolean {
     return (
       route.name === "runs" ||
       route.name === "run-detail" ||
-      route.name === "run-report"
+      route.name === "run-report" ||
+      route.name === "run-compare"
     );
   }
   return route.name === targetName;

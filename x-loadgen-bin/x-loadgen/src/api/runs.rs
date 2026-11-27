@@ -91,10 +91,45 @@ pub struct RunView {
     pub interrupt_ranges: Option<Value>,
     pub error: Option<String>,
     pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protocols: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p95_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p99_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub achieved_qps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict_result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<Verdict>,
+}
+
+/// Complete unredacted rerun payload returned by `GET /api/v1/runs/{id}/replay`.
+/// Every reconstructed request draft is detached (`id: None`, `collection_id: None`)
+/// so editing and saving creates a new record without touching historical or saved entries.
+#[derive(Debug, Serialize)]
+pub struct RunReplayPayload {
+    pub run_id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub mode: String,
+    pub source: crate::engine::RunSourceMeta,
+    pub environment_id: Option<String>,
+    pub environment_name: Option<String>,
+    pub load_config: crate::db::profiles::LoadConfig,
+    pub assert: Option<crate::run_assert::AssertSpec>,
+    pub requests: Vec<crate::db::collections::RequestDraft>,
 }
 
 /// List runs, optionally filtered by `status`.
@@ -111,11 +146,72 @@ pub async fn list_runs(
     let Query(query) = query?;
     let statuses = parse_status_filter(query.status.as_deref())?;
     let rows = state.supervisor.list(&statuses)?;
-    Ok(Json(
-        rows.into_iter()
-            .map(|row| view_from_record(&row, None, None))
-            .collect(),
-    ))
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let verdict = load_verdict(&state, &row).ok();
+        let mut view = view_from_record(&row, None, None);
+        if let Some(v) = verdict {
+            view.verdict_result = match v.result {
+                VerdictResult::None => None,
+                VerdictResult::Pass => Some("pass".into()),
+                VerdictResult::Fail => Some("fail".into()),
+                VerdictResult::Pending => Some("pending".into()),
+            };
+            if let Some(a) = v.actual {
+                view.samples = Some(a.samples);
+                view.success = Some(a.success);
+                view.failure = Some(a.failure);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    view.p95_us = a.p95_ms.map(|ms| (ms.max(0.0) * 1000.0).round() as u64);
+                    view.p99_us = a.p99_ms.map(|ms| (ms.max(0.0) * 1000.0).round() as u64);
+                }
+                view.achieved_qps = a.achieved_qps;
+            }
+        }
+        out.push(view);
+    }
+    Ok(Json(out))
+}
+
+/// Return full unredacted rerun data (detached request drafts + load config + SLA)
+/// so the workbench can pre-fill an independent rerun without mutating saved records.
+///
+/// # Errors
+///
+/// Returns 401/403 when unauthorized, 404 when run is unknown, or 400 if snapshot is unreadable.
+pub async fn get_run_replay(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<RunReplayPayload>, ApiError> {
+    require_ready_auth(&state, &headers)?;
+    let record = state.supervisor.get_run(&id)?;
+    let snapshot: crate::engine::RunSnapshot = serde_json::from_str(&record.snapshot_json)
+        .map_err(|err| {
+            ApiError::bad_request(
+                "invalid_snapshot",
+                format!("run snapshot cannot be replayed: {err}"),
+            )
+        })?;
+    let requests = snapshot
+        .target
+        .requests
+        .iter()
+        .map(crate::engine::ExecutionRequest::to_detached_draft)
+        .collect();
+    Ok(Json(RunReplayPayload {
+        run_id: record.id,
+        title: snapshot.title,
+        created_at: record.created_at,
+        mode: record.mode,
+        source: snapshot.source,
+        environment_id: snapshot.target.environment_id,
+        environment_name: snapshot.target.environment_name,
+        load_config: snapshot.template,
+        assert: snapshot.assert,
+        requests,
+    }))
 }
 
 /// Start a run from a template. Already-running tasks are not a conflict.
@@ -227,13 +323,13 @@ pub async fn get_stats(
     if let Some(payload) = merged_live_stats(&state, &record, &id, processes) {
         return Ok(Json(payload));
     }
-    let (counters, percentiles, in_flight, window_index, qps, concurrency) =
+    let (counters, latency_stats, in_flight, window_index, qps, concurrency) =
         if let Some(task) = state.supervisor.get(&id) {
             let counters = task.metrics.counters();
-            let percentiles = task.metrics.percentiles_us();
+            let latency_stats = task.metrics.latency_stats_us();
             (
                 counters,
-                percentiles,
+                latency_stats,
                 counters.in_flight,
                 Some(task.window_index()),
                 i64::try_from(task.current_qps()).ok(),
@@ -252,7 +348,7 @@ pub async fn get_stats(
                     peak_in_flight: 0,
                     missed_sends: 0,
                 },
-                (None, None, None, None),
+                crate::engine::LatencyStats::default(),
                 0,
                 None,
                 record.current_qps,
@@ -267,12 +363,12 @@ pub async fn get_stats(
         counters.bytes,
         counters.dropped_details,
     );
-    let (mut p50, mut p95, mut p99, mut max) = percentiles;
+    let mut lat = latency_stats;
     if state.supervisor.get(&id).is_none() {
-        let ((s, ok, fail, exp, b, d), (merged_p50, merged_p95, merged_p99, merged_max)) =
-            stopped_run_stats_fallback(&state, &id, percentiles)?;
+        let ((s, ok, fail, exp, b, d), merged_lat) =
+            stopped_run_stats_fallback(&state, &id, latency_stats)?;
         (samples, success, failure, expected, bytes, dropped) = (s, ok, fail, exp, b, d);
-        (p50, p95, p99, max) = (merged_p50, merged_p95, merged_p99, merged_max);
+        lat = merged_lat;
     }
     Ok(Json(json!({
         "id": record.id,
@@ -288,22 +384,27 @@ pub async fn get_stats(
         "in_flight": in_flight,
         "peak_in_flight": counters.peak_in_flight,
         "missed_sends": counters.missed_sends,
-        "p50_us": p50,
-        "p95_us": p95,
-        "p99_us": p99,
-        "max_us": max,
+        "min_us": lat.min_us,
+        "avg_us": lat.avg_us,
+        "stdev_us": lat.stdev_us,
+        "p50_us": lat.p50_us,
+        "p75_us": lat.p75_us,
+        "p90_us": lat.p90_us,
+        "p95_us": lat.p95_us,
+        "p99_us": lat.p99_us,
+        "p999_us": lat.p999_us,
+        "max_us": lat.max_us,
         "window_index": window_index,
     })))
 }
 
 type CounterTuple = (u64, u64, u64, u64, u64, u64);
-type PercentileTuple = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
 
 fn stopped_run_stats_fallback(
     state: &AppState,
     id: &str,
-    default_percentiles: PercentileTuple,
-) -> Result<(CounterTuple, PercentileTuple), ApiError> {
+    default_latency: crate::engine::LatencyStats,
+) -> Result<(CounterTuple, crate::engine::LatencyStats), ApiError> {
     let conn = state.lock_db()?;
     let windows = list_windows(&conn, id).unwrap_or_default();
     let totals = if windows.is_empty() {
@@ -334,9 +435,8 @@ fn stopped_run_stats_fallback(
         let (_, fb_blobs) = crate::report::load_worker_checkpoint_totals(&state.paths, id);
         blobs = fb_blobs;
     }
-    let percentiles =
-        crate::engine::merge_percentiles(&blobs, 60_000_000).unwrap_or(default_percentiles);
-    Ok((totals, percentiles))
+    let latency = crate::engine::merge_latency_stats(&blobs, 60_000_000).unwrap_or(default_latency);
+    Ok((totals, latency))
 }
 
 /// Second-level throughput series for live (single or multiprocess) and finished runs.
@@ -365,7 +465,8 @@ pub async fn get_timeseries(
         let conn = state.lock_db()?;
         slots = crate::report::load_persisted_timeseries(&state.paths, &conn, &id);
     }
-    let points = crate::report::ring_slots_to_json(&slots);
+    let per_sec = crate::report::breakdown::build_per_second_stats(&state.paths, &id);
+    let points = crate::report::ring_slots_to_json_with_samples(&slots, &per_sec);
     Ok(Json(json!({
         "capacity": RING_CAPACITY,
         "points": points,
@@ -526,6 +627,25 @@ fn view_from_record(
         .and_then(|t| t.get("model"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let environment_name = parsed_meta
+        .as_ref()
+        .and_then(|v| v.get("source"))
+        .and_then(|s| s.get("environment_name"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut proto_set = std::collections::BTreeSet::new();
+    if let Some(reqs) = parsed_meta
+        .as_ref()
+        .and_then(|v| v.get("target"))
+        .and_then(|t| t.get("requests"))
+        .and_then(Value::as_array)
+    {
+        for r in reqs {
+            if let Some(p) = r.get("protocol").and_then(Value::as_str) {
+                proto_set.insert(p.to_string());
+            }
+        }
+    }
     let source = parsed_meta.and_then(|v| v.get("source").cloned());
     RunView {
         id: record.id.clone(),
@@ -544,6 +664,15 @@ fn view_from_record(
         interrupt_ranges: record.interrupt_ranges.clone(),
         error: record.error.clone(),
         created_at: record.created_at,
+        protocols: proto_set.into_iter().collect(),
+        environment_name,
+        samples: None,
+        success: None,
+        failure: None,
+        p95_us: None,
+        p99_us: None,
+        achieved_qps: None,
+        verdict_result: None,
         snapshot,
         verdict,
     }
@@ -585,10 +714,17 @@ fn merged_live_stats(
         "dropped_details": merged.dropped_details,
         "in_flight": merged.in_flight,
         "peak_in_flight": merged.peak_in_flight,
-        "p50_us": merged.p50_us,
-        "p95_us": merged.p95_us,
-        "p99_us": merged.p99_us,
-        "max_us": merged.max_us,
+        "missed_sends": merged.missed_sends,
+        "min_us": merged.latency_stats.min_us,
+        "avg_us": merged.latency_stats.avg_us,
+        "stdev_us": merged.latency_stats.stdev_us,
+        "p50_us": merged.latency_stats.p50_us,
+        "p75_us": merged.latency_stats.p75_us,
+        "p90_us": merged.latency_stats.p90_us,
+        "p95_us": merged.latency_stats.p95_us,
+        "p99_us": merged.latency_stats.p99_us,
+        "p999_us": merged.latency_stats.p999_us,
+        "max_us": merged.latency_stats.max_us,
         "window_index": window_index,
     }))
 }

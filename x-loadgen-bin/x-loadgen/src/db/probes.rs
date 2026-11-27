@@ -1,8 +1,12 @@
 //! History of interactive single probes (`kind = 'probe'`), newest first,
-//! trimmed to the last N entries.
+//! trimmed to the last N entries. Stores the complete request draft (including
+//! credentials) so any history item can be reopened in the workbench like Postman.
+
+use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::error::StoreError;
 use super::workspace::now_ms;
@@ -16,7 +20,8 @@ pub const MAX_STORED_BODY_BYTES: usize = 64 * 1024;
 pub const DEFAULT_PAGE: u32 = 50;
 pub const MAX_PAGE: u32 = 500;
 
-/// One probe to store; text fields must already be scrubbed of secrets.
+/// One probe to store, including the complete request draft (with secrets) and
+/// response metadata for Postman-style inspection and replay.
 #[derive(Debug, Clone, Default)]
 pub struct NewProbe {
     pub saved_request_id: Option<String>,
@@ -36,14 +41,19 @@ pub struct NewProbe {
     pub transport_ok: bool,
     pub passed_assertions: bool,
     pub latency_us: i64,
+    pub request_bytes: usize,
     pub response_bytes: usize,
     pub error_class: Option<String>,
     pub error: Option<String>,
     pub captures: Captures,
+    pub request_draft_json: String,
+    pub variables_override: Option<BTreeMap<String, String>>,
+    pub response_headers: Vec<(String, String)>,
     pub response_body: String,
 }
 
-/// A stored probe. `response_body` is only filled by [`get_probe`].
+/// A stored probe. Heavy detail fields (`request_draft`, `variables_override`,
+/// `response_headers`, `response_body`) are only filled by [`get_probe`].
 #[derive(Debug, Clone, Serialize)]
 pub struct ProbeRecord {
     pub id: i64,
@@ -66,10 +76,17 @@ pub struct ProbeRecord {
     pub transport_ok: bool,
     pub passed_assertions: bool,
     pub latency_us: i64,
+    pub request_bytes: i64,
     pub response_bytes: i64,
     pub error_class: Option<String>,
     pub error: Option<String>,
     pub captures: Captures,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_draft: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables_override: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_headers: Option<Vec<(String, String)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
     pub response_truncated: bool,
@@ -86,13 +103,17 @@ pub struct ProbesQuery {
     pub trace_id: Option<String>,
     /// Probes of one saved request.
     pub saved_request_id: Option<String>,
+    /// Filter by protocol (`http` or `mazbri`).
+    pub protocol: Option<String>,
+    /// Case-insensitive substring search across name, url, method, `request_id`, `trace_id`.
+    pub q: Option<String>,
     pub limit: Option<u32>,
 }
 
 const COLUMNS: &str = "id, kind, created_at, saved_request_id, request_name, protocol, method, url,
     environment_id, environment_name, tenant_name, product_id, request_id, trace_id, traceparent,
-    trace_echo, http_status, transport_ok, passed_assertions, latency_us, response_bytes,
-    error_class, error, captures_json, response_truncated";
+    trace_echo, http_status, transport_ok, passed_assertions, latency_us, request_bytes,
+    response_bytes, error_class, error, captures_json, response_truncated";
 
 /// Store one probe and drop everything but the newest `keep`; returns the new id.
 /// `keep == 0` stores nothing and returns `None`.
@@ -109,14 +130,28 @@ pub fn insert_probe(
         return Ok(None);
     }
     let (body, truncated) = truncate_body(&probe.response_body);
+    let draft_json = if probe.request_draft_json.trim().is_empty() {
+        "{}"
+    } else {
+        probe.request_draft_json.as_str()
+    };
+    let vars_json = probe
+        .variables_override
+        .as_ref()
+        .filter(|m| !m.is_empty())
+        .and_then(|m| serde_json::to_string(m).ok());
+    let resp_headers_json =
+        serde_json::to_string(&probe.response_headers).unwrap_or_else(|_| "[]".into());
     conn.execute(
         "INSERT INTO probe_history (
             created_at, saved_request_id, request_name, protocol, method, url,
             environment_id, environment_name, tenant_name, product_id, request_id, trace_id,
             traceparent, trace_echo, http_status, transport_ok, passed_assertions, latency_us,
-            response_bytes, error_class, error, captures_json, response_body, response_truncated
+            request_bytes, response_bytes, error_class, error, captures_json,
+            request_draft_json, variables_override_json, response_headers_json,
+            response_body, response_truncated
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                   ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                   ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
         params![
             now_ms()?,
             probe.saved_request_id,
@@ -136,10 +171,14 @@ pub fn insert_probe(
             i64::from(probe.transport_ok),
             i64::from(probe.passed_assertions),
             probe.latency_us,
+            i64::try_from(probe.request_bytes).unwrap_or(i64::MAX),
             i64::try_from(probe.response_bytes).unwrap_or(i64::MAX),
             probe.error_class,
             probe.error,
             serde_json::to_string(&probe.captures).unwrap_or_else(|_| "{}".into()),
+            draft_json,
+            vars_json,
+            resp_headers_json,
             body,
             i64::from(truncated),
         ],
@@ -154,7 +193,7 @@ pub fn insert_probe(
     Ok(Some(id))
 }
 
-/// Newest probes first (without response bodies) and the cursor of the next page.
+/// Newest probes first (without response bodies or full drafts) and the cursor of the next page.
 ///
 /// # Errors
 ///
@@ -169,13 +208,17 @@ pub fn list_probes(
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
     };
+    let like = exact(query.q.as_ref()).map(|text| format!("%{}%", text.to_lowercase()));
     let sql = format!(
         "SELECT {COLUMNS} FROM probe_history
          WHERE (?1 IS NULL OR id < ?1)
            AND (?2 IS NULL OR request_id = ?2)
            AND (?3 IS NULL OR trace_id = ?3)
            AND (?4 IS NULL OR saved_request_id = ?4)
-         ORDER BY id DESC LIMIT ?5"
+           AND (?5 IS NULL OR protocol = ?5)
+           AND (?6 IS NULL OR LOWER(request_name) LIKE ?6 OR LOWER(url) LIKE ?6
+                OR LOWER(method) LIKE ?6 OR LOWER(request_id) LIKE ?6 OR LOWER(trace_id) LIKE ?6)
+         ORDER BY id DESC LIMIT ?7"
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut items = stmt
@@ -185,6 +228,8 @@ pub fn list_probes(
                 exact(query.request_id.as_ref()),
                 exact(query.trace_id.as_ref()).map(|id| id.to_ascii_lowercase()),
                 exact(query.saved_request_id.as_ref()),
+                exact(query.protocol.as_ref()),
+                like,
                 i64::from(limit) + 1,
             ],
             |row| record_from_row(row, None),
@@ -200,18 +245,46 @@ pub fn list_probes(
     Ok((items, next))
 }
 
-/// One probe with its stored response body.
+struct ProbeDetailCols {
+    request_draft: Option<Value>,
+    variables_override: Option<BTreeMap<String, String>>,
+    response_headers: Option<Vec<(String, String)>>,
+    response_body: String,
+}
+
+/// One probe with its complete request draft (including secrets), response headers, and body.
 ///
 /// # Errors
 ///
 /// Returns not-found when `id` is unknown.
 pub fn get_probe(conn: &Connection, id: i64) -> Result<ProbeRecord, StoreError> {
     conn.query_row(
-        &format!("SELECT {COLUMNS}, response_body FROM probe_history WHERE id = ?1"),
+        &format!(
+            "SELECT {COLUMNS}, request_draft_json, variables_override_json, response_headers_json, response_body
+             FROM probe_history WHERE id = ?1"
+        ),
         params![id],
         |row| {
-            let body: String = row.get(25)?;
-            record_from_row(row, Some(body))
+            let draft_raw: String = row.get(26)?;
+            let vars_raw: Option<String> = row.get(27)?;
+            let headers_raw: String = row.get(28)?;
+            let body: String = row.get(29)?;
+            let request_draft = serde_json::from_str::<Value>(&draft_raw)
+                .ok()
+                .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()));
+            let variables_override = vars_raw
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<BTreeMap<String, String>>(s).ok());
+            let response_headers = serde_json::from_str::<Vec<(String, String)>>(&headers_raw).ok();
+            record_from_row(
+                row,
+                Some(ProbeDetailCols {
+                    request_draft,
+                    variables_override,
+                    response_headers,
+                    response_body: body,
+                }),
+            )
         },
     )
     .optional()?
@@ -231,8 +304,30 @@ pub fn delete_probe(conn: &Connection, id: i64) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn record_from_row(row: &Row<'_>, response_body: Option<String>) -> rusqlite::Result<ProbeRecord> {
-    let captures_raw: String = row.get(23)?;
+/// Delete all stored probe history rows.
+///
+/// # Errors
+///
+/// Returns a storage error when SQLite fails.
+pub fn clear_probes(conn: &Connection) -> Result<usize, StoreError> {
+    let changed = conn.execute("DELETE FROM probe_history", [])?;
+    Ok(changed)
+}
+
+fn record_from_row(
+    row: &Row<'_>,
+    detail: Option<ProbeDetailCols>,
+) -> rusqlite::Result<ProbeRecord> {
+    let captures_raw: String = row.get(24)?;
+    let (request_draft, variables_override, response_headers, response_body) = match detail {
+        Some(d) => (
+            d.request_draft,
+            d.variables_override,
+            d.response_headers,
+            Some(d.response_body),
+        ),
+        None => (None, None, None, None),
+    };
     Ok(ProbeRecord {
         id: row.get(0)?,
         kind: row.get(1)?,
@@ -254,12 +349,16 @@ fn record_from_row(row: &Row<'_>, response_body: Option<String>) -> rusqlite::Re
         transport_ok: row.get::<_, i64>(17)? != 0,
         passed_assertions: row.get::<_, i64>(18)? != 0,
         latency_us: row.get(19)?,
-        response_bytes: row.get(20)?,
-        error_class: row.get(21)?,
-        error: row.get(22)?,
+        request_bytes: row.get(20)?,
+        response_bytes: row.get(21)?,
+        error_class: row.get(22)?,
+        error: row.get(23)?,
         captures: serde_json::from_str(&captures_raw).unwrap_or_default(),
+        request_draft,
+        variables_override,
+        response_headers,
         response_body,
-        response_truncated: row.get::<_, i64>(24)? != 0,
+        response_truncated: row.get::<_, i64>(25)? != 0,
     })
 }
 

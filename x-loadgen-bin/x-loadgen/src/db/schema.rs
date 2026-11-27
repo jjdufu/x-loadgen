@@ -1,13 +1,13 @@
-//! SQL schema for the central database (v3) and per-worker sample databases (v2).
+//! SQL schema for the central database (v4) and per-worker sample databases (v3).
 //!
 //! There is no migration path: a database written by another schema version is
 //! refused at startup and the data directory has to be cleared.
 
 /// Current `PRAGMA user_version` for the central catalog & run database.
-pub const USER_VERSION: i32 = 3;
+pub const USER_VERSION: i32 = 4;
 
 /// Current `PRAGMA user_version` for per-worker sample databases (`wNN.sqlite`).
-pub const WORKER_USER_VERSION: i32 = 2;
+pub const WORKER_USER_VERSION: i32 = 3;
 
 /// Central database DDL applied on fresh creation.
 pub const CENTRAL_SCHEMA: &str = "
@@ -216,10 +216,14 @@ CREATE TABLE IF NOT EXISTS probe_history (
   transport_ok       INTEGER NOT NULL,
   passed_assertions  INTEGER NOT NULL,
   latency_us         INTEGER NOT NULL,
+  request_bytes      INTEGER NOT NULL DEFAULT 0,
   response_bytes     INTEGER NOT NULL,
   error_class        TEXT,
   error              TEXT,
   captures_json      TEXT NOT NULL DEFAULT '{}',
+  request_draft_json TEXT NOT NULL DEFAULT '{}',
+  variables_override_json TEXT,
+  response_headers_json TEXT NOT NULL DEFAULT '[]',
   response_body      TEXT NOT NULL DEFAULT '',
   response_truncated INTEGER NOT NULL DEFAULT 0
 );
@@ -241,6 +245,8 @@ CREATE TABLE IF NOT EXISTS samples (
   start_unix_ms  INTEGER NOT NULL,
   end_unix_ms    INTEGER NOT NULL,
   latency_us     INTEGER NOT NULL,
+  protocol       TEXT NOT NULL DEFAULT 'http',
+  http_method    TEXT,
   product_id     TEXT NOT NULL,
   product_name   TEXT,
   request_index  INTEGER,
@@ -251,7 +257,14 @@ CREATE TABLE IF NOT EXISTS samples (
   error_class    TEXT,
   request_id     TEXT,
   error          TEXT,
+  request_bytes  INTEGER,
   response_bytes INTEGER,
+  queue_us       INTEGER,
+  ttfb_us        INTEGER,
+  transfer_us    INTEGER,
+  crypto_seal_us INTEGER,
+  crypto_unseal_us INTEGER,
+  token_wait_us  INTEGER,
   customer_name  TEXT,
   trace_id       TEXT,
   trace_echo     TEXT NOT NULL DEFAULT 'absent',

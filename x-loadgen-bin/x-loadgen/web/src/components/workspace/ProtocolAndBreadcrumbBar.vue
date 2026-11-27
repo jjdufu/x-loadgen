@@ -20,10 +20,19 @@
         :value="draft.name"
         type="text"
         aria-label="请求名称"
-        placeholder="输入请求名称..."
+        placeholder="订单查询"
         class="min-w-[140px] max-w-xs rounded bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
         @input="draft.name = ($event.target as HTMLInputElement).value"
       />
+      <span
+        v-if="activeTab.rerunConfig"
+        class="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[11px] text-amber-700 dark:text-amber-300"
+      >
+        <span>历史重跑</span>
+        <span class="opacity-75">
+          {{ activeTab.rerunConfig.loadConfig.model === 'open_loop' ? `${activeTab.rerunConfig.loadConfig.qps ?? '-'} QPS` : '闭环' }} · {{ activeTab.rerunConfig.loadConfig.concurrency }}并发
+        </span>
+      </span>
     </div>
 
     <!-- Subtle Collection Weight Pill -->

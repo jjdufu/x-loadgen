@@ -28,16 +28,16 @@ use super::environments::{
 };
 use super::openapi::openapi;
 use super::probe::{
-    delete_probe_handler, generate_stateless_binding_keypair, get_probe_handler,
-    list_probes_handler, probe_handler,
+    clear_probes_handler, delete_probe_handler, generate_stateless_binding_keypair,
+    get_probe_handler, list_probes_handler, probe_handler,
 };
 use super::profiles::{
     create_load_profile, delete_load_profile, get_load_profile, list_load_profiles,
     update_load_profile,
 };
 use super::runs::{
-    create_run, delete_run_handler, get_run, get_stats, get_timeline, get_timeseries, get_verdict,
-    get_windows, list_runs, patch_traffic, resume_run, stop_run,
+    create_run, delete_run_handler, get_run, get_run_replay, get_stats, get_timeline,
+    get_timeseries, get_verdict, get_windows, list_runs, patch_traffic, resume_run, stop_run,
 };
 pub use super::state::AppState;
 pub(crate) use super::state::{authenticate, require_ready_auth};
@@ -48,6 +48,7 @@ use crate::cli::ServeArgs;
 use crate::db::{DataPaths, open_central};
 
 /// Build the router used by `serve` and by tests.
+#[allow(clippy::too_many_lines)]
 pub fn router(state: AppState) -> Router {
     let guard_state = state.clone();
     Router::new()
@@ -110,7 +111,10 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_load_profile),
         )
         .route("/api/v1/probe", post(probe_handler))
-        .route("/api/v1/probes", get(list_probes_handler))
+        .route(
+            "/api/v1/probes",
+            get(list_probes_handler).delete(clear_probes_handler),
+        )
         .route(
             "/api/v1/probes/{id}",
             get(get_probe_handler).delete(delete_probe_handler),
@@ -120,7 +124,9 @@ pub fn router(state: AppState) -> Router {
             post(generate_stateless_binding_keypair),
         )
         .route("/api/v1/runs", get(list_runs).post(create_run))
+        .route("/api/v1/runs/compare", get(super::report::compare_reports))
         .route("/api/v1/runs/{id}", get(get_run).delete(delete_run_handler))
+        .route("/api/v1/runs/{id}/replay", get(get_run_replay))
         .route("/api/v1/runs/{id}/stats", get(get_stats))
         .route("/api/v1/runs/{id}/timeseries", get(get_timeseries))
         .route("/api/v1/runs/{id}/timeline", get(get_timeline))

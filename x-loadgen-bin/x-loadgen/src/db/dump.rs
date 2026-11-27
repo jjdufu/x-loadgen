@@ -14,7 +14,7 @@ use super::writer::Sample;
 pub const MAGIC: &[u8; 4] = b"LGPD";
 
 /// Dump format version written after the magic.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 /// Write `samples` to `pending-wNN-<unix_ms>.bin` under the run directory.
 ///
@@ -155,20 +155,28 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
     let mut stmt = conn
         .prepare(
             "INSERT OR IGNORE INTO samples (
-                seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
-                request_index, http_status, success, expected, reason, error_class,
-                request_id, error, response_bytes, customer_name, trace_id, trace_echo,
-                warmup, captures, response_body
+                seq, start_unix_ms, end_unix_ms, latency_us, protocol, http_method,
+                product_id, product_name, request_index, http_status, success, expected,
+                reason, error_class, request_id, error, request_bytes, response_bytes,
+                queue_us, ttfb_us, transfer_us, crypto_seal_us, crypto_unseal_us, token_wait_us,
+                customer_name, trace_id, trace_echo, warmup, captures, response_body
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                      ?17, ?18, ?19, ?20, ?21)",
+                      ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         )
         .context("prepare sample insert")?;
     for sample in samples {
+        let protocol = if sample.protocol.is_empty() {
+            "http"
+        } else {
+            sample.protocol.as_str()
+        };
         stmt.execute(params![
             sample.seq,
             sample.start_unix_ms,
             sample.end_unix_ms,
             sample.latency_us,
+            protocol,
+            sample.http_method,
             sample.product_id,
             sample.product_name,
             sample.request_index,
@@ -179,7 +187,14 @@ pub(crate) fn insert_samples(conn: &Connection, samples: &[Sample]) -> Result<()
             sample.error_class,
             sample.request_id,
             sample.error,
+            sample.request_bytes,
             sample.response_bytes,
+            sample.queue_us,
+            sample.ttfb_us,
+            sample.transfer_us,
+            sample.crypto_seal_us,
+            sample.crypto_unseal_us,
+            sample.token_wait_us,
             sample.customer_name,
             sample.trace_id,
             sample.trace_echo.as_str(),

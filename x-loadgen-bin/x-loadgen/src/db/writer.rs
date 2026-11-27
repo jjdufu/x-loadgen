@@ -69,6 +69,9 @@ pub struct Sample {
     pub start_unix_ms: i64,
     pub end_unix_ms: i64,
     pub latency_us: i64,
+    /// `"http"` or `"mazbri"`.
+    pub protocol: String,
+    pub http_method: Option<String>,
     pub product_id: String,
     pub product_name: Option<String>,
     pub request_index: Option<i64>,
@@ -79,7 +82,20 @@ pub struct Sample {
     pub error_class: Option<String>,
     pub request_id: Option<String>,
     pub error: Option<String>,
+    pub request_bytes: Option<i64>,
     pub response_bytes: Option<i64>,
+    /// Open-loop scheduling lag / concurrency slot wait (microseconds).
+    pub queue_us: Option<i64>,
+    /// Time from send start until response headers arrived (microseconds).
+    pub ttfb_us: Option<i64>,
+    /// Time from response headers until body read completed (microseconds).
+    pub transfer_us: Option<i64>,
+    /// Mazbri client-side seal + sign time (microseconds).
+    pub crypto_seal_us: Option<i64>,
+    /// Mazbri client-side verify + decrypt time (microseconds).
+    pub crypto_unseal_us: Option<i64>,
+    /// Mazbri token exchange / wait time (microseconds).
+    pub token_wait_us: Option<i64>,
     pub customer_name: Option<String>,
     /// Trace-id of the W3C `traceparent` sent with the request.
     pub trace_id: Option<String>,

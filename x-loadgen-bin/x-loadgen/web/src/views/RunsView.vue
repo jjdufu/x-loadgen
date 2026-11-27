@@ -3,8 +3,7 @@
     <div class="mx-auto max-w-7xl space-y-5 p-4 sm:p-6 lg:p-8">
       <!-- Top Filter & Shared Search Toolbar -->
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <!-- Segmented Status Filter -->
-        <div class="inline-flex flex-wrap items-center rounded-lg border border-border bg-muted p-1 gap-0.5">
+        <div class="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted p-1">
           <button
             v-for="f in filters"
             :key="f.value"
@@ -25,16 +24,26 @@
         <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <UiSearchInput
             v-model="searchQuery"
-            placeholder="搜索任务名称、目标或 ID..."
-            aria-label="搜索压测任务"
+            placeholder="名称、目标、环境或 ID"
+            aria-label="搜索压测报告"
             wrapper-class="min-w-0 flex-1 sm:w-64 sm:flex-none"
           />
+          <UiButton
+            v-if="selectedCompareIds.length > 0"
+            variant="default"
+            size="sm"
+            :disabled="selectedCompareIds.length !== 2"
+            @click="openCompare"
+          >
+            <GitCompare class="h-3.5 w-3.5" />
+            <span>对比报告 ({{ selectedCompareIds.length }}/2)</span>
+          </UiButton>
           <UiButton variant="outline" size="sm" :disabled="loading" @click="loadRuns">
             <RefreshCw class="h-3.5 w-3.5" :class="loading && 'animate-spin'" />
             <span>刷新</span>
           </UiButton>
           <UiButton
-            variant="default"
+            variant="outline"
             size="sm"
             @click="router.push({ name: 'workspace' })"
           >
@@ -49,11 +58,10 @@
         role="alert"
         class="flex items-center justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
       >
-        <span class="min-w-0 break-words">任务列表加载失败：{{ loadError }}</span>
+        <span class="min-w-0 break-words">加载失败：{{ loadError }}</span>
         <UiButton variant="outline" size="sm" class="shrink-0" @click="loadRuns">重试</UiButton>
       </div>
 
-      <!-- First load / filter switch -->
       <UiCard
         v-if="loading && runs.length === 0"
         class="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground"
@@ -63,7 +71,6 @@
         <span>加载中…</span>
       </UiCard>
 
-      <!-- Empty State -->
       <UiCard
         v-else-if="filteredRuns.length === 0"
         class="flex flex-col items-center justify-center gap-3 border-dashed py-20 text-center"
@@ -71,35 +78,30 @@
         <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/50 text-muted-foreground">
           <Activity class="h-5 w-5" />
         </div>
-        <div class="space-y-1">
-          <p class="text-sm font-medium text-foreground">
-            {{
-              searchQuery.trim() || statusFilter
-                ? "未找到匹配的压测任务"
-                : "暂无压测任务记录"
-            }}
-          </p>
-          <p class="text-xs text-muted-foreground">
-            {{
-              searchQuery.trim() || statusFilter
-                ? "请尝试调整搜索关键词或状态筛选条件。"
-                : "在工作台中任意请求或集合上点击「压测」即可启动任务。"
-            }}
-          </p>
-        </div>
+        <p class="text-sm font-medium text-foreground">
+          {{ searchQuery.trim() || statusFilter ? "无匹配报告" : "暂无压测报告" }}
+        </p>
+        <UiButton
+          v-if="!searchQuery.trim() && !statusFilter"
+          variant="outline"
+          size="sm"
+          @click="router.push({ name: 'workspace' })"
+        >
+          工作台
+        </UiButton>
       </UiCard>
 
-      <!-- Phones: one card per run instead of a clipped 6-column table -->
+      <!-- Mobile Cards -->
       <ul v-else-if="isMobile" class="space-y-3">
         <li v-for="run in filteredRuns" :key="run.id">
           <UiCard class="space-y-3 p-4">
             <RouterLink
               :to="{ name: 'run-detail', params: { id: run.id } }"
-              class="block space-y-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="block space-y-1 rounded-sm"
             >
               <div class="flex items-start justify-between gap-3">
                 <span class="min-w-0 break-words font-medium text-foreground">
-                  {{ run.title || run.target_id || "压测任务" }}
+                  {{ run.title || run.target_id || "压测报告" }}
                 </span>
                 <UiBadge class="shrink-0" :variant="runStatusBadgeVariant(run.status)">
                   {{ formatRunStatus(run.status) }}
@@ -110,21 +112,30 @@
               </div>
             </RouterLink>
             <dl class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-              <dt class="text-muted-foreground">执行模式</dt>
+              <dt class="text-muted-foreground">样本 / 失败</dt>
               <dd class="text-right font-mono tabular-nums">
-                {{ formatRunMode(run.mode) }} · {{ run.processes }} 进程
+                {{ run.samples ?? 0 }} / {{ run.failure ?? 0 }}
               </dd>
-              <dt class="text-muted-foreground">速率 / 并发</dt>
+              <dt class="text-muted-foreground">实测 QPS / P95</dt>
               <dd class="text-right font-mono tabular-nums">
-                {{ formatTargetRate(run) }} /
-                {{ run.current_concurrency ?? "-" }}
+                {{ run.achieved_qps != null ? `${run.achieved_qps.toFixed(1)}` : "-" }} /
+                {{ formatLatencyUs(run.p95_us) }}
               </dd>
-              <dt class="text-muted-foreground">启动时间</dt>
+              <dt class="text-muted-foreground">时间</dt>
               <dd class="text-right font-mono tabular-nums">
                 {{ formatTimeMs(run.started_at ?? run.created_at) }}
               </dd>
             </dl>
             <div class="flex justify-end gap-2">
+              <UiButton
+                variant="outline"
+                size="sm"
+                :loading="replayingId === run.id"
+                @click="rerunTask(run.id)"
+              >
+                <RotateCcw v-if="replayingId !== run.id" class="h-3.5 w-3.5" />
+                <span>重跑</span>
+              </UiButton>
               <UiButton
                 v-if="run.status === 'running'"
                 variant="outline"
@@ -137,16 +148,7 @@
                 <span>停止</span>
               </UiButton>
               <UiButton
-                v-else-if="run.status === 'stopping'"
-                variant="outline"
-                size="sm"
-                disabled
-              >
-                <Loader2 class="h-3.5 w-3.5 animate-spin" />
-                <span>停止中</span>
-              </UiButton>
-              <UiButton
-                v-else
+                v-else-if="run.status !== 'stopping'"
                 variant="outline"
                 size="sm"
                 :loading="busyRunId === run.id"
@@ -160,17 +162,21 @@
         </li>
       </ul>
 
-      <!-- Shadcn Runs Table -->
+      <!-- Desktop Table -->
       <UiCard v-else class="overflow-hidden">
         <div class="overflow-x-auto">
           <table class="w-full border-collapse text-left text-sm">
             <thead>
               <tr class="border-b border-border bg-muted/40 text-xs font-medium text-muted-foreground">
-                <th class="px-5 py-3">任务名称 / ID</th>
-                <th class="px-4 py-3">状态</th>
-                <th class="px-4 py-3">执行模式</th>
-                <th class="px-4 py-3">目标速率 / 并发</th>
-                <th class="px-4 py-3">启动时间</th>
+                <th class="w-10 py-3 pl-4 pr-2">
+                  <span class="sr-only">对比</span>
+                </th>
+                <th class="px-4 py-3">报告名称 / 形态</th>
+                <th class="px-3 py-3">状态 / SLA</th>
+                <th class="px-3 py-3">样本 / 错误率</th>
+                <th class="px-3 py-3">实测 QPS / 目标</th>
+                <th class="px-3 py-3">P95 / P99</th>
+                <th class="px-3 py-3">启动时间</th>
                 <th class="px-5 py-3 text-right">操作</th>
               </tr>
             </thead>
@@ -180,33 +186,77 @@
                 :key="run.id"
                 tabindex="0"
                 role="link"
-                :aria-label="`查看压测任务 ${run.title || run.target_id || shortRunId(run.id)}`"
-                class="cursor-pointer transition-colors hover:bg-muted/35 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                :aria-label="`查看压测报告 ${run.title || shortRunId(run.id)}`"
+                class="cursor-pointer transition-colors hover:bg-muted/35"
                 @click="openRunDetail(run.id)"
                 @keydown.enter.self="openRunDetail(run.id)"
-                @keydown.space.prevent.self="openRunDetail(run.id)"
               >
-                <td class="px-5 py-3.5">
-                  <div class="font-medium text-foreground">
-                    {{ run.title || run.target_id || "压测任务" }}
-                  </div>
-                  <div class="mt-0.5 font-mono text-xs text-muted-foreground">
-                    {{ shortRunId(run.id) }} · {{ formatRunSource(run) }}
-                  </div>
+                <td class="py-3.5 pl-4 pr-2" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="selectedCompareIds.includes(run.id)"
+                    :disabled="selectedCompareIds.length >= 2 && !selectedCompareIds.includes(run.id)"
+                    :aria-label="`选择对比 ${run.title || shortRunId(run.id)}`"
+                    class="h-4 w-4 cursor-pointer rounded border-input accent-foreground"
+                    @change="toggleCompare(run.id)"
+                  />
                 </td>
                 <td class="px-4 py-3.5">
-                  <UiBadge :variant="runStatusBadgeVariant(run.status)">
-                    {{ formatRunStatus(run.status) }}
-                  </UiBadge>
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-medium text-foreground">
+                      {{ run.title || run.target_id || "压测报告" }}
+                    </span>
+                    <span
+                      v-for="p in run.protocols ?? []"
+                      :key="p"
+                      class="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] uppercase text-muted-foreground"
+                    >
+                      {{ p }}
+                    </span>
+                  </div>
+                  <div class="mt-0.5 font-mono text-xs text-muted-foreground">
+                    {{ shortRunId(run.id) }} · {{ formatRunMode(run.mode) }} · {{ run.processes }} 进程
+                    <template v-if="run.environment_name"> · {{ run.environment_name }}</template>
+                  </div>
                 </td>
-                <td class="px-4 py-3.5 font-mono text-xs text-foreground tabular-nums">
-                  {{ formatRunMode(run.mode) }} · {{ run.processes }} 进程
+                <td class="px-3 py-3.5">
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <UiBadge :variant="runStatusBadgeVariant(run.status)">
+                      {{ formatRunStatus(run.status) }}
+                    </UiBadge>
+                    <UiBadge
+                      v-if="run.verdict_result"
+                      :variant="run.verdict_result === 'pass' ? 'success' : run.verdict_result === 'fail' ? 'destructive' : 'warning'"
+                    >
+                      {{ formatVerdictResult(run.verdict_result) }}
+                    </UiBadge>
+                  </div>
                 </td>
-                <td class="px-4 py-3.5 font-mono text-xs text-foreground tabular-nums">
-                  {{ formatTargetRate(run) }} /
-                  {{ run.current_concurrency ?? "-" }} 并发
+                <td class="px-3 py-3.5 font-mono text-xs tabular-nums">
+                  <div class="text-foreground">{{ run.samples ?? 0 }}</div>
+                  <div
+                    :class="
+                      (run.failure ?? 0) > 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    "
+                  >
+                    {{ formatErrorRate(run) }}
+                  </div>
                 </td>
-                <td class="px-4 py-3.5 font-mono text-xs text-muted-foreground tabular-nums">
+                <td class="px-3 py-3.5 font-mono text-xs tabular-nums">
+                  <div class="text-foreground">
+                    {{ run.achieved_qps != null ? `${run.achieved_qps.toFixed(1)} req/s` : "-" }}
+                  </div>
+                  <div class="text-muted-foreground">
+                    {{ formatTargetRate(run) }} / {{ run.current_concurrency ?? "-" }}并发
+                  </div>
+                </td>
+                <td class="px-3 py-3.5 font-mono text-xs tabular-nums">
+                  <div class="text-foreground">{{ formatLatencyUs(run.p95_us) }}</div>
+                  <div class="text-muted-foreground">{{ formatLatencyUs(run.p99_us) }}</div>
+                </td>
+                <td class="px-3 py-3.5 font-mono text-xs text-muted-foreground tabular-nums">
                   {{ formatTimeMs(run.started_at ?? run.created_at) }}
                 </td>
                 <td class="px-5 py-3.5 text-right" @click.stop>
@@ -214,16 +264,21 @@
                     <UiButton
                       variant="outline"
                       size="sm"
-                      @click="openRunDetail(run.id)"
+                      :loading="replayingId === run.id"
+                      @click="rerunTask(run.id)"
                     >
-                      详情
+                      <RotateCcw v-if="replayingId !== run.id" class="h-3.5 w-3.5" />
+                      <span>重跑</span>
+                    </UiButton>
+                    <UiButton variant="outline" size="sm" @click="openRunDetail(run.id)">
+                      报告
                     </UiButton>
                     <UiButton
                       v-if="run.status === 'running'"
                       variant="outline"
                       size="icon-sm"
-                      title="停止运行"
-                      aria-label="停止运行"
+                      title="停止"
+                      aria-label="停止"
                       :loading="busyRunId === run.id"
                       class="text-rose-600 dark:text-rose-400"
                       @click="stopRun(run.id)"
@@ -244,8 +299,8 @@
                       v-else
                       variant="ghost"
                       size="icon-sm"
-                      title="删除任务"
-                      aria-label="删除任务"
+                      title="删除"
+                      aria-label="删除"
                       :loading="busyRunId === run.id"
                       class="hover:text-rose-600 dark:hover:text-rose-400"
                       @click="removeRun(run.id)"
@@ -266,7 +321,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Activity, Globe, Loader2, RefreshCw, Square, Trash2 } from "lucide-vue-next";
+import {
+  Activity,
+  GitCompare,
+  Globe,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Square,
+  Trash2,
+} from "lucide-vue-next";
 import { api } from "../api/workspace";
 import type { RunView } from "../api/types";
 import UiBadge from "../components/ui/UiBadge.vue";
@@ -274,15 +338,18 @@ import UiButton from "../components/ui/UiButton.vue";
 import UiCard from "../components/ui/UiCard.vue";
 import UiSearchInput from "../components/ui/UiSearchInput.vue";
 import {
+  formatLatencyUs,
   formatRunMode,
   formatRunStatus,
   formatTimeMs,
+  formatVerdictResult,
   runStatusBadgeVariant,
 } from "../helpers/format";
 import { isPageVisible } from "../modules/activity";
 import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
 import { isMobile } from "../modules/viewport";
+import { openRunReplayInWorkspace } from "../stores/workspace";
 
 const router = useRouter();
 const route = useRoute();
@@ -291,33 +358,25 @@ const searchQuery = ref("");
 const loading = ref(false);
 const loadError = ref<string | null>(null);
 const busyRunId = ref<string | null>(null);
+const replayingId = ref<string | null>(null);
+const selectedCompareIds = ref<string[]>([]);
 let pollTimer: number | null = null;
 
-/** First UUID group (8 hex chars) — never cut a group in the middle. */
 function shortRunId(id: string): string {
   return id.split("-")[0] ?? id;
 }
 
-function formatRunSource(run: RunView): string {
-  if (!run.template_id || run.template_id === "adhoc") {
-    return "工作台直发";
-  }
-  return run.template_id;
+function formatErrorRate(run: RunView): string {
+  const s = run.samples ?? 0;
+  const f = run.failure ?? 0;
+  if (s <= 0) return "0.00%";
+  return `${((f / s) * 100).toFixed(2)}%`;
 }
 
 function formatTargetRate(run: RunView): string {
-  if (run.current_qps && run.current_qps > 0) {
-    return `${run.current_qps} QPS`;
-  }
-  if (run.model === "closed_loop") {
-    return "闭环饱和";
-  }
-  if (run.model === "open_loop") {
-    return "开环不限速";
-  }
-  if (run.status === "running" || run.status === "stopping") {
-    return "闭环饱和";
-  }
+  if (run.current_qps && run.current_qps > 0) return `${run.current_qps} QPS`;
+  if (run.model === "closed_loop") return "闭环";
+  if (run.model === "open_loop") return "不限速";
   return "-";
 }
 
@@ -325,7 +384,37 @@ function openRunDetail(id: string): void {
   void router.push({ name: "run-detail", params: { id } });
 }
 
-/** Each tab maps to every backend status it should show. */
+function toggleCompare(id: string): void {
+  const idx = selectedCompareIds.value.indexOf(id);
+  if (idx >= 0) {
+    selectedCompareIds.value.splice(idx, 1);
+  } else if (selectedCompareIds.value.length < 2) {
+    selectedCompareIds.value.push(id);
+  }
+}
+
+function openCompare(): void {
+  if (selectedCompareIds.value.length !== 2) return;
+  const [first, second] = selectedCompareIds.value;
+  void router.push({
+    name: "run-compare",
+    query: { base: second, target: first },
+  });
+}
+
+async function rerunTask(id: string): Promise<void> {
+  if (replayingId.value) return;
+  replayingId.value = id;
+  try {
+    const replay = await api.getRunReplay(id);
+    openRunReplayInWorkspace(replay);
+    await router.push({ name: "workspace" });
+    toast.success("已载入历史配置");
+  } finally {
+    replayingId.value = null;
+  }
+}
+
 const filters = [
   { value: "", label: "全部", statuses: "" },
   { value: "running", label: "运行中", statuses: "running" },
@@ -337,7 +426,6 @@ const filters = [
 ] as const;
 type FilterValue = (typeof filters)[number]["value"];
 
-/** The active tab is kept in `?status=` so reload / back keep it. */
 const statusFilter = computed<FilterValue>(() => {
   const raw = route.query.status;
   return filters.find((f) => f.value === raw)?.value ?? "";
@@ -351,6 +439,7 @@ const filteredRuns = computed<RunView[]>(() => {
       (r.title && r.title.toLowerCase().includes(q)) ||
       r.id.toLowerCase().includes(q) ||
       (r.target_id && r.target_id.toLowerCase().includes(q)) ||
+      (r.environment_name && r.environment_name.toLowerCase().includes(q)) ||
       r.template_id.toLowerCase().includes(q),
   );
 });
@@ -358,13 +447,6 @@ const filteredRuns = computed<RunView[]>(() => {
 let requestSeq = 0;
 let inFlight: Promise<void> | null = null;
 
-/**
- * Fetch the list for the current filter. Every call gets a sequence number
- * and only the newest response is applied, so a slow poll for the previous
- * filter can never overwrite the list of the filter the user just picked.
- * Requests are `silent`: failures show the inline banner instead of a toast
- * every 2.5s while the server is down.
- */
 function loadRuns(): Promise<void> {
   const seq = ++requestSeq;
   const statuses = filters.find((f) => f.value === statusFilter.value)?.statuses;
@@ -388,7 +470,6 @@ function loadRuns(): Promise<void> {
   return p;
 }
 
-/** Background refresh: skipped while hidden or while a request is pending. */
 function pollRuns(): void {
   if (!isPageVisible.value || inFlight) return;
   void loadRuns();
@@ -400,7 +481,6 @@ function selectFilter(val: FilterValue): void {
 }
 
 watch(statusFilter, () => {
-  // Don't show the previous filter's rows under the new tab while loading.
   runs.value = [];
   void loadRuns();
 });
@@ -408,8 +488,8 @@ watch(statusFilter, () => {
 async function stopRun(id: string): Promise<void> {
   if (busyRunId.value) return;
   const confirmed = await askConfirm({
-    title: "停止压测任务",
-    description: "确定停止该正在运行的压测任务吗？停止后可随时断点续跑。",
+    title: "停止压测",
+    description: "停止后任务将进入可续跑状态。",
     confirmText: "停止",
     variant: "destructive",
   });
@@ -417,7 +497,7 @@ async function stopRun(id: string): Promise<void> {
   busyRunId.value = id;
   try {
     await api.stopRun(id);
-    toast.info("已发送停止压测信号");
+    toast.info("已发送停止信号");
     await loadRuns();
   } finally {
     busyRunId.value = null;
@@ -427,8 +507,8 @@ async function stopRun(id: string): Promise<void> {
 async function removeRun(id: string): Promise<void> {
   if (busyRunId.value) return;
   const confirmed = await askConfirm({
-    title: "删除压测任务",
-    description: "确定删除此压测任务及全部明细样本吗？删除后无法恢复。",
+    title: "删除报告",
+    description: "将删除此压测报告及全部明细样本，删除后无法恢复。",
     confirmText: "删除",
     variant: "destructive",
   });
@@ -436,7 +516,8 @@ async function removeRun(id: string): Promise<void> {
   busyRunId.value = id;
   try {
     await api.deleteRun(id);
-    toast.success("任务已删除");
+    selectedCompareIds.value = selectedCompareIds.value.filter((x) => x !== id);
+    toast.success("已删除");
     await loadRuns();
   } finally {
     busyRunId.value = null;

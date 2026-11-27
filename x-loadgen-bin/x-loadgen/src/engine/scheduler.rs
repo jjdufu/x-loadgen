@@ -162,7 +162,8 @@ pub async fn run_window(
             // Dropped on completion *and* on panic, so a panicking request
             // can never leave `in_flight` permanently elevated.
             let _guard = guard;
-            let executed = execute_one(&exec_plan, exec.as_ref(), index).await;
+            let mut executed = execute_one(&exec_plan, exec.as_ref(), index).await;
+            executed.sample.queue_us = i64::try_from(queue_us).ok();
             metrics_task.record_with_queue(
                 executed.sample,
                 executed.class,

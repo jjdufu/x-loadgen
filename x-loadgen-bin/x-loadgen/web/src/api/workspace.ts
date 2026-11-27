@@ -2,6 +2,7 @@ import { http, type RequestOptions } from "./http";
 import type {
   CollectionInput,
   CollectionNode,
+  CompareReportPayload,
   CreateRunRequest,
   EnvironmentDetail,
   EnvironmentInput,
@@ -18,6 +19,7 @@ import type {
   ProbesQuery,
   ReportPayload,
   RequestDraft,
+  RunReplayPayload,
   RunStats,
   RunView,
   SampleCursor,
@@ -162,6 +164,8 @@ export const api = {
     http.get<ProbeRecord>(`/api/v1/probes/${id}`).then((r) => r.data),
   deleteProbe: (id: number) =>
     http.delete<void>(`/api/v1/probes/${id}`).then((r) => r.data),
+  clearProbes: () =>
+    http.delete<void>("/api/v1/probes").then((r) => r.data),
 
   // Load Profiles
   listLoadProfiles: () =>
@@ -189,6 +193,14 @@ export const api = {
       .then((r) => r.data),
   getRun: (id: string, opts?: RequestOptions) =>
     http.get<RunView>(`/api/v1/runs/${id}`, { ...opts }).then((r) => r.data),
+  getRunReplay: (id: string) =>
+    http.get<RunReplayPayload>(`/api/v1/runs/${id}/replay`).then((r) => r.data),
+  compareReports: (base: string, target: string) =>
+    http
+      .get<CompareReportPayload>("/api/v1/runs/compare", {
+        params: { base, target },
+      })
+      .then((r) => r.data),
   createRun: (req: CreateRunRequest) =>
     http.post<RunView>("/api/v1/runs", req).then((r) => r.data),
   deleteRun: (id: string) =>

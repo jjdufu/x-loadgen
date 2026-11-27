@@ -1859,6 +1859,27 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "清空单发历史记录",
+        "tags": [
+          "probe"
+        ],
+        "responses": {
+          "204": {
+            "description": "清空成功"
+          },
+          "401": {
+            "description": "未鉴权或口令无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/probes/{id}": {
@@ -2158,6 +2179,107 @@
           },
           "409": {
             "description": "状态冲突或等待超时（`conflict` / `wait_timeout` / `run_in_progress`）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/compare": {
+      "get": {
+        "summary": "对比两份压测报告（基准 vs 目标）",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "base",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "基准压测任务 ID"
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "目标压测任务 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对比结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "压测任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/replay": {
+      "get": {
+        "summary": "获取历史压测完整重跑载荷（含请求草稿密钥与负载配置，独立草稿不影响原记录）",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "目标资源唯一 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "完整重跑配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "压测任务不存在",
             "content": {
               "application/json": {
                 "schema": {

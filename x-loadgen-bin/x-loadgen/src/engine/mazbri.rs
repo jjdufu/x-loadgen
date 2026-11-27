@@ -95,8 +95,9 @@ impl MazbriTenant {
         let token = match self.broker.get().await {
             Ok(token) => token,
             Err(TokenError(message)) => {
+                let wait_us = elapsed_us(token_wait);
                 let now = unix_now_ms();
-                return failed_outcome(
+                let mut failed = failed_outcome(
                     now,
                     now,
                     0,
@@ -106,6 +107,10 @@ impl MazbriTenant {
                     None,
                     customer_name,
                 );
+                failed.protocol = crate::db::workspace::PROTOCOL_MAZBRI.to_string();
+                failed.http_method = Some(req.method.as_str().to_string());
+                failed.token_wait_us = Some(wait_us);
+                return failed;
             }
         };
         // A single-flight refresh can stall every caller; charge that wait as
@@ -115,9 +120,11 @@ impl MazbriTenant {
             .execute_with_token(client, req, &token, ids, runtime, customer_name)
             .await;
         outcome.pre_send_wait_us = pre_send_wait_us;
+        outcome.token_wait_us = i64::try_from(pre_send_wait_us).ok();
         outcome
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn execute_with_token(
         &self,
         client: &Client,
@@ -128,11 +135,12 @@ impl MazbriTenant {
         customer_name: Option<String>,
     ) -> ExecOutcome {
         let started = unix_now_ms();
-        let request = match self.build_call(client, req, token, ids, runtime) {
-            Ok(request) => request,
+        let seal_started = Instant::now();
+        let (request, request_bytes) = match self.build_call(client, req, token, ids, runtime) {
+            Ok(built) => built,
             // Never reached the wire: latency 0 keeps it out of the histogram.
             Err((class, message)) => {
-                return failed_outcome(
+                let mut failed = failed_outcome(
                     started,
                     unix_now_ms(),
                     0,
@@ -142,27 +150,41 @@ impl MazbriTenant {
                     None,
                     customer_name,
                 );
+                failed.protocol = crate::db::workspace::PROTOCOL_MAZBRI.to_string();
+                failed.http_method = Some(req.method.as_str().to_string());
+                failed.crypto_seal_us = Some(elapsed_us(seal_started));
+                return failed;
             }
         };
+        let crypto_seal_us = elapsed_us(seal_started);
         // Start the clock after sealing/signing (client-side CPU work).
         let started = unix_now_ms();
         let sent = Instant::now();
-        let fail = |class: &str, message: String, status: Option<i64>| {
-            failed_outcome(
+        let fail = |class: &str, message: String, status: Option<i64>, ttfb: Option<i64>| {
+            let total_us = elapsed_us(sent);
+            let mut f = failed_outcome(
                 started,
                 unix_now_ms(),
-                elapsed_us(sent),
+                total_us,
                 ids,
                 Some(class.into()),
                 Some(message),
                 status,
                 customer_name.clone(),
-            )
+            );
+            f.protocol = crate::db::workspace::PROTOCOL_MAZBRI.to_string();
+            f.http_method = Some(req.method.as_str().to_string());
+            f.request_bytes = Some(request_bytes);
+            f.crypto_seal_us = Some(crypto_seal_us);
+            f.ttfb_us = ttfb;
+            f.transfer_us = ttfb.map(|t| total_us.saturating_sub(t).max(0));
+            f
         };
         let response = match request.send().await {
             Ok(response) => response,
-            Err(error) => return fail("transport", error.to_string(), None),
+            Err(error) => return fail("transport", error.to_string(), None, None),
         };
+        let ttfb_us = elapsed_us(sent);
         let http_status = response.status().as_u16();
         if http_status == 401 {
             self.broker.invalidate(token).await;
@@ -175,7 +197,12 @@ impl MazbriTenant {
         let raw = match response.bytes().await {
             Ok(raw) => raw,
             Err(error) => {
-                let mut failed = fail("transport", error.to_string(), Some(i64::from(http_status)));
+                let mut failed = fail(
+                    "transport",
+                    error.to_string(),
+                    Some(i64::from(http_status)),
+                    Some(ttfb_us),
+                );
                 failed.request_id = request_id;
                 failed.trace_echo = trace_echo;
                 return failed;
@@ -183,19 +210,30 @@ impl MazbriTenant {
         };
         // Stop the clock before decrypting/decoding the response.
         let latency_us = elapsed_us(sent);
+        let transfer_us = latency_us.saturating_sub(ttfb_us).max(0);
         let end_unix_ms = unix_now_ms();
+        let unseal_started = Instant::now();
         let decoded = self.session.decode_response(http_status, &raw);
+        let crypto_unseal_us = elapsed_us(unseal_started);
         let mut outcome = ExecOutcome {
             start_unix_ms: started,
             end_unix_ms,
             latency_us,
+            protocol: crate::db::workspace::PROTOCOL_MAZBRI.to_string(),
+            http_method: Some(req.method.as_str().to_string()),
             http_status: Some(i64::from(http_status)),
             transport_ok: false,
             expected: false,
             reason: None,
             error_class: None,
             error: None,
+            request_bytes: Some(request_bytes),
             response_bytes: i64::try_from(raw.len()).ok(),
+            ttfb_us: Some(ttfb_us),
+            transfer_us: Some(transfer_us),
+            crypto_seal_us: Some(crypto_seal_us),
+            crypto_unseal_us: Some(crypto_unseal_us),
+            token_wait_us: None,
             request_id,
             trace_id: Some(ids.trace_id()),
             trace_echo,
@@ -217,7 +255,7 @@ impl MazbriTenant {
         token: &str,
         ids: &RequestIds,
         runtime: &RuntimeVars,
-    ) -> Result<reqwest::RequestBuilder, (&'static str, String)> {
+    ) -> Result<(reqwest::RequestBuilder, i64), (&'static str, String)> {
         let gw_req = build_gateway_request(req, runtime);
         let plaintext = serde_json::to_vec(&gw_req)
             .map_err(|error| ("config", format!("gateway request: {error}")))?;
@@ -225,6 +263,7 @@ impl MazbriTenant {
             .session
             .encode_request(&plaintext, unix_now_secs())
             .map_err(|error| ("crypto", format!("seal request: {error}")))?;
+        let body_len = i64::try_from(encoded.body.len()).unwrap_or(i64::MAX);
         let mut request = client
             .post(&self.invoke_url)
             .bearer_auth(token)
@@ -239,7 +278,7 @@ impl MazbriTenant {
         if let Some(timeout) = req.timeout {
             request = request.timeout(timeout);
         }
-        Ok(request)
+        Ok((request, body_len))
     }
 }
 

@@ -92,11 +92,18 @@ fn classify(
     let success = matches!(class, OutcomeClass::Success);
     let customer_name = outcome.customer_name.or(tenant_name);
     let pre_send_wait_us = outcome.pre_send_wait_us;
+    let protocol = if outcome.protocol.is_empty() {
+        "http".to_string()
+    } else {
+        outcome.protocol
+    };
     let sample = Sample {
         seq: None,
         start_unix_ms: outcome.start_unix_ms,
         end_unix_ms: outcome.end_unix_ms,
         latency_us: outcome.latency_us,
+        protocol,
+        http_method: outcome.http_method,
         product_id: product.product_id,
         product_name: product.product_name,
         request_index: i64::try_from(index).ok(),
@@ -107,7 +114,14 @@ fn classify(
         error_class: outcome.error_class,
         request_id: outcome.request_id,
         error: outcome.error,
+        request_bytes: outcome.request_bytes,
         response_bytes: outcome.response_bytes,
+        queue_us: None,
+        ttfb_us: outcome.ttfb_us,
+        transfer_us: outcome.transfer_us,
+        crypto_seal_us: outcome.crypto_seal_us,
+        crypto_unseal_us: outcome.crypto_unseal_us,
+        token_wait_us: outcome.token_wait_us,
         customer_name,
         trace_id: outcome.trace_id,
         trace_echo: outcome.trace_echo,

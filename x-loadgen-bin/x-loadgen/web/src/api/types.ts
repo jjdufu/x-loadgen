@@ -338,6 +338,7 @@ export interface SelectedRequestWeight {
 }
 
 export interface CreateRunRequest {
+  title?: string | null;
   request_id?: string | null;
   collection_id?: string | null;
   selected_requests?: SelectedRequestWeight[] | null;
@@ -416,8 +417,38 @@ export interface RunView {
   interrupt_ranges: { start: number; end: number }[] | null;
   error: string | null;
   created_at: number;
+  protocols?: string[];
+  environment_name?: string | null;
+  samples?: number | null;
+  success?: number | null;
+  failure?: number | null;
+  p95_us?: number | null;
+  p99_us?: number | null;
+  achieved_qps?: number | null;
+  verdict_result?: "pass" | "fail" | "pending" | null;
   snapshot?: unknown;
   verdict?: Verdict | null;
+}
+
+export interface RunReplayPayload {
+  run_id: string;
+  title: string;
+  created_at: number;
+  mode: string;
+  source: {
+    kind: string;
+    request_id?: string | null;
+    collection_id?: string | null;
+    environment_id?: string | null;
+    environment_name?: string | null;
+    load_profile_id?: string | null;
+    load_profile_name?: string | null;
+  };
+  environment_id?: string | null;
+  environment_name?: string | null;
+  load_config: LoadConfig;
+  assert?: AssertSpec | null;
+  requests: RequestDraft[];
 }
 
 export interface RunStats {
@@ -433,9 +464,16 @@ export interface RunStats {
   dropped_details: number;
   in_flight: number;
   peak_in_flight: number;
+  missed_sends?: number;
+  min_us?: number | null;
+  avg_us?: number | null;
+  stdev_us?: number | null;
   p50_us: number | null;
+  p75_us?: number | null;
+  p90_us?: number | null;
   p95_us: number | null;
   p99_us: number | null;
+  p999_us?: number | null;
   max_us: number | null;
   window_index: number | null;
 }
@@ -448,7 +486,17 @@ export interface TimePoint {
   failure: number;
   expected?: number;
   bytes?: number;
+  request_bytes?: number;
   warmup?: boolean;
+  in_flight_max?: number;
+  avg_latency_us?: number | null;
+  p50_us?: number | null;
+  p90_us?: number | null;
+  p95_us?: number | null;
+  p99_us?: number | null;
+  max_us?: number | null;
+  error_rate?: number;
+  error_classes?: Record<string, number> | null;
 }
 
 export interface TimelineEvent {
@@ -481,6 +529,8 @@ export interface SampleRow {
   start_unix_ms: number;
   end_unix_ms: number;
   latency_us: number;
+  protocol?: string;
+  http_method?: string | null;
   product_id: string;
   product_name?: string | null;
   customer_name?: string | null;
@@ -492,7 +542,14 @@ export interface SampleRow {
   error_class?: string | null;
   request_id?: string | null;
   error?: string | null;
+  request_bytes?: number | null;
   response_bytes?: number | null;
+  queue_us?: number | null;
+  ttfb_us?: number | null;
+  transfer_us?: number | null;
+  crypto_seal_us?: number | null;
+  crypto_unseal_us?: number | null;
+  token_wait_us?: number | null;
   /** W3C trace id sent in `traceparent` (32 lowercase hex). */
   trace_id?: string | null;
   /** `match` / `mismatch` / `absent`: response traceparent vs the sent one. */
@@ -519,21 +576,108 @@ export interface SampleFilters {
 export interface BreakdownGroup {
   product_id?: string;
   tenant?: string;
+  protocol?: string;
+  method?: string | null;
   samples: number;
+  share_pct?: number;
+  qps?: number | null;
   success: number;
   failure: number;
   expected: number;
+  error_rate?: number;
+  min_us?: number | null;
+  avg_us?: number | null;
+  stdev_us?: number | null;
   p50_us: number | null;
+  p75_us?: number | null;
+  p90_us?: number | null;
   p95_us: number | null;
   p99_us: number | null;
+  p999_us?: number | null;
   max_us: number | null;
+  total_bytes?: number;
+  avg_bytes?: number | null;
 }
 
 export interface BreakdownError {
   error_class: string;
   error: string;
   count: number;
+  share_pct?: number;
   http_status: Record<string, number>;
+}
+
+export interface HistogramBin {
+  label: string;
+  from_ms: number;
+  to_ms: number | null;
+  count: number;
+  pct: number;
+  cumulative_pct: number;
+}
+
+export interface ApdexStats {
+  score: number | null;
+  satisfied_ms: number;
+  tolerated_ms: number;
+  satisfied: number;
+  tolerated: number;
+  frustrated: number;
+  failed: number;
+  expected: number;
+}
+
+export interface PhaseTimingStats {
+  samples: number;
+  avg_us: number | null;
+  p50_us: number | null;
+  p95_us: number | null;
+  p99_us: number | null;
+  max_us: number | null;
+  share_pct: number | null;
+}
+
+export interface HttpProtocolBreakdown {
+  samples: number;
+  methods: Record<string, number>;
+  status_families: Record<string, number>;
+  phases: {
+    queue: PhaseTimingStats;
+    ttfb: PhaseTimingStats;
+    transfer: PhaseTimingStats;
+    total: PhaseTimingStats;
+  };
+  request_sizes: {
+    total_bytes: number;
+    avg_bytes: number | null;
+  };
+  response_sizes: {
+    total_bytes: number;
+    min_bytes: number | null;
+    avg_bytes: number | null;
+    p95_bytes: number | null;
+    max_bytes: number | null;
+    buckets: { label: string; count: number; pct: number }[];
+  };
+}
+
+export interface MazbriProtocolBreakdown {
+  samples: number;
+  methods: Record<string, number>;
+  encryption_modes: string[];
+  suites: string[];
+  crypto_overhead_pct: number | null;
+  wire_pct: number | null;
+  trace_echo: { match: number; mismatch: number; absent: number };
+  phases: {
+    token_wait: PhaseTimingStats;
+    crypto_seal: PhaseTimingStats;
+    gateway_ttfb: PhaseTimingStats;
+    transfer: PhaseTimingStats;
+    crypto_unseal: PhaseTimingStats;
+    queue: PhaseTimingStats;
+    end_to_end: PhaseTimingStats;
+  };
 }
 
 /** `report.breakdown`: computed from recorded (non-warmup) samples. */
@@ -543,7 +687,46 @@ export interface ReportBreakdown {
   products: BreakdownGroup[];
   tenants: BreakdownGroup[];
   status_codes: Record<string, number>;
+  status_families?: Record<string, number>;
   top_errors: BreakdownError[];
+  latency_histogram?: HistogramBin[];
+  apdex?: ApdexStats;
+  protocol_breakdown?: {
+    http?: HttpProtocolBreakdown;
+    mazbri?: MazbriProtocolBreakdown;
+  };
+}
+
+export interface ReportSummary {
+  effective_elapsed_ms: number | null;
+  wall_elapsed_ms: number | null;
+  achieved_qps: number | null;
+  peak_qps: number | null;
+  configured_qps: number | null;
+  qps_ratio: number | null;
+  success_rate: number | null;
+  error_rate: number | null;
+  expected_rate: number | null;
+  total_request_bytes: number;
+  total_response_bytes: number;
+  avg_response_bytes: number | null;
+  avg_bandwidth_bps: number | null;
+  avg_request_bandwidth_bps: number | null;
+  peak_in_flight: number;
+  apdex: ApdexStats;
+  protocols: string[];
+  shape: "single_http" | "multi_http" | "single_mazbri" | "multi_mazbri" | "mixed" | string;
+  has_http: boolean;
+  has_mazbri: boolean;
+  has_multiple_endpoints: boolean;
+  has_multiple_tenants: boolean;
+  has_multiple_windows: boolean;
+  data_integrity: {
+    dropped_details: number;
+    missed_sends: number;
+    recorded_samples: number;
+    total_samples: number;
+  };
 }
 
 /** Keyset cursor returned as `next`; send all three fields back verbatim. */
@@ -555,12 +738,16 @@ export interface SampleCursor {
 
 export interface ReportPayload {
   id: string;
+  title?: string | null;
+  source?: Record<string, unknown> | null;
   template_id: string;
   target_id: string;
   mode: string;
   status: string;
   started_at: number | null;
   ended_at: number | null;
+  current_qps?: number | null;
+  current_concurrency?: number | null;
   processes: number;
   interrupt_ranges: { start: number; end: number }[] | null;
   error: string | null;
@@ -571,19 +758,81 @@ export interface ReportPayload {
     expected: number;
     bytes: number;
     dropped_details: number;
+    missed_sends?: number;
+    peak_in_flight?: number;
   };
   percentiles: {
+    min_us?: number | null;
+    avg_us?: number | null;
+    stdev_us?: number | null;
     p50_us: number | null;
+    p75_us?: number | null;
+    p90_us?: number | null;
     p95_us: number | null;
     p99_us: number | null;
+    p999_us?: number | null;
     max_us: number | null;
   };
+  summary?: ReportSummary;
   windows: WindowRow[];
   timeline: TimelineEvent[];
   timeseries: TimePoint[];
   snapshot?: unknown;
   verdict?: Verdict | null;
   breakdown?: ReportBreakdown;
+}
+
+export interface CompareMetricDiff {
+  key: string;
+  label: string;
+  unit: string;
+  base: number | null;
+  target: number | null;
+  delta: number | null;
+  delta_pct: number | null;
+  higher_is_better: boolean | null;
+  status: "improved" | "regressed" | "neutral";
+}
+
+export interface CompareProductDiff {
+  product_id: string;
+  base_samples: number | null;
+  target_samples: number | null;
+  base_qps: number | null;
+  target_qps: number | null;
+  base_p50_us: number | null;
+  target_p50_us: number | null;
+  base_p95_us: number | null;
+  target_p95_us: number | null;
+  p95_delta_pct: number | null;
+  base_p99_us: number | null;
+  target_p99_us: number | null;
+  base_error_rate: number | null;
+  target_error_rate: number | null;
+}
+
+export interface CompareAlignedPoint {
+  offset_sec: number;
+  base_qps: number | null;
+  target_qps: number | null;
+  base_p95_us: number | null;
+  target_p95_us: number | null;
+  base_p99_us: number | null;
+  target_p99_us: number | null;
+  base_error_rate: number | null;
+  target_error_rate: number | null;
+}
+
+export interface CompareReportPayload {
+  base: ReportPayload;
+  target: ReportPayload;
+  config_diff: {
+    base: Record<string, unknown>;
+    target: Record<string, unknown>;
+  };
+  metrics: CompareMetricDiff[];
+  products_diff: CompareProductDiff[];
+  aligned_series: CompareAlignedPoint[];
 }
 
 /** One entry of the probe history (`GET /api/v1/probes`). */
@@ -608,10 +857,15 @@ export interface ProbeRecord {
   transport_ok: boolean;
   passed_assertions: boolean;
   latency_us: number;
+  request_bytes?: number;
   response_bytes: number;
   error_class?: string | null;
   error?: string | null;
   captures: Record<string, string>;
+  /** Complete draft including credentials; returned by `GET /api/v1/probes/{id}`. */
+  request_draft?: RequestDraft | null;
+  variables_override?: Record<string, string> | null;
+  response_headers?: [string, string][] | null;
   /** Only returned by `GET /api/v1/probes/{id}`. */
   response_body?: string;
   response_truncated: boolean;
@@ -628,4 +882,6 @@ export interface ProbesQuery {
   request_id?: string;
   trace_id?: string;
   saved_request_id?: string;
+  protocol?: string;
+  q?: string;
 }

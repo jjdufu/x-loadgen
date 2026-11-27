@@ -32,18 +32,30 @@ const routes: RouteRecordRaw[] = [
         path: "runs",
         name: "runs",
         component: () => import("../views/RunsView.vue"),
-        meta: { title: "压测任务" },
+        meta: { title: "压测报告" },
+      },
+      {
+        path: "runs/compare",
+        name: "run-compare",
+        component: () => import("../views/RunCompareView.vue"),
+        meta: { title: "报告对比" },
       },
       {
         path: "runs/:id",
         name: "run-detail",
         component: () => import("../views/RunDetailView.vue"),
-        meta: { title: "压测任务" },
+        meta: { title: "压测报告" },
       },
       {
         path: "runs/:id/report",
         name: "run-report",
         redirect: (to) => ({ name: "run-detail", params: { id: to.params.id } }),
+      },
+      {
+        path: "history",
+        name: "history",
+        component: () => import("../views/HistoryView.vue"),
+        meta: { title: "历史记录" },
       },
       {
         path: "profiles",

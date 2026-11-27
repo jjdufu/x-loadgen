@@ -16,10 +16,45 @@ use serde_json::{Value, json};
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
 use crate::db::runs::RunRecord;
+use crate::engine::LatencyStats;
 use crate::report::{
-    ReportInput, SamplesQuery, build_report, compute_verdict, html, query_samples,
+    ReportInput, SamplesQuery, build_report, compare::build_comparison, compute_verdict, html,
+    query_samples,
 };
 use crate::run_assert::Verdict;
+
+/// Query string for `GET /api/v1/runs/compare`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompareQuery {
+    pub base: String,
+    pub target: String,
+}
+
+/// Side-by-side A/B comparison of two load-test reports.
+///
+/// # Errors
+///
+/// Returns 400 when `base`/`target` are empty or equal, 404 when unknown, or 401/403.
+pub async fn compare_reports(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Result<Query<CompareQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    require_ready_auth(&state, &headers)?;
+    let Query(query) = query?;
+    let base_id = query.base.trim();
+    let target_id = query.target.trim();
+    if base_id.is_empty() || target_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_request",
+            "both base and target run IDs are required",
+        ));
+    }
+    let base = load_report(&state, base_id)?;
+    let target = load_report(&state, target_id)?;
+    Ok(Json(build_comparison(&base, &target)))
+}
 
 /// JSON report (inline).
 ///
@@ -164,14 +199,14 @@ pub async fn get_events(
 
 fn load_report(state: &AppState, id: &str) -> Result<Value, ApiError> {
     let record = state.supervisor.get_run(id)?;
-    let (live_counters, live_percentiles, live_ring) = live_inputs(state, &record);
+    let (live_counters, live_latency, live_ring) = live_inputs(state, &record);
     let conn = state.lock_db()?;
     let input = ReportInput {
         paths: &state.paths,
         conn: &conn,
         record: &record,
         live_counters,
-        live_percentiles,
+        live_latency,
         live_ring,
     };
     Ok(build_report(&input)?)
@@ -183,14 +218,14 @@ fn load_report(state: &AppState, id: &str) -> Result<Value, ApiError> {
 ///
 /// Returns a storage error when window or histogram data cannot be read.
 pub(crate) fn load_verdict(state: &AppState, record: &RunRecord) -> Result<Verdict, ApiError> {
-    let (live_counters, live_percentiles, live_ring) = live_inputs(state, record);
+    let (live_counters, live_latency, live_ring) = live_inputs(state, record);
     let conn = state.lock_db()?;
     let input = ReportInput {
         paths: &state.paths,
         conn: &conn,
         record,
         live_counters,
-        live_percentiles,
+        live_latency,
         live_ring,
     };
     Ok(compute_verdict(&input)?)
@@ -201,7 +236,7 @@ fn live_inputs(
     record: &RunRecord,
 ) -> (
     Option<crate::engine::CounterSnapshot>,
-    Option<crate::engine::HistogramPercentiles>,
+    Option<LatencyStats>,
     Option<Vec<crate::engine::RingSlot>>,
 ) {
     let Some(task) = state.supervisor.get(&record.id) else {
@@ -223,7 +258,7 @@ fn live_inputs(
             };
             return (
                 Some(counters),
-                Some((merged.p50_us, merged.p95_us, merged.p99_us, merged.max_us)),
+                Some(merged.latency_stats),
                 Some(merged.timeseries),
             );
         }
@@ -231,7 +266,7 @@ fn live_inputs(
     }
     (
         Some(task.metrics.counters()),
-        Some(task.metrics.percentiles_us()),
+        Some(task.metrics.latency_stats_us()),
         Some(task.metrics.timeseries_slots()),
     )
 }
@@ -255,9 +290,9 @@ fn event_payload(state: &AppState, id: &str) -> (Value, bool) {
     match state.supervisor.get_run(id) {
         Ok(record) => {
             let active = matches!(record.status.as_str(), "running" | "stopping");
-            let (live_counters, live_percentiles, _) = live_inputs(state, &record);
+            let (live_counters, live_latency, _) = live_inputs(state, &record);
             let payload = if let Some(cnt) = live_counters {
-                let (p50, p95, p99, max) = live_percentiles.unwrap_or((None, None, None, None));
+                let lat = live_latency.unwrap_or_default();
                 json!({
                     "id": record.id,
                     "status": record.status,
@@ -269,10 +304,17 @@ fn event_payload(state: &AppState, id: &str) -> (Value, bool) {
                     "expected": cnt.expected,
                     "bytes": cnt.bytes,
                     "in_flight": cnt.in_flight,
-                    "p50_us": p50,
-                    "p95_us": p95,
-                    "p99_us": p99,
-                    "max_us": max,
+                    "peak_in_flight": cnt.peak_in_flight,
+                    "missed_sends": cnt.missed_sends,
+                    "min_us": lat.min_us,
+                    "avg_us": lat.avg_us,
+                    "p50_us": lat.p50_us,
+                    "p75_us": lat.p75_us,
+                    "p90_us": lat.p90_us,
+                    "p95_us": lat.p95_us,
+                    "p99_us": lat.p99_us,
+                    "p999_us": lat.p999_us,
+                    "max_us": lat.max_us,
                 })
             } else {
                 json!({

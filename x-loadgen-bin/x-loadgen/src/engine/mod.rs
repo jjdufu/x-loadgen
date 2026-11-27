@@ -20,12 +20,12 @@ mod tests;
 
 pub use cluster::{
     HistogramPercentiles, LiveSnapshot, MergedStats, apply_worker_split, load_live_snapshots,
-    merge_live, merge_percentiles, merge_worker_windows,
+    merge_latency_stats, merge_live, merge_percentiles, merge_worker_windows,
 };
 pub use execute::{ExecutePlan, ProductChoice, TenantChoice};
 pub use limits::{TrafficShare, check_caps, sum_traffic};
 pub use metrics::{
-    CounterSnapshot, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink,
+    CounterSnapshot, LatencyStats, Metrics, OutcomeClass, RING_CAPACITY, RingSlot, SampleSink,
     merge_timeseries_slots, new_latency_histogram, unix_now_ms,
 };
 pub use scheduler::{LiveTraffic, MAX_SCHEDULE_LAG, WindowPlan, run_window};

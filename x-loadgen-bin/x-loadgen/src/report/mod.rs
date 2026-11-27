@@ -1,10 +1,11 @@
-//! Redacted per-run reports, HTML export, and merged sample pagination.
+//! Redacted per-run reports, HTML export, A/B comparison, and merged sample pagination.
 
 pub mod breakdown;
+pub mod compare;
 pub mod html;
 pub mod redact;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
@@ -19,9 +20,10 @@ use crate::db::runs::{
 };
 use crate::engine::RunSnapshot;
 use crate::engine::{
-    CounterSnapshot, HistogramPercentiles, RING_CAPACITY, RingSlot, merge_percentiles,
+    CounterSnapshot, LatencyStats, RING_CAPACITY, RingSlot, merge_latency_stats,
     merge_timeseries_slots,
 };
+use crate::report::breakdown::{BreakdownContext, PerSecondSampleStats};
 use crate::report::redact::{apply_secrets, collect_secrets, redact_snapshot_json, scrub_text};
 use crate::run_assert::{
     ActualMetrics, ActualParts, AssertSpec, Verdict, evaluate, status_is_running,
@@ -33,29 +35,66 @@ pub struct ReportInput<'a> {
     pub conn: &'a Connection,
     pub record: &'a RunRecord,
     pub live_counters: Option<CounterSnapshot>,
-    pub live_percentiles: Option<HistogramPercentiles>,
+    pub live_latency: Option<LatencyStats>,
     pub live_ring: Option<Vec<RingSlot>>,
 }
 
 /// Build a redacted report JSON for one run. Window rows, checkpoints, the
-/// timeline and interrupt ranges are included; sample rows are not loaded.
+/// timeline, interrupt ranges, full latency percentiles, phase breakdowns, and
+/// summary KPIs are included.
 ///
 /// # Errors
 ///
 /// Returns an error if window, timeline, or histogram data cannot be read.
+#[allow(clippy::cast_precision_loss)]
 pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
-    let secrets = collect_secrets(
-        &serde_json::from_str::<Value>(&input.record.snapshot_json).unwrap_or(Value::Null),
-    );
+    let raw_snapshot_val =
+        serde_json::from_str::<Value>(&input.record.snapshot_json).unwrap_or(Value::Null);
+    let secrets = collect_secrets(&raw_snapshot_val);
     let snapshot = redact_snapshot_json(&input.record.snapshot_json);
+    let parsed_snap = serde_json::from_str::<RunSnapshot>(&input.record.snapshot_json).ok();
     let title = snapshot.get("title").cloned().unwrap_or(Value::Null);
     let source = snapshot.get("source").cloned().unwrap_or(Value::Null);
     let db_windows = list_windows(input.conn, &input.record.id)?;
     let windows = effective_windows(input, &db_windows);
     let timeline = list_timeline(input.conn, &input.record.id)?;
-    let (counters, percentiles) = counters_and_percentiles(input, &windows)?;
-    let timeseries = timeseries_points(input, &windows);
-    let breakdown = breakdown::build_breakdown(input.paths, &input.record.id, &secrets)?;
+    let (counters, latency_stats) = counters_and_latency(input, &windows)?;
+    let percentiles = latency_stats_to_json(latency_stats);
+    let verdict = verdict_from_totals(input.record, &windows, &counters, &percentiles);
+
+    let effective_elapsed_ms = verdict.actual.as_ref().and_then(|a| a.elapsed_ms);
+    let effective_elapsed_secs = effective_elapsed_ms
+        .filter(|&ms| ms > 0)
+        .map(|ms| (ms as f64) / 1000.0);
+    let apdex_satisfied_ms = parsed_snap
+        .as_ref()
+        .and_then(|s| s.assert.as_ref())
+        .and_then(|a| a.p95_ms.or_else(|| a.p99_ms.map(|v| v / 2.0)))
+        .filter(|&v| v > 0.0)
+        .unwrap_or(500.0);
+
+    let bd_out = breakdown::build_breakdown(
+        input.paths,
+        &input.record.id,
+        &secrets,
+        &BreakdownContext {
+            effective_elapsed_secs,
+            apdex_satisfied_ms,
+            snapshot_redacted: &snapshot,
+        },
+    )?;
+
+    let timeseries = timeseries_points(input, &windows, &bd_out.per_second);
+    let summary = build_summary(
+        input.record,
+        parsed_snap.as_ref(),
+        &counters,
+        &verdict,
+        &timeseries,
+        &windows,
+        &bd_out,
+    );
+
     let mut report = json!({
         "id": input.record.id,
         "title": title,
@@ -74,7 +113,8 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
         "created_at": input.record.created_at,
         "counters": counters,
         "percentiles": percentiles,
-        "breakdown": breakdown,
+        "summary": summary,
+        "breakdown": bd_out.breakdown_json,
         "windows": windows,
         "timeline": timeline,
         "timeseries": timeseries,
@@ -82,7 +122,6 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
         "snapshot": snapshot,
     });
     apply_secrets(&mut report, &secrets);
-    let verdict = verdict_from_totals(input.record, &windows, &counters, &percentiles);
     report["verdict"] = serde_json::to_value(&verdict)?;
     Ok(report)
 }
@@ -95,13 +134,139 @@ pub fn build_report(input: &ReportInput<'_>) -> Result<Value> {
 pub fn compute_verdict(input: &ReportInput<'_>) -> Result<Verdict> {
     let db_windows = list_windows(input.conn, &input.record.id)?;
     let windows = effective_windows(input, &db_windows);
-    let (counters, percentiles) = counters_and_percentiles(input, &windows)?;
+    let (counters, latency_stats) = counters_and_latency(input, &windows)?;
+    let percentiles = latency_stats_to_json(latency_stats);
     Ok(verdict_from_totals(
         input.record,
         &windows,
         &counters,
         &percentiles,
     ))
+}
+
+fn latency_stats_to_json(s: LatencyStats) -> Value {
+    json!({
+        "min_us": s.min_us,
+        "avg_us": s.avg_us,
+        "stdev_us": s.stdev_us,
+        "p50_us": s.p50_us,
+        "p75_us": s.p75_us,
+        "p90_us": s.p90_us,
+        "p95_us": s.p95_us,
+        "p99_us": s.p99_us,
+        "p999_us": s.p999_us,
+        "max_us": s.max_us,
+    })
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn build_summary(
+    record: &RunRecord,
+    snapshot: Option<&RunSnapshot>,
+    counters: &Value,
+    verdict: &Verdict,
+    timeseries: &[Value],
+    windows: &[Value],
+    bd: &breakdown::BreakdownOutput,
+) -> Value {
+    let samples = json_u64(&counters["samples"]);
+    let success = json_u64(&counters["success"]);
+    let failure = json_u64(&counters["failure"]);
+    let expected = json_u64(&counters["expected"]);
+    let bytes = json_u64(&counters["bytes"]);
+    let dropped_details = json_u64(&counters["dropped_details"]);
+    let missed_sends = json_u64(&counters["missed_sends"]);
+    let peak_in_flight = json_u64(&counters["peak_in_flight"]);
+
+    let wall_elapsed_ms = elapsed_ms(record);
+    let effective_elapsed_ms = verdict.actual.as_ref().and_then(|a| a.elapsed_ms);
+    let achieved_qps = verdict.actual.as_ref().and_then(|a| a.achieved_qps);
+    let configured_qps = verdict.actual.as_ref().and_then(|a| a.configured_qps);
+    let qps_ratio = verdict.actual.as_ref().and_then(|a| a.qps_ratio);
+
+    let peak_qps = timeseries
+        .iter()
+        .filter(|p| p["warmup"].as_bool() != Some(true))
+        .filter_map(|p| p["samples"].as_u64())
+        .max();
+    let max_in_flight = timeseries
+        .iter()
+        .filter_map(|p| p["in_flight_max"].as_u64())
+        .max()
+        .unwrap_or(0)
+        .max(peak_in_flight);
+
+    let success_rate = (samples > 0).then(|| (success as f64) / (samples as f64));
+    let error_rate = (samples > 0).then(|| (failure as f64) / (samples as f64));
+    let expected_rate = (samples > 0).then(|| (expected as f64) / (samples as f64));
+
+    let effective_secs = effective_elapsed_ms
+        .filter(|&ms| ms > 0)
+        .map(|ms| (ms as f64) / 1000.0);
+    let total_resp_bytes = bytes.max(bd.total_response_bytes);
+    let avg_bandwidth_bps = effective_secs.map(|s| (total_resp_bytes as f64) / s);
+    let avg_req_bandwidth_bps = effective_secs.map(|s| (bd.total_request_bytes as f64) / s);
+    let avg_response_bytes = (samples > 0).then(|| total_resp_bytes / samples);
+
+    let mut protocols: BTreeSet<String> = bd.protocols.iter().cloned().collect();
+    if protocols.is_empty()
+        && let Some(snap) = snapshot
+    {
+        for r in &snap.target.requests {
+            protocols.insert(r.protocol.clone());
+        }
+    }
+    let proto_list: Vec<String> = protocols.into_iter().collect();
+    let has_http = proto_list.iter().any(|p| p == "http");
+    let has_mazbri = proto_list.iter().any(|p| p == "mazbri");
+    let endpoint_count = bd.breakdown_json["products"]
+        .as_array()
+        .map_or(0, Vec::len)
+        .max(snapshot.map_or(0, |s| s.target.requests.len()));
+    let tenant_count = bd.breakdown_json["tenants"].as_array().map_or(0, |arr| {
+        arr.iter()
+            .filter(|t| t["tenant"].as_str() != Some("(none)"))
+            .count()
+    });
+    let shape = match (has_http, has_mazbri, endpoint_count > 1) {
+        (true, true, _) => "mixed",
+        (false, true, true) => "multi_mazbri",
+        (false, true, false) => "single_mazbri",
+        (_, false, true) => "multi_http",
+        (_, false, false) => "single_http",
+    };
+
+    json!({
+        "effective_elapsed_ms": effective_elapsed_ms,
+        "wall_elapsed_ms": wall_elapsed_ms,
+        "achieved_qps": achieved_qps,
+        "peak_qps": peak_qps,
+        "configured_qps": configured_qps,
+        "qps_ratio": qps_ratio,
+        "success_rate": success_rate,
+        "error_rate": error_rate,
+        "expected_rate": expected_rate,
+        "total_request_bytes": bd.total_request_bytes,
+        "total_response_bytes": total_resp_bytes,
+        "avg_response_bytes": avg_response_bytes,
+        "avg_bandwidth_bps": avg_bandwidth_bps,
+        "avg_request_bandwidth_bps": avg_req_bandwidth_bps,
+        "peak_in_flight": max_in_flight,
+        "apdex": bd.apdex_json,
+        "protocols": proto_list,
+        "shape": shape,
+        "has_http": has_http,
+        "has_mazbri": has_mazbri,
+        "has_multiple_endpoints": endpoint_count > 1,
+        "has_multiple_tenants": tenant_count > 1,
+        "has_multiple_windows": windows.len() > 1,
+        "data_integrity": {
+            "dropped_details": dropped_details,
+            "missed_sends": missed_sends,
+            "recorded_samples": bd.breakdown_json["samples"],
+            "total_samples": samples,
+        },
+    })
 }
 
 /// Windows used to report and time the run. While a multiprocess run is active
@@ -267,7 +432,10 @@ fn json_opt_u64(value: &Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
 }
 
-fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Result<(Value, Value)> {
+fn counters_and_latency(
+    input: &ReportInput<'_>,
+    windows: &[Value],
+) -> Result<(Value, LatencyStats)> {
     let worker_fallback = if windows.is_empty() && input.live_counters.is_none() {
         Some(load_worker_checkpoint_totals(input.paths, &input.record.id))
     } else {
@@ -283,6 +451,7 @@ fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Resul
             "bytes": live.bytes,
             "dropped_details": live.dropped_details,
             "missed_sends": live.missed_sends,
+            "peak_in_flight": live.peak_in_flight,
         })
     } else if let Some((fallback_counters, _)) = worker_fallback.as_ref() {
         fallback_counters.clone()
@@ -290,8 +459,8 @@ fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Resul
         sum_windows(windows)
     };
 
-    let percentiles = if let Some((p50, p95, p99, max)) = input.live_percentiles {
-        json!({ "p50_us": p50, "p95_us": p95, "p99_us": p99, "max_us": max })
+    let latency_stats = if let Some(live) = input.live_latency {
+        live
     } else {
         let mut blobs = latest_checkpoint_blobs(input.conn, &input.record.id)?;
         if blobs.is_empty() {
@@ -302,15 +471,9 @@ fn counters_and_percentiles(input: &ReportInput<'_>, windows: &[Value]) -> Resul
                 blobs = fb_blobs;
             }
         }
-        let (p50, p95, p99, max) =
-            merge_percentiles(&blobs, 60_000_000).unwrap_or((None, None, None, None));
-        json!({ "p50_us": p50, "p95_us": p99_or(p95), "p99_us": p99, "max_us": max })
+        merge_latency_stats(&blobs, 60_000_000).unwrap_or_default()
     };
-    Ok((counters, percentiles))
-}
-
-const fn p99_or(v: Option<u64>) -> Option<u64> {
-    v
+    Ok((counters, latency_stats))
 }
 
 /// Sum latest checkpoints across worker SQLite shards (`wNN.sqlite`).
@@ -415,11 +578,46 @@ pub fn load_persisted_timeseries(
 }
 
 #[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn ring_slots_to_json(slots: &[RingSlot]) -> Vec<Value> {
+    ring_slots_to_json_with_samples(slots, &BTreeMap::new())
+}
+
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn ring_slots_to_json_with_samples(
+    slots: &[RingSlot],
+    per_sec: &BTreeMap<u64, PerSecondSampleStats>,
+) -> Vec<Value> {
     slots
         .iter()
         .filter(|slot| slot.unix_sec != 0)
         .map(|slot| {
+            let exact = per_sec.get(&slot.unix_sec);
+            let avg_us = exact
+                .and_then(|e| e.avg_us)
+                .or_else(|| slot.avg_latency_us());
+            let p50_us = exact
+                .and_then(|e| e.p50_us)
+                .or_else(|| slot.approx_quantile_us(0.50));
+            let p90_us = exact
+                .and_then(|e| e.p90_us)
+                .or_else(|| slot.approx_quantile_us(0.90));
+            let p95_us = exact
+                .and_then(|e| e.p95_us)
+                .or_else(|| slot.approx_quantile_us(0.95));
+            let p99_us = exact
+                .and_then(|e| e.p99_us)
+                .or_else(|| slot.approx_quantile_us(0.99));
+            let max_us = exact
+                .and_then(|e| e.max_us)
+                .or_else(|| (slot.latency_max_us > 0).then_some(slot.latency_max_us));
+            let error_rate = if slot.samples > 0 {
+                ((slot.failure as f64) / (slot.samples as f64) * 10000.0).round() / 10000.0
+            } else {
+                0.0
+            };
+            let error_classes = exact.map(|e| &e.error_classes);
             json!({
                 "unix_sec": slot.unix_sec,
                 "samples": slot.samples,
@@ -427,22 +625,36 @@ pub fn ring_slots_to_json(slots: &[RingSlot]) -> Vec<Value> {
                 "failure": slot.failure,
                 "expected": slot.expected,
                 "bytes": slot.bytes,
+                "request_bytes": slot.request_bytes,
                 "warmup": slot.warmup,
+                "in_flight_max": slot.in_flight_max,
+                "avg_latency_us": avg_us,
+                "p50_us": p50_us,
+                "p90_us": p90_us,
+                "p95_us": p95_us,
+                "p99_us": p99_us,
+                "max_us": max_us,
+                "error_rate": error_rate,
+                "error_classes": error_classes,
             })
         })
         .collect()
 }
 
-fn timeseries_points(input: &ReportInput<'_>, windows: &[Value]) -> Vec<Value> {
+fn timeseries_points(
+    input: &ReportInput<'_>,
+    windows: &[Value],
+    per_sec: &BTreeMap<u64, PerSecondSampleStats>,
+) -> Vec<Value> {
     if let Some(slots) = input.live_ring.as_ref() {
         let sorted = merge_timeseries_slots(slots.iter().cloned());
         if !sorted.is_empty() {
-            return ring_slots_to_json(&sorted);
+            return ring_slots_to_json_with_samples(&sorted, per_sec);
         }
     }
     let persisted = load_persisted_timeseries(input.paths, input.conn, &input.record.id);
     if !persisted.is_empty() {
-        return ring_slots_to_json(&persisted);
+        return ring_slots_to_json_with_samples(&persisted, per_sec);
     }
     windows
         .iter()
@@ -455,6 +667,10 @@ fn timeseries_points(input: &ReportInput<'_>, windows: &[Value]) -> Vec<Value> {
                 "failure": window["failure"],
                 "expected": window["expected"],
                 "bytes": window["bytes"],
+                "p50_us": window["p50_us"],
+                "p95_us": window["p95_us"],
+                "p99_us": window["p99_us"],
+                "max_us": window["max_us"],
             })
         })
         .collect()
@@ -586,6 +802,8 @@ struct SampleRow {
     start_unix_ms: i64,
     end_unix_ms: i64,
     latency_us: i64,
+    protocol: String,
+    http_method: Option<String>,
     product_id: String,
     product_name: Option<String>,
     request_index: Option<i64>,
@@ -596,7 +814,14 @@ struct SampleRow {
     error_class: Option<String>,
     request_id: Option<String>,
     error: Option<String>,
+    request_bytes: Option<i64>,
     response_bytes: Option<i64>,
+    queue_us: Option<i64>,
+    ttfb_us: Option<i64>,
+    transfer_us: Option<i64>,
+    crypto_seal_us: Option<i64>,
+    crypto_unseal_us: Option<i64>,
+    token_wait_us: Option<i64>,
     customer_name: Option<String>,
     trace_id: Option<String>,
     trace_echo: String,
@@ -613,6 +838,8 @@ impl SampleRow {
             "start_unix_ms": self.start_unix_ms,
             "end_unix_ms": self.end_unix_ms,
             "latency_us": self.latency_us,
+            "protocol": self.protocol,
+            "http_method": self.http_method,
             "product_id": self.product_id,
             "product_name": self.product_name,
             "request_index": self.request_index,
@@ -623,7 +850,14 @@ impl SampleRow {
             "error_class": self.error_class,
             "request_id": self.request_id,
             "error": self.error.map(|text| scrub_text(&text, secrets)),
+            "request_bytes": self.request_bytes,
             "response_bytes": self.response_bytes,
+            "queue_us": self.queue_us,
+            "ttfb_us": self.ttfb_us,
+            "transfer_us": self.transfer_us,
+            "crypto_seal_us": self.crypto_seal_us,
+            "crypto_unseal_us": self.crypto_unseal_us,
+            "token_wait_us": self.token_wait_us,
             "customer_name": self.customer_name,
             "trace_id": self.trace_id,
             "trace_echo": self.trace_echo,
@@ -647,6 +881,7 @@ fn captures_json(raw: Option<&str>, secrets: &[String]) -> Value {
     )
 }
 
+#[allow(clippy::too_many_lines)]
 fn load_worker_samples(
     paths: &DataPaths,
     run_id: &str,
@@ -673,9 +908,11 @@ fn load_worker_samples(
             (Some(c.end_unix_ms), tie)
         }
     };
-    let sql = "SELECT seq, start_unix_ms, end_unix_ms, latency_us, product_id, product_name,
-                      request_index, http_status, success, expected, reason, error_class,
-                      request_id, error, response_bytes, customer_name, trace_id, trace_echo,
+    let sql = "SELECT seq, start_unix_ms, end_unix_ms, latency_us, protocol, http_method,
+                      product_id, product_name, request_index, http_status, success, expected,
+                      reason, error_class, request_id, error, request_bytes, response_bytes,
+                      queue_us, ttfb_us, transfer_us, crypto_seal_us, crypto_unseal_us,
+                      token_wait_us, customer_name, trace_id, trace_echo,
                       warmup, captures, response_body
                FROM samples
                WHERE (?1 IS NULL OR product_id = ?1)
@@ -726,23 +963,32 @@ fn load_worker_samples(
                     start_unix_ms: row.get(1)?,
                     end_unix_ms: row.get(2)?,
                     latency_us: row.get(3)?,
-                    product_id: row.get(4)?,
-                    product_name: row.get(5)?,
-                    request_index: row.get(6)?,
-                    http_status: row.get(7)?,
-                    success: row.get::<_, i64>(8)? != 0,
-                    expected: row.get::<_, i64>(9)? != 0,
-                    reason: row.get(10)?,
-                    error_class: row.get(11)?,
-                    request_id: row.get(12)?,
-                    error: row.get(13)?,
-                    response_bytes: row.get(14)?,
-                    customer_name: row.get(15)?,
-                    trace_id: row.get(16)?,
-                    trace_echo: row.get(17)?,
-                    warmup: row.get::<_, i64>(18)? != 0,
-                    captures: row.get(19)?,
-                    response_body: row.get(20)?,
+                    protocol: row.get(4)?,
+                    http_method: row.get(5)?,
+                    product_id: row.get(6)?,
+                    product_name: row.get(7)?,
+                    request_index: row.get(8)?,
+                    http_status: row.get(9)?,
+                    success: row.get::<_, i64>(10)? != 0,
+                    expected: row.get::<_, i64>(11)? != 0,
+                    reason: row.get(12)?,
+                    error_class: row.get(13)?,
+                    request_id: row.get(14)?,
+                    error: row.get(15)?,
+                    request_bytes: row.get(16)?,
+                    response_bytes: row.get(17)?,
+                    queue_us: row.get(18)?,
+                    ttfb_us: row.get(19)?,
+                    transfer_us: row.get(20)?,
+                    crypto_seal_us: row.get(21)?,
+                    crypto_unseal_us: row.get(22)?,
+                    token_wait_us: row.get(23)?,
+                    customer_name: row.get(24)?,
+                    trace_id: row.get(25)?,
+                    trace_echo: row.get(26)?,
+                    warmup: row.get::<_, i64>(27)? != 0,
+                    captures: row.get(28)?,
+                    response_body: row.get(29)?,
                 })
             },
         )

@@ -13,13 +13,14 @@ use tracing::warn;
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
 use crate::db::StoreError;
+use crate::db::collections::{RequestDraft, get_request};
 use crate::db::probes::{
-    NewProbe, ProbeRecord, ProbesQuery, delete_probe, get_probe, insert_probe, list_probes,
+    NewProbe, ProbeRecord, ProbesQuery, clear_probes, delete_probe, get_probe, insert_probe,
+    list_probes,
 };
 use crate::db::workspace::{GeneratedBindingKeypair, create_binding_keypair};
-use crate::engine::snapshot::ExecutionTarget;
+use crate::engine::snapshot::{ExecutionTarget, default_timestamped_title};
 use crate::probe::{ProbeRequest, ProbeResponse, prepare_probe, run_probe};
-use crate::report::redact::{collect_secrets, scrub_text};
 
 /// Body for `POST /api/v1/crypto/binding-keypair`.
 #[derive(Debug, Deserialize)]
@@ -49,11 +50,19 @@ pub async fn probe_handler(
 ) -> Result<Json<ProbeResponse>, ApiError> {
     require_ready_auth(&state, &headers)?;
     let seq = req.seq.unwrap_or(0);
-    let target = {
+    let (target, raw_draft) = {
         let db = state.lock_db()?;
-        prepare_probe(&db, &req)?
+        let target = prepare_probe(&db, &req)?;
+        let draft = if let Some(d) = req.request.clone() {
+            Some(d)
+        } else if let Some(rid) = req.request_id.as_deref() {
+            get_request(&db, rid).ok().map(|s| s.to_draft())
+        } else {
+            None
+        };
+        (target, draft)
     };
-    let context = HistoryContext::new(&req, &target);
+    let context = HistoryContext::new(&req, &target, raw_draft);
     let mut resp = run_probe(target, seq, req.trace_sampled, state.probe_captures()).await?;
     state.remember_probe_captures(&resp.captures);
     let entry = context.entry(&resp);
@@ -74,36 +83,56 @@ struct HistoryContext {
     environment_id: Option<String>,
     environment_name: Option<String>,
     product_id: Option<String>,
-    secrets: Vec<String>,
+    request_draft_json: String,
+    variables_override: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl HistoryContext {
-    fn new(req: &ProbeRequest, target: &ExecutionTarget) -> Self {
+    fn new(req: &ProbeRequest, target: &ExecutionTarget, raw_draft: Option<RequestDraft>) -> Self {
         let request = target.requests.first();
+        let draft = raw_draft
+            .or_else(|| request.map(crate::engine::snapshot::ExecutionRequest::to_detached_draft));
+        let saved_request_id = req
+            .request_id
+            .clone()
+            .or_else(|| req.request.as_ref().and_then(|d| d.id.clone()));
+        let raw_name = request.map_or_default(|r| r.name.clone());
+        let request_name = if is_unnamed(&raw_name) && saved_request_id.is_none() {
+            let method = request.map_or("GET", |r| r.method.as_str());
+            let ep = request.map_or("", |r| r.endpoint.as_str());
+            default_timestamped_title(method, ep)
+        } else {
+            raw_name
+        };
+        let request_draft_json = draft
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .unwrap_or_else(|| "{}".to_string());
         Self {
-            // The workbench sends the open tab as a draft that carries the saved id.
-            saved_request_id: req
-                .request_id
-                .clone()
-                .or_else(|| req.request.as_ref().and_then(|draft| draft.id.clone())),
-            request_name: request.map_or_default(|r| r.name.clone()),
+            saved_request_id,
+            request_name,
             protocol: request.map_or_default(|r| r.protocol.clone()),
             environment_id: target.environment_id.clone(),
             environment_name: target.environment_name.clone(),
             product_id: request.map(crate::engine::snapshot::ExecutionRequest::sample_product_id),
-            secrets: collect_secrets(&serde_json::to_value(target).unwrap_or(Value::Null)),
+            request_draft_json,
+            variables_override: req.variables_override.clone(),
         }
     }
 
-    /// History entry with every known secret value masked.
+    /// Complete Postman-style history entry preserving full draft & credentials.
     fn entry(&self, resp: &ProbeResponse) -> NewProbe {
-        let scrub = |text: &str| scrub_text(text, &self.secrets);
+        let request_bytes = resp
+            .request_preview
+            .body_preview
+            .as_ref()
+            .map_or(0, String::len);
         NewProbe {
             saved_request_id: self.saved_request_id.clone(),
             request_name: self.request_name.clone(),
             protocol: self.protocol.clone(),
             method: resp.request_preview.method.clone(),
-            url: scrub(&resp.request_preview.url),
+            url: resp.request_preview.url.clone(),
             environment_id: self.environment_id.clone(),
             environment_name: self.environment_name.clone(),
             tenant_name: resp.tenant_name.clone(),
@@ -116,17 +145,22 @@ impl HistoryContext {
             transport_ok: resp.transport_ok,
             passed_assertions: resp.passed_assertions,
             latency_us: resp.latency_us,
+            request_bytes,
             response_bytes: resp.response_bytes,
             error_class: resp.error_class.clone(),
-            error: resp.error.as_deref().map(scrub),
-            captures: resp
-                .captures
-                .iter()
-                .map(|(name, value)| (name.clone(), scrub(value)))
-                .collect(),
-            response_body: scrub(&resp.body_text),
+            error: resp.error.clone(),
+            captures: resp.captures.clone(),
+            request_draft_json: self.request_draft_json.clone(),
+            variables_override: self.variables_override.clone(),
+            response_headers: resp.headers.clone(),
+            response_body: resp.body_text.clone(),
         }
     }
+}
+
+fn is_unnamed(name: &str) -> bool {
+    let trimmed = name.trim();
+    trimmed.is_empty() || matches!(trimmed, "新建请求" | "未命名请求" | "Untitled Request")
 }
 
 /// `GET /api/v1/probes`: newest probes first, without response bodies.
@@ -179,6 +213,21 @@ pub async fn delete_probe_handler(
     let id = parse_probe_id(&id)?;
     let db = state.lock_db()?;
     delete_probe(&db, id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/probes`: clear all stored probe history entries.
+///
+/// # Errors
+///
+/// Returns 401/403 when unauthorized.
+pub async fn clear_probes_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    require_ready_auth(&state, &headers)?;
+    let db = state.lock_db()?;
+    clear_probes(&db)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

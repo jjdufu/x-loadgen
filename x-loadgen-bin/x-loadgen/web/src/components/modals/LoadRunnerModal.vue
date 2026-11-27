@@ -2,15 +2,28 @@
   <UiDialog
     :open="runnerModalOpen"
     :title="modalTitle"
-    description="启动时自动冻结当前请求、集合及环境快照，并跳转至实时吞吐监控大盘。"
     max-width="4xl"
     @close="runnerModalOpen = false"
   >
     <div class="space-y-5">
-      <!-- Top Environment & Load Profile Selector -->
+      <!-- Top Environment, Load Profile & Run Name -->
       <div
-        class="grid grid-cols-1 gap-4 rounded-lg border border-border bg-surface/50 p-4 md:grid-cols-2"
+        class="grid grid-cols-1 gap-4 rounded-lg border border-border bg-surface/50 p-4 md:grid-cols-3"
       >
+        <div class="space-y-1.5">
+          <label
+            :for="titleInputId"
+            class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+          >
+            报告名称
+          </label>
+          <UiInput
+            :id="titleInputId"
+            v-model="runTitle"
+            placeholder="留空按时间戳命名"
+          />
+        </div>
+
         <div class="space-y-1.5">
           <label
             :for="envSelectId"
@@ -32,7 +45,7 @@
             :for="profileSelectId"
             class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
           >
-            负载预设（可选）
+            负载预设
           </label>
           <UiSelect
             :id="profileSelectId"
@@ -48,7 +61,7 @@
         </div>
       </div>
 
-      <!-- Single Request Summary OR Collection Weighted Request Selector -->
+      <!-- Single Request Summary OR Collection/Batch Weighted Request Selector -->
       <div
         v-if="runnerContext.mode === 'single' && runnerContext.draft"
         class="flex items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"
@@ -76,12 +89,12 @@
           </span>
         </div>
         <span class="shrink-0 text-xs text-muted-foreground">
-          {{ runnerContext.draft.id ? "已保存请求" : "当前草稿" }}
+          {{ runnerContext.fromRunId ? "历史重跑" : runnerContext.draft.id ? "已保存请求" : "临时草稿" }}
         </span>
       </div>
 
       <div
-        v-else-if="runnerContext.mode === 'collection'"
+        v-else-if="runnerContext.mode === 'collection' || runnerContext.mode === 'batch'"
         class="overflow-hidden rounded-lg border bg-card"
         :class="launchBlockReason ? 'border-rose-500/60' : 'border-border'"
       >
@@ -96,7 +109,7 @@
               全选
             </UiButton>
             <UiButton variant="ghost" size="xs" @click="toggleAll(false)">
-              清空选择
+              清空
             </UiButton>
           </div>
         </div>
@@ -105,13 +118,13 @@
           v-if="collectionRows.length === 0"
           class="p-8 text-center text-sm text-muted-foreground"
         >
-          该集合内暂无请求，请先创建或保存请求。
+          暂无可压测接口
         </div>
 
         <div v-else class="max-h-56 divide-y divide-border overflow-y-auto">
           <div
-            v-for="item in collectionRows"
-            :key="item.request.id"
+            v-for="(item, idx) in collectionRows"
+            :key="item.key"
             class="flex items-center justify-between px-4 py-2.5 transition-colors hover:bg-muted/35"
           >
             <div class="flex min-w-0 flex-1 items-center gap-3">
@@ -141,6 +154,14 @@
               </div>
             </div>
             <div class="ml-3 flex shrink-0 items-center gap-2">
+              <UiButton
+                v-if="runnerContext.mode === 'batch'"
+                variant="ghost"
+                size="xs"
+                @click="openBatchItemInTab(idx)"
+              >
+                编辑
+              </UiButton>
               <span class="text-xs text-muted-foreground whitespace-nowrap">权重</span>
               <UiInput
                 :model-value="item.weight"
@@ -209,7 +230,7 @@ import type {
   AssertSpec,
   CreateRunRequest,
   LoadConfig,
-  SavedRequest,
+  RequestDraft,
 } from "../../api/types";
 import {
   cloneJson,
@@ -223,7 +244,9 @@ import {
   collections,
   findCollectionById,
   flattenCollectionRequests,
+  formatLocalTimestamp,
   loadProfiles,
+  openDraftInNewTab,
   refreshMeta,
   runnerContext,
   runnerModalOpen,
@@ -237,15 +260,18 @@ import UiInput from "../ui/UiInput.vue";
 import UiSelect from "../ui/UiSelect.vue";
 
 interface SelectableRequestRow {
+  key: string;
   folderPath: string;
-  request: SavedRequest;
+  request: RequestDraft;
   enabled: boolean;
   weight: number;
 }
 
 const router = useRouter();
+const titleInputId = useId();
 const envSelectId = useId();
 const profileSelectId = useId();
+const runTitle = ref("");
 const selectedEnvId = ref("");
 const selectedProfileId = ref("");
 const loadConfig = ref<LoadConfig>(createDefaultLoadConfig());
@@ -255,9 +281,12 @@ const launching = ref(false);
 
 const modalTitle = computed(() => {
   if (runnerContext.value.mode === "collection") {
-    return `集合加权混合压测：${runnerContext.value.collectionName ?? ""}`;
+    return `集合压测：${runnerContext.value.collectionName ?? ""}`;
   }
-  return `发起接口压测：${runnerContext.value.draft?.name || "当前请求"}`;
+  if (runnerContext.value.mode === "batch") {
+    return `重跑批量压测：${runnerContext.value.initialTitle ?? ""}`;
+  }
+  return `发起压测：${runnerContext.value.draft?.name || "当前请求"}`;
 });
 
 const enabledCount = computed(
@@ -265,47 +294,83 @@ const enabledCount = computed(
 );
 
 const launchBlockReason = computed<string | null>(() => {
-  if (runnerContext.value.mode === "collection") {
+  if (
+    runnerContext.value.mode === "collection" ||
+    runnerContext.value.mode === "batch"
+  ) {
     if (collectionRows.value.length === 0) {
-      return "当前集合暂无已保存请求，无法启动混合压测。";
+      return "暂无可压测接口";
     }
     if (enabledCount.value === 0) {
-      return "请至少勾选一个参与压测的请求。";
+      return "至少勾选一个接口";
     }
     return null;
   }
   if (!runnerContext.value.draft?.endpoint.trim()) {
-    return "当前请求尚未填写请求地址或网关路径，请先返回工作台补充地址后再发起压测。";
+    return "缺少请求地址或网关路径";
   }
   return null;
 });
 
 watch(runnerModalOpen, (open) => {
   if (!open) return;
-  selectedEnvId.value = activeEnvironmentId.value ?? "";
+  const ctx = runnerContext.value;
+  selectedEnvId.value =
+    ctx.initialEnvId &&
+    selectableEnvironments.value.some((e) => e.id === ctx.initialEnvId)
+      ? ctx.initialEnvId
+      : (activeEnvironmentId.value ?? "");
   selectedProfileId.value = "";
-  loadConfig.value = createDefaultLoadConfig();
-  assertSpec.value = null;
+  loadConfig.value = ctx.initialLoadConfig
+    ? cloneJson(ctx.initialLoadConfig)
+    : createDefaultLoadConfig();
+  assertSpec.value = ctx.initialAssertSpec
+    ? cloneJson(ctx.initialAssertSpec)
+    : null;
 
-  if (
-    runnerContext.value.mode === "collection" &&
-    runnerContext.value.collectionId
-  ) {
-    const node = findCollectionById(
-      collections.value,
-      runnerContext.value.collectionId,
-    );
+  if (ctx.mode === "single") {
+    const isSaved = Boolean(ctx.draft?.id);
+    const name = ctx.draft?.name?.trim() || "";
+    runTitle.value = isSaved && name ? name : "";
+  } else if (ctx.mode === "batch") {
+    runTitle.value = "";
+  } else {
+    runTitle.value = ctx.collectionName ?? "";
+  }
+
+  if (ctx.mode === "collection" && ctx.collectionId) {
+    const node = findCollectionById(collections.value, ctx.collectionId);
     collectionRows.value = node
       ? flattenCollectionRequests(node).map((r) => ({
-          ...r,
+          key: r.request.id,
+          folderPath: r.folderPath,
+          request: r.request,
           enabled: true,
           weight: Math.max(1, r.request.weight || 1),
         }))
       : [];
+  } else if (ctx.mode === "batch" && ctx.batchDrafts) {
+    collectionRows.value = ctx.batchDrafts.map((d, idx) => ({
+      key: `batch-${idx}`,
+      folderPath: "",
+      request: d,
+      enabled: true,
+      weight: Math.max(1, d.weight || 1),
+    }));
   } else {
     collectionRows.value = [];
   }
 });
+
+function openBatchItemInTab(idx: number): void {
+  const row = collectionRows.value[idx];
+  if (!row) return;
+  const copy = cloneJson(row.request);
+  copy.id = null;
+  copy.collection_id = null;
+  openDraftInNewTab(copy);
+  runnerModalOpen.value = false;
+}
 
 function toggleAll(on: boolean): void {
   for (const row of collectionRows.value) {
@@ -346,7 +411,10 @@ function applyProfilePreset(profileId: string): void {
 
 async function launchRun(): Promise<void> {
   const cfg = loadConfig.value;
+  const explicitTitle = runTitle.value.trim();
+  const ts = formatLocalTimestamp();
   const body: CreateRunRequest = {
+    title: explicitTitle || null,
     environment_id: selectedEnvId.value || null,
     load_profile_id: selectedProfileId.value || null,
     mode: cfg.loop_enabled ? "loop" : "once",
@@ -375,23 +443,53 @@ async function launchRun(): Promise<void> {
 
   if (runnerContext.value.mode === "collection") {
     const selected = collectionRows.value
-      .filter((r) => r.enabled)
+      .filter((r) => r.enabled && r.request.id)
       .map((r) => ({
-        request_id: r.request.id,
+        request_id: r.request.id as string,
         weight: Math.max(1, Number(r.weight) || 1),
       }));
     if (selected.length === 0) {
-      toast.error("请至少勾选一个要参与压测的请求");
+      toast.error("至少勾选一个接口");
       return;
     }
     body.collection_id = runnerContext.value.collectionId ?? null;
     body.selected_requests = selected;
-  } else if (runnerContext.value.draft) {
-    if (!runnerContext.value.draft.endpoint.trim()) {
-      toast.error("请先在工作台填写请求地址或路径");
+  } else if (runnerContext.value.mode === "batch") {
+    const drafts = collectionRows.value
+      .filter((r) => r.enabled)
+      .map((r) =>
+        normalizeDraftForApi({
+          ...r.request,
+          id: null,
+          collection_id: null,
+          weight: Math.max(1, Number(r.weight) || 1),
+        }),
+      );
+    if (drafts.length === 0) {
+      toast.error("至少勾选一个接口");
       return;
     }
-    body.adhoc_request = normalizeDraftForApi(runnerContext.value.draft);
+    body.adhoc_requests = drafts;
+    if (!body.title) {
+      const baseName = runnerContext.value.initialTitle?.trim() || "批量压测";
+      body.title = `${baseName} · ${ts}`;
+    }
+  } else if (runnerContext.value.draft) {
+    if (!runnerContext.value.draft.endpoint.trim()) {
+      toast.error("缺少请求地址或路径");
+      return;
+    }
+    const normalized = normalizeDraftForApi(runnerContext.value.draft);
+    body.adhoc_request = normalized;
+    if (!body.title && !normalized.id) {
+      const label =
+        normalized.name &&
+        normalized.name !== "新建请求" &&
+        normalized.name !== "未命名请求"
+          ? normalized.name
+          : `${normalized.method} ${normalized.endpoint.slice(0, 36)}`;
+      body.title = `${label} · ${ts}`;
+    }
   }
 
   launching.value = true;
@@ -399,7 +497,7 @@ async function launchRun(): Promise<void> {
     const created = await api.createRun(body);
     runnerModalOpen.value = false;
     void refreshMeta();
-    toast.success(`压测任务已启动 (${created.id.slice(0, 8)})`);
+    toast.success(`已启动 (${created.id.slice(0, 8)})`);
     await router.push({ name: "run-detail", params: { id: created.id } });
   } finally {
     launching.value = false;

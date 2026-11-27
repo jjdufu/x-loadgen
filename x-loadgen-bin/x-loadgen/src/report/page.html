@@ -18,9 +18,14 @@
     --emerald: #059669;
     --emerald-bg: rgba(5, 150, 105, 0.08);
     --emerald-border: rgba(5, 150, 105, 0.25);
+    --amber: #d97706;
+    --amber-bg: rgba(217, 119, 6, 0.09);
+    --amber-border: rgba(217, 119, 6, 0.28);
     --rose: #e11d48;
     --rose-bg: rgba(225, 29, 72, 0.08);
     --rose-border: rgba(225, 29, 72, 0.25);
+    --blue: #2563eb;
+    --violet: #7c3aed;
     --font-sans: "Geist Variable", "Geist", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
     --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
@@ -37,9 +42,14 @@
       --emerald: #34d399;
       --emerald-bg: rgba(52, 211, 153, 0.1);
       --emerald-border: rgba(52, 211, 153, 0.3);
+      --amber: #fbbf24;
+      --amber-bg: rgba(251, 191, 36, 0.1);
+      --amber-border: rgba(251, 191, 36, 0.3);
       --rose: #fb7185;
       --rose-bg: rgba(251, 113, 133, 0.1);
       --rose-border: rgba(251, 113, 133, 0.3);
+      --blue: #60a5fa;
+      --violet: #a78bfa;
     }
   }
   * { box-sizing: border-box; }
@@ -51,7 +61,6 @@
     color: var(--text);
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
   header {
     background: var(--surface);
@@ -71,7 +80,8 @@
     display: inline-flex; align-items: center; justify-content: center;
     letter-spacing: -0.03em;
   }
-  main { max-width: 1200px; margin: 0 auto; padding: 24px 32px 64px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 32px 64px; }
   section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -85,43 +95,41 @@
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--muted);
-    margin: 0 0 16px;
+    margin: 0 0 14px;
   }
-  h3 { font-size: 12px; font-weight: 600; margin: 18px 0 8px; }
+  h3 { font-size: 12px; font-weight: 600; margin: 18px 0 8px; color: var(--text); }
   .muted { color: var(--muted); font-size: 13px; }
   .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .badge {
-    display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 6px;
+    display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px;
     font-size: 12px; font-weight: 600;
     background: var(--surface-muted); border: 1px solid var(--border);
   }
   .badge-pass { color: var(--emerald); border-color: var(--emerald-border); background: var(--emerald-bg); }
+  .badge-warn { color: var(--amber); border-color: var(--amber-border); background: var(--amber-bg); }
   .badge-fail { color: var(--rose); border-color: var(--rose-border); background: var(--rose-bg); }
-  .table-wrap { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th {
-    color: var(--muted); font-weight: 500;
-    border-bottom: 1px solid var(--border);
-    padding: 10px 12px; text-align: left; white-space: nowrap;
-  }
-  td {
-    border-bottom: 1px solid var(--border);
-    padding: 10px 12px; text-align: left;
+  .alert-warn {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--amber-border);
+    background: var(--amber-bg);
+    color: var(--amber);
+    font-size: 12px;
     font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
   }
-  tbody tr:last-child td { border-bottom: none; }
+  .meta-bar {
+    display: flex; flex-wrap: wrap; gap: 10px 20px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+  }
+  .meta-bar strong { color: var(--text); font-weight: 600; }
   .cards {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
-  @media (min-width: 640px) {
-    .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-  @media (min-width: 1024px) {
-    .cards { grid-template-columns: repeat(8, minmax(0, 1fr)); }
-  }
+  @media (min-width: 640px) { .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (min-width: 1080px) { .cards { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
   .card {
     background: var(--surface-muted);
     border: 1px solid var(--border);
@@ -135,7 +143,40 @@
     font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
     overflow: hidden; text-overflow: ellipsis;
   }
-  .chart { width: 100%; height: 290px; }
+  .card small { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+  .text-ok { color: var(--emerald); }
+  .text-warn { color: var(--amber); }
+  .text-err { color: var(--rose); }
+  .chart-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    margin-top: 20px;
+  }
+  @media (min-width: 1000px) { .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .chart-card h2 { margin-bottom: 10px; }
+  .chart { width: 100%; height: 280px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th {
+    color: var(--muted); font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    padding: 9px 10px; text-align: left; white-space: nowrap;
+  }
+  td {
+    border-bottom: 1px solid var(--border);
+    padding: 9px 10px; text-align: left;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -147,30 +188,95 @@
       <div class="muted mono">任务 __ID__ · 状态 <span id="status-text">__STATUS__</span></div>
     </div>
   </div>
-  <div id="verdict-badge"></div>
+  <div class="badges" id="header-badges"></div>
 </header>
 <main>
   <section>
-    <h2>总览指标</h2>
-    <div class="cards" id="overview"></div>
-    <p class="muted mono" id="range" style="margin: 14px 0 0;"></p>
+    <h2>执行概览</h2>
+    <div class="meta-bar" id="context-bar"></div>
+    <div id="integrity-warn" class="alert-warn hidden"></div>
+    <div class="cards" id="overview" style="margin-top: 16px;"></div>
+    <div id="spectrum-wrap" class="table-wrap" style="margin-top: 16px;"></div>
   </section>
-  <section>
-    <h2>时序吞吐</h2>
-    <div id="timeseries" class="chart"></div>
+
+  <section id="sla-section" class="hidden">
+    <h2>SLA 门槛判定</h2>
+    <div id="sla-table" class="table-wrap"></div>
   </section>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h2>吞吐与事件趋势</h2>
+      <div id="chart-throughput" class="chart"></div>
+    </div>
+    <div class="chart-card">
+      <h2>响应延迟分位趋势</h2>
+      <div id="chart-latency" class="chart"></div>
+    </div>
+    <div class="chart-card">
+      <h2>吞吐与延迟拐点关联</h2>
+      <div id="chart-correlation" class="chart"></div>
+    </div>
+    <div class="chart-card">
+      <h2>延迟分布直方图与累计占比</h2>
+      <div id="chart-histogram" class="chart"></div>
+    </div>
+    <div class="chart-card">
+      <h2>错误率与状态码分布</h2>
+      <div id="chart-errors" class="chart"></div>
+    </div>
+    <div class="chart-card">
+      <h2>网络带宽趋势</h2>
+      <div id="chart-bandwidth" class="chart"></div>
+    </div>
+  </div>
+
+  <section id="http-breakdown-section" class="hidden">
+    <h2>HTTP 通用协议拆解</h2>
+    <div class="chart-grid" style="margin-top: 0;">
+      <div>
+        <h3>阶段耗时分布（排队 / TTFB / 响应体传输）</h3>
+        <div id="chart-http-phases" class="chart" style="height: 240px;"></div>
+      </div>
+      <div>
+        <h3>响应体体积分布</h3>
+        <div id="chart-http-sizes" class="chart" style="height: 240px;"></div>
+      </div>
+    </div>
+    <div id="http-phases-table" class="table-wrap" style="margin-top: 12px;"></div>
+  </section>
+
+  <section id="mazbri-breakdown-section" class="hidden">
+    <h2>Mazbri 网关协议拆解</h2>
+    <div class="meta-bar" id="mazbri-meta"></div>
+    <div id="chart-mazbri-phases" class="chart" style="height: 240px; margin-top: 10px;"></div>
+    <div id="mazbri-phases-table" class="table-wrap" style="margin-top: 12px;"></div>
+  </section>
+
+  <section id="multi-endpoint-section" class="hidden">
+    <h2>多接口性能对比</h2>
+    <div id="chart-endpoints" class="chart" style="height: 260px;"></div>
+  </section>
+
+  <section id="windows-trend-section" class="hidden">
+    <h2>循环轮次演化</h2>
+    <div id="chart-windows" class="chart" style="height: 250px;"></div>
+  </section>
+
   <section>
     <h2>分项统计</h2>
-    <p class="muted" style="margin: 0 0 12px;">按已落库样本计算（不含预热，耗时为原始线上耗时，不做协调遗漏校正）。</p>
     <h3>按接口 / 产品</h3>
     <div id="by-product" class="table-wrap"></div>
-    <h3>按租户</h3>
-    <div id="by-tenant" class="table-wrap"></div>
+    <div id="tenant-block">
+      <h3>按租户</h3>
+      <div id="by-tenant" class="table-wrap"></div>
+    </div>
     <h3>HTTP 状态码分布</h3>
     <div id="status-codes" class="table-wrap"></div>
     <h3>错误 Top N</h3>
     <div id="top-errors" class="table-wrap"></div>
   </section>
+
   <section>
     <h2>窗口明细</h2>
     <div id="windows" class="table-wrap"></div>
@@ -191,139 +297,486 @@
   const r = window.__REPORT__ || {};
   const counters = r.counters || {};
   const pct = r.percentiles || {};
+  const summary = r.summary || {};
+  const bd = r.breakdown || {};
+  const pb = bd.protocol_breakdown || {};
+  const points = r.timeseries || [];
   const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const charts = [];
+
   const statusMap = {
-    running: "运行中",
-    stopping: "停止中",
-    finished: "已完成",
-    stopped: "已停止",
-    interrupted: "已中断",
-    failed: "失败"
+    running: "运行中", stopping: "停止中", finished: "已完成",
+    stopped: "已停止", interrupted: "已中断", failed: "失败"
   };
   const modeMap = { once: "单轮", loop: "循环" };
+  const modelMap = { open_loop: "开环限速", closed_loop: "闭环并发" };
   const verdictMap = { pass: "通过", fail: "未通过", pending: "评估中" };
+  const shapeMap = {
+    single_http: "单接口 HTTP", multi_http: "多接口 HTTP",
+    single_mazbri: "单接口 Mazbri", multi_mazbri: "多接口 Mazbri", mixed: "混合协议"
+  };
 
-  if (r.title) {
-    document.getElementById("title").textContent = "压测报告 · " + r.title;
-  }
+  const axisColor = isDark ? "#27272a" : "#e4e4e7";
+  const labelColor = isDark ? "#a1a1aa" : "#71717a";
+  const primaryColor = isDark ? "#fafafa" : "#18181b";
+  const okColor = isDark ? "#34d399" : "#059669";
+  const warnColor = isDark ? "#fbbf24" : "#d97706";
+  const errColor = isDark ? "#fb7185" : "#e11d48";
+  const blueColor = isDark ? "#60a5fa" : "#2563eb";
+  const violetColor = isDark ? "#a78bfa" : "#7c3aed";
+
+  if (r.title) document.getElementById("title").textContent = "压测报告 · " + r.title;
   const statusEl = document.getElementById("status-text");
-  if (statusEl && r.status) {
-    statusEl.textContent = statusMap[r.status] || r.status;
+  if (statusEl && r.status) statusEl.textContent = statusMap[r.status] || r.status;
+
+  // Header badges
+  const badges = [];
+  if (summary.shape) badges.push('<span class="badge">' + escapeHtml(shapeMap[summary.shape] || summary.shape) + '</span>');
+  const apdex = summary.apdex || bd.apdex || {};
+  if (apdex.score !== null && apdex.score !== undefined) {
+    const aCls = apdex.score >= 0.85 ? "badge badge-pass" : (apdex.score >= 0.7 ? "badge badge-warn" : "badge badge-fail");
+    badges.push('<span class="' + aCls + '">Apdex ' + Number(apdex.score).toFixed(3) + '</span>');
   }
   const v = r.verdict || {};
   if (v.result && v.result !== "none") {
-    const cls = v.result === "pass" ? "badge badge-pass" : (v.result === "fail" ? "badge badge-fail" : "badge");
-    const label = verdictMap[v.result] || String(v.result);
-    document.getElementById("verdict-badge").innerHTML = '<span class="' + cls + '">SLA: ' + escapeHtml(label) + '</span>';
+    const cls = v.result === "pass" ? "badge badge-pass" : (v.result === "fail" ? "badge badge-fail" : "badge badge-warn");
+    badges.push('<span class="' + cls + '">SLA ' + escapeHtml(verdictMap[v.result] || v.result) + '</span>');
   }
-  const cards = [
-    ["样本总数", fmt(counters.samples)],
-    ["成功请求", fmt(counters.success)],
-    ["失败请求", fmt(counters.failure)],
-    ["预期拒绝", fmt(counters.expected)],
-    ["p50 延迟", fmtLatencyUs(pct.p50_us)],
-    ["p95 延迟", fmtLatencyUs(pct.p95_us)],
-    ["p99 延迟", fmtLatencyUs(pct.p99_us)],
-    ["累计字节", fmtBytes(counters.bytes)]
+  document.getElementById("header-badges").innerHTML = badges.join("");
+
+  // Context bar
+  const tpl = (r.snapshot && r.snapshot.template) || {};
+  const ctxItems = [
+    ["时间", fmtTime(r.started_at) + " → " + fmtTime(r.ended_at)],
+    ["有效时长", fmtDurationMs(summary.effective_elapsed_ms || summary.wall_elapsed_ms)],
+    ["施压模型", (modelMap[tpl.model] || tpl.model || "-") + " · " + (modeMap[r.mode] || r.mode || "-")],
+    ["目标速率 / 并发", (r.current_qps ? (r.current_qps + " QPS") : "不限速") + " / " + fmt(r.current_concurrency) + " 并发"],
+    ["进程数", fmt(r.processes)],
   ];
-  document.getElementById("overview").innerHTML = cards.map(([k, val]) =>
-    '<div class="card"><span>' + k + '</span><b>' + escapeHtml(val) + '</b></div>').join("");
-  const envName = (r.source && r.source.environment_name) ? (" · 环境 " + r.source.environment_name) : "";
-  const maxTail = (pct.max_us !== null && pct.max_us !== undefined) ? (" · 最大延迟 " + fmtLatencyUs(pct.max_us)) : "";
-  document.getElementById("range").textContent =
-    "开始 " + fmtTime(r.started_at) + " · 结束 " + fmtTime(r.ended_at) +
-    " · 模式 " + (modeMap[r.mode] || r.mode || "-") + " · 进程数 " + fmt(r.processes) + maxTail + envName;
-  document.getElementById("windows").innerHTML = (r.windows || []).length
-    ? table(
-        ["轮次 #", "开始时间", "结束时间", "样本数", "成功", "失败", "预期", "p99 延迟", "字节"],
-        (r.windows || []).map(w => ["#" + fmt(w.window_index), fmtTime(w.started_at), fmtTime(w.ended_at), w.samples,
-          w.success, w.failure, w.expected, fmtLatencyUs(w.p99_us), fmtBytes(w.bytes)])
-      )
-    : "<p class='muted'>当前任务无多轮循环窗口记录</p>";
-  const bd = r.breakdown || {};
-  const groupRows = (list, key) => (list || []).map(g => [
-    g[key], g.samples, g.success, g.failure, g.expected,
-    fmtLatencyUs(g.p50_us), fmtLatencyUs(g.p95_us), fmtLatencyUs(g.p99_us), fmtLatencyUs(g.max_us)
-  ]);
-  const groupHead = ["样本", "成功", "失败", "预期拒绝", "P50", "P95", "P99", "最大"];
-  document.getElementById("by-product").innerHTML = (bd.products || []).length
-    ? table(["接口 / 产品"].concat(groupHead), groupRows(bd.products, "product_id"))
-    : "<p class='muted'>暂无样本</p>";
-  document.getElementById("by-tenant").innerHTML = (bd.tenants || []).length
-    ? table(["租户"].concat(groupHead), groupRows(bd.tenants, "tenant"))
-    : "<p class='muted'>暂无样本</p>";
-  const codes = Object.entries(bd.status_codes || {});
-  document.getElementById("status-codes").innerHTML = codes.length
-    ? table(["状态码", "样本数"], codes.map(([code, n]) => [code === "none" ? "无（未到达目标）" : code, n]))
-    : "<p class='muted'>暂无样本</p>";
-  document.getElementById("top-errors").innerHTML = (bd.top_errors || []).length
-    ? table(["错误分类", "错误", "次数", "状态码"], bd.top_errors.map(e => [
-        e.error_class, e.error, e.count,
-        Object.entries(e.http_status || {}).map(([c, n]) => c + "×" + n).join(" ")
-      ]))
-    : "<p class='muted'>无失败样本</p>";
-  document.getElementById("timeline").innerHTML = (r.timeline || []).length
-    ? table(
-        ["时间", "事件", "详情"],
-        (r.timeline || []).map(e => {
-          const t = fmtTimeline(e.event, e.payload);
-          return [fmtTime(e.ts), t.label, t.detail];
-        })
-      )
-    : "<p class='muted'>暂无生命周期事件记录</p>";
-  const ranges = r.interrupt_ranges || [];
-  document.getElementById("interrupts").innerHTML = ranges.length
-    ? table(["开始时间", "结束时间"], ranges.map(x => [fmtTime(x.start), fmtTime(x.end)]))
-    : "<p class='muted'>无中断区间</p>";
-  const points = r.timeseries || [];
-  const chartHost = document.getElementById("timeseries");
-  if (!points.length) {
-    chartHost.style.height = "auto";
-    chartHost.innerHTML = "<p class='muted'>暂无秒级吞吐采样数据</p>";
-  } else {
-    const showDot = points.length <= 2;
-    const axisColor = isDark ? "#27272a" : "#e4e4e7";
-    const labelColor = isDark ? "#a1a1aa" : "#71717a";
-    const primaryLine = isDark ? "#fafafa" : "#18181b";
-    const okLine = isDark ? "#34d399" : "#059669";
-    const errLine = isDark ? "#fb7185" : "#e11d48";
-    const chart = echarts.init(chartHost);
-    chart.setOption({
+  if (tpl.warmup_secs) ctxItems.push(["预热", tpl.warmup_secs + "s"]);
+  if (tpl.ramp_secs) ctxItems.push(["爬坡", tpl.ramp_secs + "s"]);
+  if (r.source && r.source.environment_name) ctxItems.push(["环境", r.source.environment_name]);
+  document.getElementById("context-bar").innerHTML = ctxItems
+    .map(([k, val]) => '<span>' + escapeHtml(k) + ' <strong>' + escapeHtml(val) + '</strong></span>')
+    .join("");
+
+  const integrity = summary.data_integrity || {};
+  const warns = [];
+  if ((integrity.missed_sends || 0) > 0) warns.push("开环过载漏发 " + integrity.missed_sends + " 次");
+  if ((integrity.dropped_details || 0) > 0) warns.push("明细队列丢弃 " + integrity.dropped_details + " 条（总计数与分位不受影响，分项基于已落库样本）");
+  if (warns.length) {
+    const wEl = document.getElementById("integrity-warn");
+    wEl.textContent = "数据完整性提示：" + warns.join("；");
+    wEl.classList.remove("hidden");
+  }
+
+  // KPI cards
+  const qpsRatioText = summary.qps_ratio != null ? ("达成率 " + (summary.qps_ratio * 100).toFixed(1) + "%") : "";
+  const cards = [
+    ["总样本", fmt(counters.samples), "成功 " + fmt(counters.success) + " / 失败 " + fmt(counters.failure)],
+    ["平均 QPS", fmtNum(summary.achieved_qps, 1), qpsRatioText || ("峰值 " + fmt(summary.peak_qps) + " req/s")],
+    ["峰值 QPS", fmt(summary.peak_qps), "峰值在途 " + fmt(summary.peak_in_flight)],
+    ["成功率", fmtPct(summary.success_rate), "错误率 " + fmtPct(summary.error_rate), (summary.error_rate || 0) > 0 ? "text-err" : "text-ok"],
+    ["Apdex", apdex.score != null ? Number(apdex.score).toFixed(3) : "-", "T=" + fmt(apdex.satisfied_ms) + "ms"],
+    ["平均带宽", fmtBytesPerSec(summary.avg_bandwidth_bps), "累计 " + fmtBytes(summary.total_response_bytes || counters.bytes)],
+    ["平均延迟", fmtLatencyUs(pct.avg_us), "标准差 " + fmtLatencyUs(pct.stdev_us)],
+    ["P50 延迟", fmtLatencyUs(pct.p50_us), "P75 " + fmtLatencyUs(pct.p75_us)],
+    ["P90 延迟", fmtLatencyUs(pct.p90_us), ""],
+    ["P95 延迟", fmtLatencyUs(pct.p95_us), ""],
+    ["P99 延迟", fmtLatencyUs(pct.p99_us), "P99.9 " + fmtLatencyUs(pct.p999_us)],
+    ["最大延迟", fmtLatencyUs(pct.max_us), "最小 " + fmtLatencyUs(pct.min_us)],
+  ];
+  document.getElementById("overview").innerHTML = cards.map(([k, val, sub, cls]) =>
+    '<div class="card"><span>' + escapeHtml(k) + '</span><b class="' + (cls || '') + '">' + escapeHtml(val) + '</b>' +
+    (sub ? '<small>' + escapeHtml(sub) + '</small>' : '') + '</div>'
+  ).join("");
+
+  // SLA Table
+  if (v.assert && Object.keys(v.assert).length) {
+    document.getElementById("sla-section").classList.remove("hidden");
+    const failedMap = {};
+    (v.failed || []).forEach(f => { failedMap[f.check] = f; });
+    const actual = v.actual || {};
+    const defs = [
+      ["p50_ms", "P50 延迟", v.assert.p50_ms, actual.p50_ms, "≤", " ms"],
+      ["p95_ms", "P95 延迟", v.assert.p95_ms, actual.p95_ms, "≤", " ms"],
+      ["p99_ms", "P99 延迟", v.assert.p99_ms, actual.p99_ms, "≤", " ms"],
+      ["max_ms", "最大延迟", v.assert.max_ms, actual.max_ms, "≤", " ms"],
+      ["max_error_rate", "错误率上限", v.assert.max_error_rate != null ? v.assert.max_error_rate * 100 : null, actual.error_rate != null ? actual.error_rate * 100 : null, "≤", "%"],
+      ["min_qps_ratio", "QPS 达成率下限", v.assert.min_qps_ratio != null ? v.assert.min_qps_ratio * 100 : null, actual.qps_ratio != null ? actual.qps_ratio * 100 : null, "≥", "%"],
+    ].filter(d => d[2] != null);
+    document.getElementById("sla-table").innerHTML = table(
+      ["规则项", "目标阈值", "实测值", "状态"],
+      defs.map(([key, label, want, got, op, unit]) => [
+        label,
+        op + " " + Number(want).toFixed(2) + unit,
+        got != null ? (Number(got).toFixed(2) + unit) : "-",
+        failedMap[key] ? "未达标" : "通过"
+      ])
+    );
+  }
+
+  // Charts helper
+  function makeChart(id) {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const c = echarts.init(el);
+    charts.push(c);
+    return c;
+  }
+  function baseOption() {
+    return {
       backgroundColor: "transparent",
       textStyle: { color: labelColor, fontFamily: "Geist Mono, monospace" },
-      grid: { top: 36, right: 20, bottom: 28, left: 48 },
       tooltip: {
         trigger: "axis",
         backgroundColor: isDark ? "#09090b" : "#ffffff",
         borderColor: axisColor,
         textStyle: { color: isDark ? "#fafafa" : "#09090b", fontSize: 12 }
       },
-      legend: { data: ["总样本/s", "成功/s", "失败/s"], textStyle: { color: labelColor } },
-      xAxis: {
-        type: "category",
-        data: points.map(p => {
-          const raw = p.unix_sec || p.started_at;
-          if (!raw) return "";
-          const ms = raw > 1e11 ? raw : raw * 1000;
-          return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
-        }),
-        axisLine: { lineStyle: { color: axisColor } },
-        axisLabel: { color: labelColor }
-      },
-      yAxis: {
-        type: "value",
-        splitLine: { lineStyle: { color: axisColor, type: "dashed" } },
-        axisLabel: { color: labelColor }
-      },
-      series: [
-        { name: "总样本/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2, type: "dashed" }, itemStyle: { color: primaryLine }, data: points.map(p => p.samples || 0) },
-        { name: "成功/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: okLine }, data: points.map(p => p.success || 0) },
-        { name: "失败/s", type: "line", smooth: false, showSymbol: showDot, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: errLine }, data: points.map(p => p.failure || 0) }
-      ]
-    });
-    window.addEventListener("resize", function () { chart.resize(); });
+      grid: { top: 38, right: 20, bottom: 28, left: 52 },
+    };
   }
+  const timeLabels = points.map(p => {
+    const raw = p.unix_sec || p.started_at;
+    if (!raw) return "";
+    const ms = raw > 1e11 ? raw : raw * 1000;
+    return new Date(ms).toLocaleTimeString("zh-CN", { hour12: false });
+  });
+  const showDot = points.length <= 2;
+
+  // Warmup markArea & timeline markLines
+  const warmupAreas = [];
+  let wStart = null;
+  points.forEach((p, idx) => {
+    if (p.warmup && wStart === null) wStart = idx;
+    if ((!p.warmup || idx === points.length - 1) && wStart !== null) {
+      const endIdx = p.warmup ? idx : idx - 1;
+      warmupAreas.push([{ xAxis: timeLabels[wStart], name: "预热" }, { xAxis: timeLabels[endIdx] }]);
+      wStart = null;
+    }
+  });
+  const eventLines = [];
+  (r.timeline || []).forEach(ev => {
+    if (!["traffic", "resume", "interrupted", "stop"].includes(ev.event)) return;
+    const sec = Math.floor(ev.ts / 1000);
+    const idx = points.findIndex(p => p.unix_sec === sec);
+    if (idx >= 0) {
+      const lbl = { traffic: "调参", resume: "续跑", interrupted: "中断", stop: "停止" }[ev.event] || ev.event;
+      eventLines.push({ xAxis: timeLabels[idx], name: lbl, label: { formatter: lbl, color: warnColor } });
+    }
+  });
+
+  // 1. Throughput
+  if (!points.length) {
+    emptyChart("chart-throughput", "暂无秒级吞吐数据");
+  } else {
+    const c = makeChart("chart-throughput");
+    c.setOption(Object.assign(baseOption(), {
+      legend: { data: ["总样本/s", "成功/s", "失败/s"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: timeLabels, axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        {
+          name: "总样本/s", type: "line", showSymbol: showDot, lineStyle: { width: 2, type: "dashed" }, itemStyle: { color: primaryColor },
+          data: points.map(p => p.samples || 0),
+          markArea: warmupAreas.length ? { itemStyle: { color: "rgba(217,119,6,0.10)" }, data: warmupAreas } : undefined,
+          markLine: eventLines.length ? { symbol: "none", lineStyle: { color: warnColor, type: "dotted" }, data: eventLines } : undefined,
+        },
+        { name: "成功/s", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: okColor }, data: points.map(p => p.success || 0) },
+        { name: "失败/s", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: errColor }, data: points.map(p => p.failure || 0) }
+      ]
+    }));
+  }
+
+  // 2. Latency percentiles over time
+  const hasLatSeries = points.some(p => p.p50_us != null || p.avg_latency_us != null);
+  if (!hasLatSeries) {
+    emptyChart("chart-latency", "暂无秒级延迟采样数据");
+  } else {
+    const c = makeChart("chart-latency");
+    const toMs = v => v == null ? null : Number((v / 1000).toFixed(2));
+    c.setOption(Object.assign(baseOption(), {
+      legend: { data: ["Avg", "P50", "P90", "P95", "P99"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: timeLabels, axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", name: "ms", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        { name: "Avg", type: "line", showSymbol: showDot, lineStyle: { width: 1.5, type: "dashed" }, itemStyle: { color: labelColor }, data: points.map(p => toMs(p.avg_latency_us)) },
+        { name: "P50", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: okColor }, data: points.map(p => toMs(p.p50_us)) },
+        { name: "P90", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: blueColor }, data: points.map(p => toMs(p.p90_us)) },
+        { name: "P95", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: warnColor }, data: points.map(p => toMs(p.p95_us)) },
+        { name: "P99", type: "line", showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: errColor }, data: points.map(p => toMs(p.p99_us)) },
+      ]
+    }));
+  }
+
+  // 3. Load vs Latency Correlation
+  if (!points.length || !hasLatSeries) {
+    emptyChart("chart-correlation", "暂无吞吐与延迟关联数据");
+  } else {
+    const c = makeChart("chart-correlation");
+    const toMs = v => v == null ? null : Number((v / 1000).toFixed(2));
+    c.setOption(Object.assign(baseOption(), {
+      grid: { top: 38, right: 56, bottom: 28, left: 52 },
+      legend: { data: ["QPS", "峰值在途并发", "P95 (ms)", "P99 (ms)"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: timeLabels, axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: [
+        { type: "value", name: "req/s", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+        { type: "value", name: "ms", splitLine: { show: false }, axisLabel: { color: labelColor } },
+      ],
+      series: [
+        { name: "QPS", type: "bar", yAxisIndex: 0, itemStyle: { color: isDark ? "rgba(96,165,250,0.28)" : "rgba(37,99,235,0.2)" }, data: points.map(p => p.samples || 0) },
+        { name: "峰值在途并发", type: "line", yAxisIndex: 0, showSymbol: showDot, lineStyle: { width: 1.5, type: "dashed" }, itemStyle: { color: violetColor }, data: points.map(p => p.in_flight_max || 0) },
+        { name: "P95 (ms)", type: "line", yAxisIndex: 1, showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: warnColor }, data: points.map(p => toMs(p.p95_us)) },
+        { name: "P99 (ms)", type: "line", yAxisIndex: 1, showSymbol: showDot, lineStyle: { width: 2 }, itemStyle: { color: errColor }, data: points.map(p => toMs(p.p99_us)) },
+      ]
+    }));
+  }
+
+  // 4. Latency Distribution Histogram + CDF
+  const hist = bd.latency_histogram || [];
+  if (!hist.length) {
+    emptyChart("chart-histogram", "暂无延迟分布样本");
+  } else {
+    const c = makeChart("chart-histogram");
+    c.setOption(Object.assign(baseOption(), {
+      grid: { top: 38, right: 48, bottom: 44, left: 52 },
+      legend: { data: ["请求数", "累计占比 %"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: hist.map(b => b.label), axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor, rotate: 28, fontSize: 10 } },
+      yAxis: [
+        { type: "value", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+        { type: "value", max: 100, name: "%", splitLine: { show: false }, axisLabel: { color: labelColor } },
+      ],
+      series: [
+        { name: "请求数", type: "bar", yAxisIndex: 0, itemStyle: { color: blueColor, borderRadius: [3, 3, 0, 0] }, data: hist.map(b => b.count) },
+        { name: "累计占比 %", type: "line", yAxisIndex: 1, smooth: true, symbolSize: 5, itemStyle: { color: okColor }, data: hist.map(b => b.cumulative_pct) },
+      ]
+    }));
+  }
+
+  // 5. Errors over time & Status codes
+  const codes = Object.entries(bd.status_codes || {});
+  if (!points.length && !codes.length) {
+    emptyChart("chart-errors", "暂无状态与错误数据");
+  } else {
+    const c = makeChart("chart-errors");
+    c.setOption(Object.assign(baseOption(), {
+      legend: { data: ["错误率 %", "失败/s"], textStyle: { color: labelColor } },
+      grid: { top: 38, right: 50, bottom: 28, left: 52 },
+      xAxis: { type: "category", data: timeLabels, axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: [
+        { type: "value", name: "%", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+        { type: "value", name: "个/s", splitLine: { show: false }, axisLabel: { color: labelColor } },
+      ],
+      series: [
+        { name: "错误率 %", type: "line", yAxisIndex: 0, showSymbol: showDot, itemStyle: { color: errColor }, areaStyle: { color: "rgba(225,29,72,0.12)" }, data: points.map(p => Number(((p.error_rate || 0) * 100).toFixed(2))) },
+        { name: "失败/s", type: "bar", yAxisIndex: 1, itemStyle: { color: warnColor }, data: points.map(p => p.failure || 0) },
+      ]
+    }));
+  }
+
+  // 6. Bandwidth
+  if (!points.length) {
+    emptyChart("chart-bandwidth", "暂无带宽数据");
+  } else {
+    const c = makeChart("chart-bandwidth");
+    const toKB = v => Number(((v || 0) / 1024).toFixed(2));
+    c.setOption(Object.assign(baseOption(), {
+      legend: { data: ["下行响应 KB/s", "上行请求 KB/s"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: timeLabels, axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", name: "KB/s", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        { name: "下行响应 KB/s", type: "line", showSymbol: showDot, itemStyle: { color: blueColor }, areaStyle: { color: "rgba(37,99,235,0.12)" }, data: points.map(p => toKB(p.bytes)) },
+        { name: "上行请求 KB/s", type: "line", showSymbol: showDot, itemStyle: { color: violetColor }, data: points.map(p => toKB(p.request_bytes)) },
+      ]
+    }));
+  }
+
+  // Adaptive HTTP Breakdown
+  if (pb.http && pb.http.samples > 0) {
+    document.getElementById("http-breakdown-section").classList.remove("hidden");
+    const hp = pb.http.phases || {};
+    const phaseRows = [
+      ["调度排队", hp.queue],
+      ["首字节 TTFB", hp.ttfb],
+      ["响应体传输", hp.transfer],
+      ["总耗时", hp.total],
+    ];
+    const c1 = makeChart("chart-http-phases");
+    c1.setOption(Object.assign(baseOption(), {
+      legend: { data: ["Avg (ms)", "P95 (ms)", "P99 (ms)"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: ["调度排队", "首字节 TTFB", "响应体传输"], axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", name: "ms", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        { name: "Avg (ms)", type: "bar", itemStyle: { color: blueColor }, data: [hp.queue, hp.ttfb, hp.transfer].map(p => toMsVal(p && p.avg_us)) },
+        { name: "P95 (ms)", type: "bar", itemStyle: { color: warnColor }, data: [hp.queue, hp.ttfb, hp.transfer].map(p => toMsVal(p && p.p95_us)) },
+        { name: "P99 (ms)", type: "bar", itemStyle: { color: errColor }, data: [hp.queue, hp.ttfb, hp.transfer].map(p => toMsVal(p && p.p99_us)) },
+      ]
+    }));
+    const sBuckets = (pb.http.response_sizes && pb.http.response_sizes.buckets) || [];
+    if (sBuckets.length) {
+      const c2 = makeChart("chart-http-sizes");
+      c2.setOption(Object.assign(baseOption(), {
+        xAxis: { type: "category", data: sBuckets.map(b => b.label), axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+        yAxis: { type: "value", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+        series: [{ name: "响应数", type: "bar", itemStyle: { color: okColor, borderRadius: [3, 3, 0, 0] }, data: sBuckets.map(b => b.count) }]
+      }));
+    } else {
+      emptyChart("chart-http-sizes", "暂无响应体积样本");
+    }
+    document.getElementById("http-phases-table").innerHTML = table(
+      ["阶段", "样本数", "Avg", "P50", "P95", "P99", "Max", "耗时占比"],
+      phaseRows.map(([name, p]) => [
+        name, fmt(p && p.samples), fmtLatencyUs(p && p.avg_us), fmtLatencyUs(p && p.p50_us),
+        fmtLatencyUs(p && p.p95_us), fmtLatencyUs(p && p.p99_us), fmtLatencyUs(p && p.max_us),
+        p && p.share_pct != null ? (p.share_pct + "%") : "-"
+      ])
+    );
+  }
+
+  // Adaptive Mazbri Breakdown
+  if (pb.mazbri && pb.mazbri.samples > 0) {
+    document.getElementById("mazbri-breakdown-section").classList.remove("hidden");
+    const mp = pb.mazbri.phases || {};
+    const mMeta = [
+      ["样本数", fmt(pb.mazbri.samples)],
+      ["加密模式", (pb.mazbri.encryption_modes || []).join(", ") || "-"],
+      ["算法套件", (pb.mazbri.suites || []).join(", ") || "-"],
+      ["本地密码开销", pb.mazbri.crypto_overhead_pct != null ? (pb.mazbri.crypto_overhead_pct + "%") : "-"],
+      ["网关往返占比", pb.mazbri.wire_pct != null ? (pb.mazbri.wire_pct + "%") : "-"],
+      ["Trace 一致", fmt(pb.mazbri.trace_echo && pb.mazbri.trace_echo.match) + " / 不一致 " + fmt(pb.mazbri.trace_echo && pb.mazbri.trace_echo.mismatch)],
+    ];
+    document.getElementById("mazbri-meta").innerHTML = mMeta
+      .map(([k, val]) => '<span>' + escapeHtml(k) + ' <strong>' + escapeHtml(val) + '</strong></span>')
+      .join("");
+    const mPhases = [
+      ["令牌等待", mp.token_wait],
+      ["本地加密签名", mp.crypto_seal],
+      ["网关 TTFB", mp.gateway_ttfb],
+      ["密文传输", mp.transfer],
+      ["本地验签解密", mp.crypto_unseal],
+    ];
+    const cm = makeChart("chart-mazbri-phases");
+    cm.setOption(Object.assign(baseOption(), {
+      legend: { data: ["Avg (ms)", "P95 (ms)", "P99 (ms)"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: mPhases.map(x => x[0]), axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", name: "ms", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        { name: "Avg (ms)", type: "bar", itemStyle: { color: violetColor }, data: mPhases.map(x => toMsVal(x[1] && x[1].avg_us)) },
+        { name: "P95 (ms)", type: "bar", itemStyle: { color: warnColor }, data: mPhases.map(x => toMsVal(x[1] && x[1].p95_us)) },
+        { name: "P99 (ms)", type: "bar", itemStyle: { color: errColor }, data: mPhases.map(x => toMsVal(x[1] && x[1].p99_us)) },
+      ]
+    }));
+    document.getElementById("mazbri-phases-table").innerHTML = table(
+      ["阶段", "样本数", "Avg", "P50", "P95", "P99", "Max", "占比"],
+      mPhases.concat([["端到端总计", mp.end_to_end]]).map(([name, p]) => [
+        name, fmt(p && p.samples), fmtLatencyUs(p && p.avg_us), fmtLatencyUs(p && p.p50_us),
+        fmtLatencyUs(p && p.p95_us), fmtLatencyUs(p && p.p99_us), fmtLatencyUs(p && p.max_us),
+        p && p.share_pct != null ? (p.share_pct + "%") : "-"
+      ])
+    );
+  }
+
+  // Multi-endpoint comparison chart
+  const products = bd.products || [];
+  if (products.length > 1) {
+    document.getElementById("multi-endpoint-section").classList.remove("hidden");
+    const ce = makeChart("chart-endpoints");
+    ce.setOption(Object.assign(baseOption(), {
+      legend: { data: ["P50 (ms)", "P95 (ms)", "P99 (ms)"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: products.map(p => p.product_id), axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: { type: "value", name: "ms", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+      series: [
+        { name: "P50 (ms)", type: "bar", itemStyle: { color: okColor }, data: products.map(p => toMsVal(p.p50_us)) },
+        { name: "P95 (ms)", type: "bar", itemStyle: { color: warnColor }, data: products.map(p => toMsVal(p.p95_us)) },
+        { name: "P99 (ms)", type: "bar", itemStyle: { color: errColor }, data: products.map(p => toMsVal(p.p99_us)) },
+      ]
+    }));
+  }
+
+  // Loop windows trend
+  const wins = r.windows || [];
+  if (wins.length > 1) {
+    document.getElementById("windows-trend-section").classList.remove("hidden");
+    const cw = makeChart("chart-windows");
+    cw.setOption(Object.assign(baseOption(), {
+      grid: { top: 38, right: 56, bottom: 28, left: 52 },
+      legend: { data: ["样本数", "P95 (ms)", "P99 (ms)"], textStyle: { color: labelColor } },
+      xAxis: { type: "category", data: wins.map(w => "#" + w.window_index), axisLine: { lineStyle: { color: axisColor } }, axisLabel: { color: labelColor } },
+      yAxis: [
+        { type: "value", splitLine: { lineStyle: { color: axisColor, type: "dashed" } }, axisLabel: { color: labelColor } },
+        { type: "value", name: "ms", splitLine: { show: false }, axisLabel: { color: labelColor } },
+      ],
+      series: [
+        { name: "样本数", type: "bar", yAxisIndex: 0, itemStyle: { color: blueColor }, data: wins.map(w => w.samples || 0) },
+        { name: "P95 (ms)", type: "line", yAxisIndex: 1, itemStyle: { color: warnColor }, data: wins.map(w => toMsVal(w.p95_us)) },
+        { name: "P99 (ms)", type: "line", yAxisIndex: 1, itemStyle: { color: errColor }, data: wins.map(w => toMsVal(w.p99_us)) },
+      ]
+    }));
+  }
+
+  // Tables
+  const groupHead = ["样本", "占比", "QPS", "错误率", "Avg", "P50", "P90", "P95", "P99", "Max", "均体"];
+  const groupRows = (list, key) => (list || []).map(g => [
+    g[key], g.samples, (g.share_pct != null ? g.share_pct + "%" : "-"), fmtNum(g.qps, 1),
+    fmtPct(g.error_rate), fmtLatencyUs(g.avg_us), fmtLatencyUs(g.p50_us), fmtLatencyUs(g.p90_us),
+    fmtLatencyUs(g.p95_us), fmtLatencyUs(g.p99_us), fmtLatencyUs(g.max_us), fmtBytes(g.avg_bytes)
+  ]);
+  document.getElementById("by-product").innerHTML = products.length
+    ? table(["接口 / 产品"].concat(groupHead), groupRows(products, "product_id"))
+    : "<p class='muted'>暂无样本</p>";
+  const tenants = (bd.tenants || []).filter(t => t.tenant !== "(none)");
+  if (tenants.length) {
+    document.getElementById("by-tenant").innerHTML = table(["租户"].concat(groupHead), groupRows(tenants, "tenant"));
+  } else {
+    document.getElementById("tenant-block").classList.add("hidden");
+  }
+  document.getElementById("status-codes").innerHTML = codes.length
+    ? table(["状态码", "样本数"], codes.map(([code, n]) => [code === "none" ? "无（未到达目标）" : code, n]))
+    : "<p class='muted'>暂无样本</p>";
+  document.getElementById("top-errors").innerHTML = (bd.top_errors || []).length
+    ? table(["分类", "错误信息", "次数", "占失败比", "状态码"], bd.top_errors.map(e => [
+        e.error_class, e.error, e.count, (e.share_pct != null ? e.share_pct + "%" : "-"),
+        Object.entries(e.http_status || {}).map(([c, n]) => c + "×" + n).join(" ")
+      ]))
+    : "<p class='muted'>无失败样本</p>";
+  document.getElementById("windows").innerHTML = wins.length
+    ? table(
+        ["轮次 #", "开始时间", "结束时间", "样本数", "成功", "失败", "P50", "P95", "P99", "字节"],
+        wins.map(w => ["#" + fmt(w.window_index), fmtTime(w.started_at), fmtTime(w.ended_at), w.samples,
+          w.success, w.failure, fmtLatencyUs(w.p50_us), fmtLatencyUs(w.p95_us), fmtLatencyUs(w.p99_us), fmtBytes(w.bytes)])
+      )
+    : "<p class='muted'>无循环窗口记录</p>";
+  document.getElementById("timeline").innerHTML = (r.timeline || []).length
+    ? table(["时间", "事件", "详情"], (r.timeline || []).map(e => {
+        const t = fmtTimeline(e.event, e.payload);
+        return [fmtTime(e.ts), t.label, t.detail];
+      }))
+    : "<p class='muted'>无时间线事件</p>";
+  const ranges = r.interrupt_ranges || [];
+  document.getElementById("interrupts").innerHTML = ranges.length
+    ? table(["开始时间", "结束时间"], ranges.map(x => [fmtTime(x.start), fmtTime(x.end)]))
+    : "<p class='muted'>无中断区间</p>";
+
+  window.addEventListener("resize", function () { charts.forEach(c => c.resize()); });
+
+  function emptyChart(id, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.height = "auto";
+    el.innerHTML = "<p class='muted'>" + escapeHtml(text) + "</p>";
+  }
+  function toMsVal(us) { return us == null ? 0 : Number((Number(us) / 1000).toFixed(2)); }
   function fmt(val) { return (val === null || val === undefined) ? "-" : String(val); }
+  function fmtNum(val, d) { return (val === null || val === undefined || !Number.isFinite(Number(val))) ? "-" : Number(val).toFixed(d); }
+  function fmtPct(val) { return (val === null || val === undefined || !Number.isFinite(Number(val))) ? "-" : (Number(val) * 100).toFixed(2) + "%"; }
+  function fmtDurationMs(ms) {
+    if (ms == null) return "-";
+    const s = Number(ms) / 1000;
+    if (s < 60) return s.toFixed(1) + "s";
+    const m = Math.floor(s / 60);
+    return m + "m " + (s % 60).toFixed(0) + "s";
+  }
   function fmtLatencyUs(us) {
     if (us === null || us === undefined) return "-";
     const n = Number(us);
@@ -341,36 +794,23 @@
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
     return (n / (1024 * 1024)).toFixed(2) + " MB";
   }
+  function fmtBytesPerSec(bps) {
+    if (bps === null || bps === undefined) return "-";
+    return fmtBytes(bps) + "/s";
+  }
   function fmtTimeline(event, raw) {
     const p = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
     switch (event) {
-      case "start":
-        return { label: "启动压测", detail: p.mode ? ("执行模式：" + (modeMap[p.mode] || p.mode)) : "" };
-      case "workers":
-        return { label: "拉起工作进程", detail: p.value !== undefined ? ("并发工作进程数：" + p.value) : "" };
-      case "worker_exit":
-        return { label: "工作进程异常退出", detail: p.value !== undefined ? ("进程编号：w" + p.value) : "" };
-      case "traffic": {
-        const fq = v => (v === null || v === undefined) ? "不限速" : (v + " QPS");
-        return { label: "动态调整流量", detail: "速率 " + fq(p.old_qps) + " → " + fq(p.qps) + "，并发 " + fmt(p.old_concurrency) + " → " + fmt(p.concurrency) };
-      }
-      case "window": {
-        const idx = p.window_index !== undefined ? ("#" + p.window_index) : "-";
-        const missed = Number(p.missed_sends || 0);
-        return { label: "完成循环窗口", detail: missed > 0 ? ("轮次 " + idx + "（过载漏发 " + missed + " 次）") : ("轮次 " + idx) };
-      }
-      case "stop": {
-        const km = { user: "手动停止", signal: "系统信号" };
-        return { label: "收到停止指令", detail: p.kind ? ("触发方式：" + (km[p.kind] || p.kind)) : "" };
-      }
-      case "resume":
-        return { label: "恢复续跑", detail: "" };
-      case "interrupted":
-        return { label: "任务中断", detail: p.reason === "process restarted" ? "服务进程重启，未完成任务转为中断状态" : (p.reason || "") };
-      case "end":
-        return { label: "任务结束", detail: "最终状态：" + (statusMap[p.status] || p.status || "-") + (p.error ? (" · 错误：" + p.error) : "") };
-      default:
-        return { label: String(event || "-"), detail: raw ? JSON.stringify(raw) : "" };
+      case "start": return { label: "启动压测", detail: p.mode ? ("模式：" + (modeMap[p.mode] || p.mode)) : "" };
+      case "workers": return { label: "拉起工作进程", detail: p.value !== undefined ? ("进程数：" + p.value) : "" };
+      case "worker_exit": return { label: "工作进程异常退出", detail: p.value !== undefined ? ("w" + p.value) : "" };
+      case "traffic": return { label: "动态调整流量", detail: "QPS " + fmt(p.old_qps) + " → " + fmt(p.qps) + "，并发 " + fmt(p.old_concurrency) + " → " + fmt(p.concurrency) };
+      case "window": return { label: "完成循环窗口", detail: "轮次 #" + fmt(p.window_index) };
+      case "stop": return { label: "停止指令", detail: p.kind || "" };
+      case "resume": return { label: "恢复续跑", detail: "" };
+      case "interrupted": return { label: "任务中断", detail: p.reason || "" };
+      case "end": return { label: "任务结束", detail: "状态：" + (statusMap[p.status] || p.status || "-") + (p.error ? (" · " + p.error) : "") };
+      default: return { label: String(event || "-"), detail: raw ? JSON.stringify(raw) : "" };
     }
   }
   function fmtTime(val) {
@@ -386,7 +826,7 @@
     return "<table><thead><tr>" + th + "</tr></thead><tbody>" + tr + "</tbody></table>";
   }
   function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, ch => ({
+    return String(s).replace(/[&<>"']/g, ch => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     })[ch]);
   }

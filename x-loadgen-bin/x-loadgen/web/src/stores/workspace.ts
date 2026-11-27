@@ -1,13 +1,17 @@
 import { computed, markRaw, ref, watch } from "vue";
 import { api } from "../api/workspace";
 import type {
+  AssertSpec,
   CollectionNode,
   EnvironmentDetail,
   EnvironmentSummary,
+  LoadConfig,
   LoadProfile,
   MetaResponse,
+  ProbeRecord,
   ProbeResponse,
   RequestDraft,
+  RunReplayPayload,
   SavedRequest,
 } from "../api/types";
 import {
@@ -17,6 +21,14 @@ import {
 } from "../helpers/format";
 import { askConfirm } from "../modules/confirm";
 import { toast } from "../modules/toast";
+
+export interface RerunLoadConfig {
+  fromRunId: string;
+  fromTitle: string;
+  environmentId: string | null;
+  loadConfig: LoadConfig;
+  assertSpec: AssertSpec | null;
+}
 
 export interface WorkspaceTab {
   tabId: string;
@@ -42,6 +54,8 @@ export interface WorkspaceTab {
   response: ProbeResponse | null;
   /** Per-protocol endpoint/method/body kept while the other protocol is active. */
   protocolStash: ProtocolStash;
+  /** Attached when opened via "重跑" from a historical load test. */
+  rerunConfig?: RerunLoadConfig | null;
 }
 
 export interface ProtocolFields {
@@ -59,10 +73,16 @@ export type RightSidebarSection =
   | "history";
 
 export interface LoadRunnerLaunchContext {
-  mode: "single" | "collection";
+  mode: "single" | "collection" | "batch";
   draft?: RequestDraft;
+  batchDrafts?: RequestDraft[];
   collectionId?: string;
   collectionName?: string;
+  initialEnvId?: string | null;
+  initialLoadConfig?: LoadConfig | null;
+  initialAssertSpec?: AssertSpec | null;
+  initialTitle?: string | null;
+  fromRunId?: string | null;
 }
 
 const TABS_STORAGE_KEY = "x-loadgen.workspace.tabs.v3";
@@ -259,10 +279,16 @@ function loadLayoutPrefs(): LayoutPrefs {
       };
     }
     const p = JSON.parse(raw) as Partial<LayoutPrefs>;
+    const validSection: RightSidebarSection =
+      p.rightSection === "environments" ||
+      p.rightSection === "profiles" ||
+      p.rightSection === "history"
+        ? p.rightSection
+        : "collections";
     return {
       leftExpanded: p.leftExpanded !== false,
       rightOpen: p.rightOpen !== false,
-      rightSection: p.rightSection ?? "collections",
+      rightSection: validSection,
       horizontalSplit: Boolean(p.horizontalSplit),
     };
   } catch {
@@ -818,10 +844,103 @@ export function openEnvironmentEditor(envId: string | null): void {
   envModalOpen.value = true;
 }
 
+export function formatLocalTimestamp(date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+export function openProbeHistoryInNewTab(probe: ProbeRecord): void {
+  const base = probe.request_draft
+    ? cloneJson(probe.request_draft)
+    : createDefaultRequestDraft(probe.protocol === "mazbri" ? "mazbri" : "http");
+  // Detached independent draft: never affects saved requests in collections.
+  base.id = null;
+  base.collection_id = null;
+  if (!probe.request_draft) {
+    base.name = probe.request_name;
+    base.method = probe.method;
+    base.endpoint = probe.url;
+  }
+  const tab = createWorkspaceTab(base, false);
+  if (
+    base.body?.content_type &&
+    (base.method === "POST" ||
+      base.method === "PUT" ||
+      base.method === "PATCH")
+  ) {
+    tab.requestSubTab = "body";
+  }
+  if (
+    probe.environment_id &&
+    selectableEnvironments.value.some((e) => e.id === probe.environment_id)
+  ) {
+    activeEnvironmentId.value = probe.environment_id;
+  }
+  tabs.value.push(tab);
+  activeTabId.value = tab.tabId;
+}
+
+export function openRunReplayInWorkspace(replay: RunReplayPayload): "single" | "batch" {
+  if (
+    replay.environment_id &&
+    selectableEnvironments.value.some((e) => e.id === replay.environment_id)
+  ) {
+    activeEnvironmentId.value = replay.environment_id;
+  }
+  const drafts = replay.requests.map((r) => {
+    const d = cloneJson(r);
+    d.id = null;
+    d.collection_id = null;
+    return d;
+  });
+
+  if (drafts.length <= 1) {
+    const first = drafts[0] ?? createDefaultRequestDraft("http");
+    const tab = createWorkspaceTab(first, false);
+    tab.rerunConfig = {
+      fromRunId: replay.run_id,
+      fromTitle: replay.title,
+      environmentId: replay.environment_id ?? null,
+      loadConfig: cloneJson(replay.load_config),
+      assertSpec: replay.assert ? cloneJson(replay.assert) : null,
+    };
+    if (
+      first.body?.content_type &&
+      (first.method === "POST" ||
+        first.method === "PUT" ||
+        first.method === "PATCH")
+    ) {
+      tab.requestSubTab = "body";
+    }
+    tabs.value.push(tab);
+    activeTabId.value = tab.tabId;
+    return "single";
+  }
+
+  runnerContext.value = {
+    mode: "batch",
+    batchDrafts: drafts,
+    initialEnvId: replay.environment_id ?? null,
+    initialLoadConfig: cloneJson(replay.load_config),
+    initialAssertSpec: replay.assert ? cloneJson(replay.assert) : null,
+    initialTitle: replay.title,
+    fromRunId: replay.run_id,
+  };
+  runnerModalOpen.value = true;
+  return "batch";
+}
+
 export function openSingleLoadRunner(draft?: RequestDraft): void {
+  const tab = activeTab.value;
+  const rerun = !draft || draft === tab.draft ? tab.rerunConfig : null;
   runnerContext.value = {
     mode: "single",
-    draft: cloneJson(draft ?? activeTab.value.draft),
+    draft: cloneJson(draft ?? tab.draft),
+    initialEnvId: rerun?.environmentId ?? null,
+    initialLoadConfig: rerun ? cloneJson(rerun.loadConfig) : null,
+    initialAssertSpec: rerun?.assertSpec ? cloneJson(rerun.assertSpec) : null,
+    initialTitle: rerun?.fromTitle ?? null,
+    fromRunId: rerun?.fromRunId ?? null,
   };
   runnerModalOpen.value = true;
 }

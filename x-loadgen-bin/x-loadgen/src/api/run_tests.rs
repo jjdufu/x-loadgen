@@ -822,8 +822,9 @@ async fn probe_captures_are_saved_with_requests_and_feed_later_probes() {
 }
 
 #[tokio::test]
-async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
+async fn probe_history_lists_reads_full_draft_with_secrets_and_deletes() {
     const SECRET: &str = "S3CRET-PROBE-TOKEN-1234";
+    const BEARER: &str = "BEARER-LIVE-SECRET-9999";
     let tmp = TempDir::new("history");
     let (mock, _mock_shutdown) = start_mock().await;
     let (base, shutdown) = start_api(&tmp.path, None).await;
@@ -853,6 +854,11 @@ async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
                 "request": {
                     "name": "echo",
                     "endpoint": "<<baseUrl>>/json-echo",
+                    "auth": {
+                        "auth_type": "bearer",
+                        "auth_active": true,
+                        "token": BEARER
+                    },
                     "params": [
                         {"key": "seq", "value": "{{seq}}", "active": true},
                         {"key": "k", "value": "<<token>>", "active": true}
@@ -881,7 +887,10 @@ async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
     assert_eq!(first["http_status"], 200);
     assert_eq!(first["captures"]["seq"], "1");
     assert!(first.get("response_body").is_none(), "list omits bodies");
-    assert!(!page.to_string().contains(SECRET), "{page}");
+    assert!(
+        first.get("request_draft").is_none(),
+        "list omits heavy drafts"
+    );
 
     let (st, by_rid) = get_json(
         &client,
@@ -904,7 +913,11 @@ async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
             .contains("\"seq\"")
     );
     assert_eq!(one["response_truncated"], false);
-    assert!(!one.to_string().contains(SECRET), "{one}");
+    assert_eq!(
+        one["request_draft"]["auth"]["token"].as_str(),
+        Some(BEARER),
+        "probe history preserves complete draft with credentials"
+    );
 
     let status = client
         .delete(format!("{base}/api/v1/probes/{id}"))
@@ -917,5 +930,106 @@ async fn probe_history_lists_reads_and_deletes_scrubbed_entries() {
         let (st, _) = get_json(&client, &format!("{base}/api/v1/probes/{path}")).await;
         assert_eq!(st, reqwest::StatusCode::NOT_FOUND);
     }
+
+    let clear_status = client
+        .delete(format!("{base}/api/v1/probes"))
+        .send()
+        .await
+        .expect("clear")
+        .status();
+    assert_eq!(clear_status, reqwest::StatusCode::NO_CONTENT);
+    let (_, after_clear) = get_json(&client, &format!("{base}/api/v1/probes")).await;
+    assert_eq!(after_clear["items"].as_array().map(Vec::len), Some(0));
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn run_replay_preserves_secrets_detached_and_compare_works() {
+    const BEARER: &str = "RUN-REPLAY-SECRET-8888";
+    let tmp = TempDir::new("replay-compare");
+    let (mock, _mock_shutdown) = start_mock().await;
+    let (base, shutdown) = start_api(&tmp.path, None).await;
+    let client = client();
+
+    let mut run_ids = Vec::new();
+    for title in ["baseline-run", "target-run"] {
+        let (st, run) = post_json(
+            &client,
+            &format!("{base}/api/v1/runs?wait=true&timeout=30"),
+            &json!({
+                "title": title,
+                "adhoc_request": {
+                    "name": "ping",
+                    "protocol": "http",
+                    "method": "GET",
+                    "endpoint": format!("{mock}/ok"),
+                    "auth": {
+                        "auth_type": "bearer",
+                        "auth_active": true,
+                        "token": BEARER
+                    }
+                },
+                "model": "closed_loop",
+                "concurrency": 2,
+                "requests": 10
+            }),
+        )
+        .await;
+        assert_eq!(st, reqwest::StatusCode::CREATED, "{run}");
+        run_ids.push(run["id"].as_str().expect("id").to_string());
+    }
+
+    // 1. Replay returns detached draft with full secrets + load config.
+    let (st, replay) = get_json(
+        &client,
+        &format!("{base}/api/v1/runs/{}/replay", run_ids[0]),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{replay}");
+    let reqs = replay["requests"].as_array().expect("requests");
+    assert_eq!(reqs.len(), 1);
+    assert!(reqs[0]["id"].is_null(), "detached draft has null id");
+    assert!(
+        reqs[0]["collection_id"].is_null(),
+        "detached draft has null collection_id"
+    );
+    assert_eq!(reqs[0]["auth"]["token"].as_str(), Some(BEARER));
+    assert_eq!(replay["load_config"]["concurrency"], 2);
+
+    // 2. Public report remains strictly redacted and includes expanded HTTP breakdown.
+    let (st, rep) = get_json(
+        &client,
+        &format!("{base}/api/v1/runs/{}/report", run_ids[0]),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{rep}");
+    assert!(
+        !rep.to_string().contains(BEARER),
+        "report must redact secrets"
+    );
+    assert!(rep["summary"]["achieved_qps"].is_number());
+    assert!(rep["summary"]["apdex"]["score"].is_number());
+    assert!(rep["breakdown"]["protocol_breakdown"]["http"]["phases"]["ttfb"]["avg_us"].is_number());
+    assert_ne!(
+        rep["breakdown"]["latency_histogram"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // 3. Compare returns metric diffs and aligned series.
+    let (st, cmp) = get_json(
+        &client,
+        &format!(
+            "{base}/api/v1/runs/compare?base={}&target={}",
+            run_ids[0], run_ids[1]
+        ),
+    )
+    .await;
+    assert_eq!(st, reqwest::StatusCode::OK, "{cmp}");
+    assert_ne!(cmp["metrics"].as_array().unwrap().len(), 0);
+    assert_eq!(cmp["base"]["id"], run_ids[0]);
+    assert_eq!(cmp["target"]["id"], run_ids[1]);
     let _ = shutdown.send(());
 }

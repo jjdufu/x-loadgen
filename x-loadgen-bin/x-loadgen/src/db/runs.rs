@@ -512,6 +512,9 @@ const fn default_one() -> i64 {
 /// and/or inline overrides (`model`, `qps`, `concurrency`, `requests`, `duration_secs`, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateRunRequest {
+    /// Optional explicit run title (used e.g. for timestamped unsaved runs).
+    #[serde(default)]
+    pub title: Option<String>,
     #[serde(default)]
     pub request_id: Option<String>,
     #[serde(default)]

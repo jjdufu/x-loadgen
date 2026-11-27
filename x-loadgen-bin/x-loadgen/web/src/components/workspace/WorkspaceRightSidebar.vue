@@ -234,11 +234,8 @@
         </div>
       </template>
 
-      <!-- 3. PROBE HISTORY -->
-      <ProbeHistoryPanel v-else-if="rightSidebarSection === 'history'" />
-
-      <!-- 4. LOAD PROFILES QUICK LIST -->
-      <template v-else>
+      <!-- 3. LOAD PROFILES QUICK LIST -->
+      <template v-else-if="rightSidebarSection === 'profiles'">
         <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
           <span class="text-xs font-semibold tracking-tight text-foreground">
             负载预设
@@ -289,6 +286,9 @@
           </div>
         </div>
       </template>
+
+      <!-- 4. RECENT HISTORY QUICK LIST -->
+      <RecentHistoryPanel v-else />
     </div>
 
     <input
@@ -341,7 +341,7 @@ import UiInput from "../ui/UiInput.vue";
 import UiSearchInput from "../ui/UiSearchInput.vue";
 import UiSwitch from "../ui/UiSwitch.vue";
 import CollectionTreeNode from "./CollectionTreeNode.vue";
-import ProbeHistoryPanel from "./ProbeHistoryPanel.vue";
+import RecentHistoryPanel from "./RecentHistoryPanel.vue";
 
 const router = useRouter();
 const searchText = ref("");
@@ -357,7 +357,7 @@ const sections: { id: RightSidebarSection; label: string; icon: unknown }[] = [
   { id: "collections", label: "接口集合", icon: Folder },
   { id: "environments", label: "环境与密钥池", icon: Layers },
   { id: "profiles", label: "负载预设", icon: Gauge },
-  { id: "history", label: "单发历史", icon: History },
+  { id: "history", label: "最近历史", icon: History },
 ];
 
 const globalEnvRow = computed(() =>

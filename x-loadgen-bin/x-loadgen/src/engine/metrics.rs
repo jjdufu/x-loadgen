@@ -15,6 +15,60 @@ use crate::db::Sample;
 /// Number of one-second slots kept in the in-memory ring.
 pub const RING_CAPACITY: usize = 3600;
 
+/// Upper bounds in microseconds for compact per-second latency buckets.
+pub const RING_BUCKET_BOUNDS_US: [u64; 24] = [
+    500, 1_000, 2_000, 5_000, 10_000, 20_000, 35_000, 50_000, 75_000, 100_000, 150_000, 200_000,
+    300_000, 500_000, 750_000, 1_000_000, 1_500_000, 2_000_000, 3_000_000, 5_000_000, 10_000_000,
+    20_000_000, 30_000_000, 60_000_000,
+];
+pub const RING_BUCKET_COUNT: usize = RING_BUCKET_BOUNDS_US.len() + 1;
+
+/// Full latency distribution statistics extracted from an `HdrHistogram` (microseconds).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LatencyStats {
+    pub min_us: Option<u64>,
+    pub avg_us: Option<u64>,
+    pub stdev_us: Option<u64>,
+    pub p50_us: Option<u64>,
+    pub p75_us: Option<u64>,
+    pub p90_us: Option<u64>,
+    pub p95_us: Option<u64>,
+    pub p99_us: Option<u64>,
+    pub p999_us: Option<u64>,
+    pub max_us: Option<u64>,
+}
+
+impl LatencyStats {
+    /// Extract full latency stats from a histogram.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn from_histogram(hist: &Histogram<u64>) -> Self {
+        if hist.is_empty() {
+            return Self::default();
+        }
+        let avg = hist.mean();
+        let stdev = hist.stdev();
+        Self {
+            min_us: Some(hist.min()),
+            avg_us: Some(avg.max(0.0).round() as u64),
+            stdev_us: Some(stdev.max(0.0).round() as u64),
+            p50_us: Some(hist.value_at_quantile(0.50)),
+            p75_us: Some(hist.value_at_quantile(0.75)),
+            p90_us: Some(hist.value_at_quantile(0.90)),
+            p95_us: Some(hist.value_at_quantile(0.95)),
+            p99_us: Some(hist.value_at_quantile(0.99)),
+            p999_us: Some(hist.value_at_quantile(0.999)),
+            max_us: Some(hist.max()),
+        }
+    }
+
+    /// Backwards-style 4-tuple `(p50, p95, p99, max)`.
+    #[must_use]
+    pub const fn tuple4(self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+        (self.p50_us, self.p95_us, self.p99_us, self.max_us)
+    }
+}
+
 /// How a completed request is counted (the three buckets are disjoint).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutcomeClass {
@@ -36,9 +90,81 @@ pub struct RingSlot {
     pub failure: u64,
     pub expected: u64,
     pub bytes: u64,
+    #[serde(default)]
+    pub request_bytes: u64,
+    #[serde(default)]
+    pub latency_count: u64,
+    #[serde(default)]
+    pub latency_sum_us: u64,
+    #[serde(default)]
+    pub latency_min_us: u64,
+    #[serde(default)]
+    pub latency_max_us: u64,
+    #[serde(default)]
+    pub in_flight_max: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub latency_buckets: Vec<u64>,
     /// When true, this second fell in the warmup period.
     #[serde(default)]
     pub warmup: bool,
+}
+
+impl RingSlot {
+    /// Average latency for this second in microseconds.
+    #[must_use]
+    pub fn avg_latency_us(&self) -> Option<u64> {
+        (self.latency_count > 0).then(|| self.latency_sum_us / self.latency_count)
+    }
+
+    /// Approximate quantile (`0.0..=1.0`) from the compact bucket counts.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    pub fn approx_quantile_us(&self, q: f64) -> Option<u64> {
+        if self.latency_count == 0 || self.latency_buckets.len() != RING_BUCKET_COUNT {
+            return None;
+        }
+        let target = ((self.latency_count as f64) * q.clamp(0.0, 1.0))
+            .ceil()
+            .max(1.0) as u64;
+        let mut cum = 0_u64;
+        for (idx, &count) in self.latency_buckets.iter().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let prev_cum = cum;
+            cum = cum.saturating_add(count);
+            if cum >= target {
+                let lo = if idx == 0 {
+                    self.latency_min_us
+                } else {
+                    RING_BUCKET_BOUNDS_US[idx - 1].max(self.latency_min_us)
+                };
+                let hi = if idx < RING_BUCKET_BOUNDS_US.len() {
+                    RING_BUCKET_BOUNDS_US[idx].min(self.latency_max_us.max(lo))
+                } else {
+                    self.latency_max_us.max(lo)
+                };
+                let frac = (target.saturating_sub(prev_cum) as f64) / (count as f64);
+                let est = (lo as f64) + frac * ((hi.saturating_sub(lo)) as f64);
+                return Some((est.round() as u64).clamp(
+                    self.latency_min_us,
+                    self.latency_max_us.max(self.latency_min_us),
+                ));
+            }
+        }
+        Some(self.latency_max_us)
+    }
+}
+
+fn bucket_index_for_us(us: u64) -> usize {
+    RING_BUCKET_BOUNDS_US
+        .iter()
+        .position(|&bound| us <= bound)
+        .unwrap_or(RING_BUCKET_BOUNDS_US.len())
 }
 
 /// Per-task live metrics. The histogram and ring have a fixed size.
@@ -251,12 +377,7 @@ impl Metrics {
             if slot.unix_sec < incoming.unix_sec {
                 *slot = incoming.clone();
             } else if slot.unix_sec == incoming.unix_sec {
-                slot.samples = slot.samples.saturating_add(incoming.samples);
-                slot.success = slot.success.saturating_add(incoming.success);
-                slot.failure = slot.failure.saturating_add(incoming.failure);
-                slot.expected = slot.expected.saturating_add(incoming.expected);
-                slot.bytes = slot.bytes.saturating_add(incoming.bytes);
-                slot.warmup |= incoming.warmup;
+                merge_ring_slot_into(slot, incoming);
             }
         }
     }
@@ -340,13 +461,27 @@ impl Metrics {
     /// Percentiles of the run-wide histogram, in microseconds.
     #[must_use]
     pub fn percentiles_us(&self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-        percentiles_of(&self.total)
+        self.latency_stats_us().tuple4()
+    }
+
+    /// Full latency stats of the run-wide histogram, in microseconds.
+    #[must_use]
+    pub fn latency_stats_us(&self) -> LatencyStats {
+        let hist = self
+            .total
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        LatencyStats::from_histogram(&hist)
     }
 
     /// Percentiles of the current window only, in microseconds.
     #[must_use]
     pub fn window_percentiles_us(&self) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-        percentiles_of(&self.histogram)
+        let hist = self
+            .histogram
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        LatencyStats::from_histogram(&hist).tuple4()
     }
 
     /// Reset the current-window histogram (used at a loop window boundary).
@@ -364,6 +499,7 @@ impl Metrics {
         if unix_sec == 0 {
             return;
         }
+        let in_flight = self.in_flight.load(Ordering::Relaxed);
         let idx =
             usize::try_from(unix_sec % u64::try_from(RING_CAPACITY).unwrap_or(1)).unwrap_or(0);
         let mut ring = self
@@ -380,8 +516,16 @@ impl Metrics {
                 failure: 0,
                 expected: 0,
                 bytes: 0,
+                request_bytes: 0,
+                latency_count: 0,
+                latency_sum_us: 0,
+                latency_min_us: 0,
+                latency_max_us: 0,
+                in_flight_max: 0,
+                latency_buckets: Vec::new(),
             };
         }
+        slot.in_flight_max = slot.in_flight_max.max(in_flight);
         if !warmup {
             slot.samples = slot.samples.saturating_add(1);
             match class {
@@ -393,6 +537,28 @@ impl Metrics {
                 && let Ok(bytes) = u64::try_from(bytes.max(0))
             {
                 slot.bytes = slot.bytes.saturating_add(bytes);
+            }
+            if let Some(req_bytes) = sample.request_bytes
+                && let Ok(req_bytes) = u64::try_from(req_bytes.max(0))
+            {
+                slot.request_bytes = slot.request_bytes.saturating_add(req_bytes);
+            }
+            if sample.latency_us > 0
+                && let Ok(us) = u64::try_from(sample.latency_us)
+            {
+                slot.latency_count = slot.latency_count.saturating_add(1);
+                slot.latency_sum_us = slot.latency_sum_us.saturating_add(us);
+                slot.latency_min_us = if slot.latency_min_us == 0 {
+                    us
+                } else {
+                    slot.latency_min_us.min(us)
+                };
+                slot.latency_max_us = slot.latency_max_us.max(us);
+                if slot.latency_buckets.len() != RING_BUCKET_COUNT {
+                    slot.latency_buckets = vec![0; RING_BUCKET_COUNT];
+                }
+                let bidx = bucket_index_for_us(us);
+                slot.latency_buckets[bidx] = slot.latency_buckets[bidx].saturating_add(1);
             }
         }
         slot.warmup |= warmup;
@@ -437,22 +603,39 @@ fn record_saturating(hist: &mut Histogram<u64>, us: u64) {
     }
 }
 
-/// Percentiles of a locked histogram, or all-`None` when it is empty.
-fn percentiles_of(
-    hist: &Mutex<Histogram<u64>>,
-) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-    let hist = hist
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if hist.is_empty() {
-        return (None, None, None, None);
+fn merge_ring_slot_into(target: &mut RingSlot, incoming: &RingSlot) {
+    target.samples = target.samples.saturating_add(incoming.samples);
+    target.success = target.success.saturating_add(incoming.success);
+    target.failure = target.failure.saturating_add(incoming.failure);
+    target.expected = target.expected.saturating_add(incoming.expected);
+    target.bytes = target.bytes.saturating_add(incoming.bytes);
+    target.request_bytes = target.request_bytes.saturating_add(incoming.request_bytes);
+    target.latency_count = target.latency_count.saturating_add(incoming.latency_count);
+    target.latency_sum_us = target
+        .latency_sum_us
+        .saturating_add(incoming.latency_sum_us);
+    if incoming.latency_min_us > 0 {
+        target.latency_min_us = if target.latency_min_us == 0 {
+            incoming.latency_min_us
+        } else {
+            target.latency_min_us.min(incoming.latency_min_us)
+        };
     }
-    (
-        Some(hist.value_at_quantile(0.50)),
-        Some(hist.value_at_quantile(0.95)),
-        Some(hist.value_at_quantile(0.99)),
-        Some(hist.max()),
-    )
+    target.latency_max_us = target.latency_max_us.max(incoming.latency_max_us);
+    target.in_flight_max = target.in_flight_max.saturating_add(incoming.in_flight_max);
+    if incoming.latency_buckets.len() == RING_BUCKET_COUNT {
+        if target.latency_buckets.len() != RING_BUCKET_COUNT {
+            target.latency_buckets = vec![0; RING_BUCKET_COUNT];
+        }
+        for (dst, &src) in target
+            .latency_buckets
+            .iter_mut()
+            .zip(incoming.latency_buckets.iter())
+        {
+            *dst = dst.saturating_add(src);
+        }
+    }
+    target.warmup |= incoming.warmup;
 }
 
 /// Current Unix time in milliseconds, or `0` if the clock is before the epoch.
@@ -476,12 +659,7 @@ pub fn merge_timeseries_slots<I: IntoIterator<Item = RingSlot>>(iter: I) -> Vec<
             unix_sec: slot.unix_sec,
             ..RingSlot::default()
         });
-        entry.samples = entry.samples.saturating_add(slot.samples);
-        entry.success = entry.success.saturating_add(slot.success);
-        entry.failure = entry.failure.saturating_add(slot.failure);
-        entry.expected = entry.expected.saturating_add(slot.expected);
-        entry.bytes = entry.bytes.saturating_add(slot.bytes);
-        entry.warmup |= slot.warmup;
+        merge_ring_slot_into(entry, &slot);
     }
     let len = by_sec.len();
     by_sec
@@ -557,6 +735,7 @@ mod timeseries_tests {
                 failure: 1,
                 expected: 0,
                 bytes: 50,
+                ..RingSlot::default()
             },
             RingSlot {
                 unix_sec: 100,
@@ -566,6 +745,7 @@ mod timeseries_tests {
                 failure: 0,
                 expected: 0,
                 bytes: 30,
+                ..RingSlot::default()
             },
         ]);
         assert_eq!(merged.len(), 1);
