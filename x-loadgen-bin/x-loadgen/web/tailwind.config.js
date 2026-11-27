@@ -28,14 +28,21 @@ export default {
       },
       colors: {
         border: "hsl(var(--border))",
+        "border-hover": "hsl(var(--border-hover))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         surface: "hsl(var(--surface))",
+        "hover-bg": "hsl(var(--hover-bg))",
+        "active-bg": "hsl(var(--active-bg))",
+        "accent-hover": "hsl(var(--accent-hover))",
+        "accent-soft-hover": "hsl(var(--accent-soft-hover))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          hover: "hsl(var(--primary-hover))",
+          active: "hsl(var(--primary-active))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",

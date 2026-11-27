@@ -13,7 +13,7 @@
       size="sm"
       aria-label="选择运行环境"
       :wrapper-class="fullWidth ? 'min-w-0 flex-1' : 'w-44'"
-      class="border-transparent bg-transparent font-medium shadow-none hover:bg-accent/60"
+      class="border-transparent bg-transparent font-medium shadow-none hover:border-border-hover hover:bg-hover-bg"
       @update:model-value="onSelectEnv"
     >
       <option value="">无环境</option>
@@ -48,7 +48,7 @@
             </span>
             <PopoverClose
               aria-label="关闭变量速览"
-              class="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
+              class="cursor-pointer rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
               <X class="h-3.5 w-3.5" />
             </PopoverClose>

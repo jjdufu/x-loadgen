@@ -39,7 +39,7 @@
         </span>
         <button
           type="button"
-          class="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          class="cursor-pointer rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 shrink-0"
           aria-label="关闭通知"
           @click="dismissToast(item.id)"
         >

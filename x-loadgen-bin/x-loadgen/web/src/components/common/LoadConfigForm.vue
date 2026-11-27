@@ -51,11 +51,11 @@
         <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
           <button
             type="button"
-            class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               budgetKind === 'duration'
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             @click="switchBudget('duration')"
           >
@@ -63,11 +63,11 @@
           </button>
           <button
             type="button"
-            class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               budgetKind === 'requests'
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             @click="switchBudget('requests')"
           >

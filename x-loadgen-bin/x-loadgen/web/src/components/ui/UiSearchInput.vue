@@ -16,7 +16,7 @@
     <button
       v-if="hasValue && !disabled"
       type="button"
-      class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       title="清空搜索"
       aria-label="清空搜索"
       @click="emit('update:modelValue', '')"

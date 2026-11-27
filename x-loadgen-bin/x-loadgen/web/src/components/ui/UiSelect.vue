@@ -10,7 +10,7 @@
         :aria-label="ariaLabel"
         :class="
           cn(
-            'flex w-full cursor-pointer items-center justify-between gap-1.5 rounded-md border border-input bg-background text-left text-foreground shadow-sm transition-colors select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+            'flex w-full cursor-pointer items-center justify-between gap-1.5 rounded-md border border-input bg-background text-left text-foreground shadow-sm transition-colors select-none hover:bg-hover-bg hover:border-border-hover active:bg-active-bg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
             size === 'sm' ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm',
             mono && 'font-mono text-[13px]',
             props.class,
@@ -53,7 +53,7 @@
               :text-value="opt.label"
               :class="
                 cn(
-                  'relative flex w-full cursor-pointer select-none items-center rounded-md py-1.5 pl-2.5 pr-7 text-xs text-popover-foreground outline-none transition-colors data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:font-medium data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+                  'relative flex w-full cursor-pointer select-none items-center rounded-md py-1.5 pl-2.5 pr-7 text-xs text-popover-foreground outline-none transition-colors data-[highlighted]:bg-hover-bg data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:font-medium data-[state=checked]:data-[highlighted]:bg-accent-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
                   mono && 'font-mono text-[12px]',
                   opt.class,
                 )

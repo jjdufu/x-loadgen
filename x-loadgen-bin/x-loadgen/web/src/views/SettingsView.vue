@@ -19,11 +19,11 @@
             <!-- System Preview -->
             <button
               type="button"
-              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
                 isFollowingSystem
-                  ? 'border-foreground bg-accent/35'
-                  : 'border-border hover:border-muted-foreground/50'
+                  ? 'border-foreground bg-accent hover:bg-accent-hover'
+                  : 'border-border hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg'
               "
               @click="resetToSystemTheme"
             >
@@ -54,11 +54,11 @@
             <!-- Light Preview -->
             <button
               type="button"
-              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
                 !isFollowingSystem && effectiveTheme === 'light'
-                  ? 'border-foreground bg-accent/35'
-                  : 'border-border hover:border-muted-foreground/50'
+                  ? 'border-foreground bg-accent hover:bg-accent-hover'
+                  : 'border-border hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg'
               "
               @click="setThemeMode('light')"
             >
@@ -88,11 +88,11 @@
             <!-- Black Preview -->
             <button
               type="button"
-              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="group cursor-pointer rounded-xl border-2 p-2.5 text-left transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               :class="
                 !isFollowingSystem && effectiveTheme === 'black'
-                  ? 'border-foreground bg-accent/35'
-                  : 'border-border hover:border-muted-foreground/50'
+                  ? 'border-foreground bg-accent hover:bg-accent-hover'
+                  : 'border-border hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg'
               "
               @click="setThemeMode('black')"
             >
@@ -214,10 +214,10 @@
                 class="inline-flex h-8 min-w-[128px] cursor-pointer items-center justify-center rounded-md border px-3 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 :class="
                   recordingShortcutId === item.id
-                    ? 'border-foreground bg-accent text-foreground font-semibold'
+                    ? 'border-foreground bg-accent text-foreground font-semibold hover:bg-accent-hover'
                     : shortcutBindings[item.id]
-                      ? 'border-border bg-surface text-foreground hover:bg-accent/60'
-                      : 'border-dashed border-border text-muted-foreground hover:text-foreground'
+                      ? 'border-border bg-surface text-foreground hover:border-border-hover hover:bg-hover-bg active:bg-active-bg'
+                      : 'border-dashed border-border text-muted-foreground hover:border-border-hover hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
                 "
                 @click="toggleRecord(item.id)"
               >
@@ -243,124 +243,112 @@
         </div>
       </UiCard>
 
-      <!-- Card 4: Security / Admin Password Rotation Card -->
-      <UiCard class="p-4 sm:p-6">
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <div class="space-y-1.5 lg:col-span-5">
-            <h2 class="text-base font-semibold tracking-tight text-foreground">
-              访问口令轮换
-            </h2>
-            <p class="text-xs text-muted-foreground leading-relaxed">
-              新口令不少于 24 位可打印 ASCII（不含空格、引号、分号、逗号和反斜杠）。更新后旧口令与历史会话立即失效。
-            </p>
-          </div>
+      <!-- Card 4: Security / Admin Password -->
+      <UiCard class="p-4 sm:p-6 space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-base font-semibold tracking-tight text-foreground">
+            修改密码
+          </h2>
+          <UiButton
+            v-if="authRequired"
+            variant="outline"
+            size="sm"
+            @click="handleGenerate"
+          >
+            <Dices class="h-3.5 w-3.5" />
+            <span>随机生成</span>
+          </UiButton>
+        </div>
 
-          <div class="lg:col-span-7">
-            <div
-              v-if="!authRequired"
-              class="rounded-lg border border-border bg-surface/50 p-4 text-sm text-muted-foreground"
-            >
-              当前实例以
-              <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                --no-auth
-              </code>
-              免密模式运行。生产或公网部署请移除该启动参数以启用口令保护。
+        <div
+          v-if="!authRequired"
+          class="rounded-lg border border-border bg-surface/50 px-4 py-3 text-sm text-muted-foreground"
+        >
+          当前为 <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">--no-auth</code> 免密模式
+        </div>
+
+        <form v-else class="space-y-4" autocomplete="off" @submit.prevent="changePwd">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div class="space-y-1.5">
+              <label
+                :for="oldInputId"
+                class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+              >
+                当前密码
+              </label>
+              <div class="relative">
+                <UiInput
+                  :id="oldInputId"
+                  v-model="oldToken"
+                  :type="showOld ? 'text' : 'password'"
+                  mono
+                  secret
+                  name="xlg-current-token"
+                  autocomplete="off"
+                  placeholder="••••••••"
+                  :aria-invalid="errorField === 'old'"
+                  class="pr-9"
+                  @update:model-value="clearFieldError('old')"
+                />
+                <button
+                  type="button"
+                  aria-label="显示当前密码"
+                  class="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                  @click="showOld = !showOld"
+                >
+                  <EyeOff v-if="showOld" class="h-3.5 w-3.5" />
+                  <Eye v-else class="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p v-if="errorField === 'old'" class="text-xs text-rose-600 dark:text-rose-400">
+                {{ errorMessage }}
+              </p>
             </div>
 
-            <form v-else class="space-y-4" autocomplete="off" @submit.prevent="changePwd">
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div class="space-y-1.5">
-                  <div class="flex h-6 items-center justify-between gap-2">
-                    <label
-                      :for="oldInputId"
-                      class="text-xs font-medium text-muted-foreground whitespace-nowrap"
-                    >
-                      当前口令
-                    </label>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <UiInput
-                      :id="oldInputId"
-                      v-model="oldToken"
-                      :type="showOld ? 'text' : 'password'"
-                      mono
-                      secret
-                      name="xlg-current-token"
-                      autocomplete="off"
-                      placeholder="输入当前口令"
-                      :aria-invalid="errorField === 'old'"
-                      class="flex-1"
-                      @update:model-value="clearFieldError('old')"
-                    />
-                    <UiButton
-                      variant="outline"
-                      size="icon"
-                      aria-label="切换当前口令显示"
-                      @click="showOld = !showOld"
-                    >
-                      <EyeOff v-if="showOld" class="h-4 w-4" />
-                      <Eye v-else class="h-4 w-4" />
-                    </UiButton>
-                  </div>
-                  <p v-if="errorField === 'old'" class="text-xs text-rose-600 dark:text-rose-400">
-                    {{ errorMessage }}
-                  </p>
-                </div>
-
-                <div class="space-y-1.5">
-                  <div class="flex h-6 items-center justify-between gap-2">
-                    <label
-                      :for="newInputId"
-                      class="text-xs font-medium text-muted-foreground whitespace-nowrap"
-                    >
-                      新口令（至少 24 位）
-                    </label>
-                    <button
-                      type="button"
-                      class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      @click="handleGenerate"
-                    >
-                      <Dices class="h-3 w-3" />
-                      <span>随机生成</span>
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <UiInput
-                      :id="newInputId"
-                      v-model="newToken"
-                      :type="showNew ? 'text' : 'password'"
-                      mono
-                      secret
-                      name="xlg-new-token"
-                      autocomplete="off"
-                      placeholder="至少 24 位可打印 ASCII"
-                      :aria-invalid="errorField === 'new'"
-                      class="flex-1"
-                      @update:model-value="clearFieldError('new')"
-                    />
-                    <UiButton
-                      variant="outline"
-                      size="icon"
-                      aria-label="切换新口令显示"
-                      @click="showNew = !showNew"
-                    >
-                      <EyeOff v-if="showNew" class="h-4 w-4" />
-                      <Eye v-else class="h-4 w-4" />
-                    </UiButton>
-                  </div>
-                  <p v-if="errorField === 'new'" class="text-xs text-rose-600 dark:text-rose-400">
-                    {{ errorMessage }}
-                  </p>
-                </div>
-              </div>
-
-              <div class="space-y-1.5">
-                <label
-                  :for="confirmInputId"
-                  class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+            <div class="space-y-1.5">
+              <label
+                :for="newInputId"
+                class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+              >
+                新密码
+              </label>
+              <div class="relative">
+                <UiInput
+                  :id="newInputId"
+                  v-model="newToken"
+                  :type="showNew ? 'text' : 'password'"
+                  mono
+                  secret
+                  name="xlg-new-token"
+                  autocomplete="off"
+                  placeholder="••••••••"
+                  :aria-invalid="errorField === 'new'"
+                  class="pr-9"
+                  @update:model-value="clearFieldError('new')"
+                />
+                <button
+                  type="button"
+                  aria-label="显示新密码"
+                  class="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                  @click="showNew = !showNew"
                 >
-                  确认新口令
-                </label>
+                  <EyeOff v-if="showNew" class="h-3.5 w-3.5" />
+                  <Eye v-else class="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p v-if="errorField === 'new'" class="text-xs text-rose-600 dark:text-rose-400">
+                {{ errorMessage }}
+              </p>
+            </div>
+
+            <div class="space-y-1.5">
+              <label
+                :for="confirmInputId"
+                class="block text-xs font-medium text-muted-foreground whitespace-nowrap"
+              >
+                确认新密码
+              </label>
+              <div class="relative">
                 <UiInput
                   :id="confirmInputId"
                   v-model="confirmToken"
@@ -369,27 +357,41 @@
                   secret
                   name="xlg-confirm-token"
                   autocomplete="off"
-                  placeholder="再次输入新口令以确认"
+                  placeholder="••••••••"
                   :aria-invalid="errorField === 'confirm'"
+                  class="pr-9"
                   @update:model-value="clearFieldError('confirm')"
                 />
-                <p v-if="errorField === 'confirm'" class="text-xs text-rose-600 dark:text-rose-400">
-                  {{ errorMessage }}
-                </p>
-              </div>
-
-              <div class="flex justify-end">
-                <UiButton
-                  variant="default"
-                  type="submit"
-                  :loading="saving"
+                <button
+                  type="button"
+                  aria-label="显示确认新密码"
+                  class="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover-bg hover:text-foreground active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                  @click="showNew = !showNew"
                 >
-                  更新口令
-                </UiButton>
+                  <EyeOff v-if="showNew" class="h-3.5 w-3.5" />
+                  <Eye v-else class="h-3.5 w-3.5" />
+                </button>
               </div>
-            </form>
+              <p v-if="errorField === 'confirm'" class="text-xs text-rose-600 dark:text-rose-400">
+                {{ errorMessage }}
+              </p>
+            </div>
           </div>
-        </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <span class="text-xs text-muted-foreground">
+              ≥ 24 位可见 ASCII
+            </span>
+            <UiButton
+              variant="default"
+              size="sm"
+              type="submit"
+              :loading="saving"
+            >
+              保存
+            </UiButton>
+          </div>
+        </form>
       </UiCard>
     </div>
   </div>

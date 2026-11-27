@@ -52,7 +52,7 @@
         <UiCard
           v-for="item in filteredProfiles"
           :key="item.id"
-          class="flex flex-col justify-between p-5 space-y-5 transition-colors hover:border-foreground/30"
+          class="flex flex-col justify-between p-5 space-y-5 transition-colors hover:border-border-hover hover:bg-accent-soft-hover"
         >
           <div class="space-y-3">
             <div class="flex items-start justify-between gap-3">

@@ -39,7 +39,7 @@
           <button
             v-if="folderOptions.length > 0"
             type="button"
-            class="inline-flex h-6 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="inline-flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="toggleCreateFolder"
           >
             <FolderPlus class="h-3.5 w-3.5" />

@@ -15,11 +15,11 @@
             v-for="m in methodFilters"
             :key="m.value"
             type="button"
-            class="inline-flex h-6 flex-auto cursor-pointer items-center justify-center rounded px-1.5 font-mono text-[10px] font-semibold whitespace-nowrap transition-colors"
+            class="inline-flex h-6 flex-auto cursor-pointer items-center justify-center rounded-md px-1.5 font-mono text-[10px] font-semibold whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               activeMethodFilter === m.value
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:text-foreground'
+                ? 'bg-primary text-primary-foreground hover:bg-primary-hover'
+                : 'bg-muted text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             @click="activeMethodFilter = m.value"
           >
@@ -32,8 +32,8 @@
         <div class="space-y-1">
           <button
             type="button"
-            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors hover:bg-accent/60"
-            :class="activeOpId === 'curl-manual' ? 'bg-accent text-foreground' : ''"
+            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            :class="activeOpId === 'curl-manual' ? 'bg-accent text-foreground hover:bg-accent-hover' : 'hover:bg-hover-bg active:bg-active-bg'"
             @click="focusManual()"
           >
             <span class="truncate">Curl 手册</span>
@@ -48,7 +48,7 @@
         <div v-for="group in filteredGroups" :key="group.tag" class="space-y-1">
           <button
             type="button"
-            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors hover:bg-accent/60"
+            class="flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left text-xs font-semibold text-foreground transition-colors hover:bg-hover-bg active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="scrollToAnchor(`tag-${group.tag}`)"
           >
             <span class="truncate">{{ group.title }}</span>
@@ -64,11 +64,11 @@
               v-for="op in group.operations"
               :key="op.id"
               type="button"
-              class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/60"
+              class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               :class="
                 activeOpId === op.id
-                  ? 'bg-accent text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'bg-accent text-foreground font-medium hover:bg-accent-hover'
+                  : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
               "
               @click="focusOperation(op.id)"
             >
@@ -205,7 +205,7 @@
                   </span>
                   <button
                     type="button"
-                    class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                     @click="handleCopy(block.snippet, 'cURL 命令已复制')"
                   >
                     <Copy class="h-3 w-3" />
@@ -259,7 +259,7 @@
             >
               <!-- Card Header Row: uniform h-6 controls -->
               <div
-                class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-accent/35 transition-colors"
+                class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-accent-soft-hover transition-colors"
                 @click="toggleExpand(op.id)"
               >
                 <div class="flex min-w-0 flex-1 items-center gap-3">
@@ -296,7 +296,7 @@
                   <button
                     type="button"
                     title="载入工作台调试"
-                    class="inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-input bg-background px-2.5 text-xs font-medium whitespace-nowrap text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    class="inline-flex h-6 cursor-pointer items-center gap-1 rounded-md border border-input bg-background px-2.5 text-xs font-medium whitespace-nowrap text-foreground shadow-sm transition-colors duration-100 hover:border-border-hover hover:bg-hover-bg active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                     @click.stop="openInStudio(op)"
                   >
                     <span>调试</span>
@@ -306,7 +306,7 @@
                   <button
                     type="button"
                     aria-label="展开或折叠接口详情"
-                    class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                     @click.stop="toggleExpand(op.id)"
                   >
                     <ChevronDown
@@ -446,7 +446,7 @@
                       </span>
                       <button
                         type="button"
-                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                         @click="handleCopy(op.requestBody.sampleJson, '请求示例已复制')"
                       >
                         <Copy class="h-3 w-3" />
@@ -499,7 +499,7 @@
                       </span>
                       <button
                         type="button"
-                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                         @click="handleCopy(op.curlSnippet, 'cURL 命令已复制')"
                       >
                         <Copy class="h-3 w-3" />

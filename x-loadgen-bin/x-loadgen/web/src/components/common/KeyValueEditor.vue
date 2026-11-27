@@ -67,7 +67,7 @@
       <div
         v-for="(row, index) in rows"
         :key="rowObjectKey(row)"
-        class="group flex items-center divide-x divide-border transition-colors hover:bg-muted/35"
+        class="group flex items-center divide-x divide-border transition-colors hover:bg-accent-soft-hover"
       >
         <div class="flex h-9 w-10 shrink-0 items-center justify-center">
           <input
@@ -115,7 +115,7 @@
             type="button"
             title="删除此行"
             aria-label="删除此行"
-            class="rounded p-1 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+            class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="removeRow(index)"
           >
             <Trash2 class="h-3.5 w-3.5" />

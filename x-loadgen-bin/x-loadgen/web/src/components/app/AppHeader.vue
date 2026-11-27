@@ -20,7 +20,7 @@
         :to="{ name: 'workspace' }"
         title="返回工作台"
         aria-label="XL 返回工作台"
-        class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold tracking-tighter text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary font-mono text-[11px] font-bold tracking-tighter text-primary-foreground transition-colors duration-100 hover:bg-primary-hover active:bg-primary-active active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         XL
       </RouterLink>
@@ -29,11 +29,11 @@
 
       <template v-if="route.name === 'run-detail'">
         <span class="cursor-default truncate text-sm font-medium text-muted-foreground select-none">
-          压测任务
+          压测报告
         </span>
         <span class="cursor-default text-border select-none">/</span>
         <span class="cursor-default truncate text-sm font-medium text-foreground select-none">
-          任务详情
+          报告详情
         </span>
       </template>
       <span v-else class="cursor-default truncate text-sm font-medium text-foreground select-none">
@@ -59,7 +59,7 @@
         size="icon-sm"
         :class="
           route.name === 'settings'
-            ? 'bg-accent text-accent-foreground'
+            ? 'bg-accent text-accent-foreground hover:bg-accent-hover'
             : ''
         "
         title="系统设置"

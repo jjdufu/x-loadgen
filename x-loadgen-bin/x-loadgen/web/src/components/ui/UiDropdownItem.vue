@@ -5,8 +5,8 @@
       cn(
         'relative flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         destructive
-          ? 'text-rose-600 dark:text-rose-400 focus:bg-rose-500/10'
-          : 'text-foreground focus:bg-accent focus:text-accent-foreground',
+          ? 'text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 focus:bg-rose-500/15'
+          : 'text-foreground hover:bg-hover-bg hover:text-foreground focus:bg-hover-bg focus:text-foreground',
         props.class,
       )
     "

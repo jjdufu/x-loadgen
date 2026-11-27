@@ -10,11 +10,11 @@
     >
       <button
         type="button"
-        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
         :class="
           draft.protocol === 'http'
-            ? 'bg-background text-foreground shadow-sm'
-            : 'text-muted-foreground hover:text-foreground'
+            ? 'bg-background text-foreground shadow-sm hover:bg-background'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
         "
         @click="switchActiveTabProtocol('http')"
       >
@@ -23,11 +23,11 @@
       </button>
       <button
         type="button"
-        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+        class="inline-flex h-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
         :class="
           draft.protocol === 'mazbri'
-            ? 'bg-background text-foreground shadow-sm'
-            : 'text-muted-foreground hover:text-foreground'
+            ? 'bg-background text-foreground shadow-sm hover:bg-background'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
         "
         @click="switchActiveTabProtocol('mazbri')"
       >
@@ -38,7 +38,7 @@
 
     <!-- Unified Method + Geist Mono URL Input -->
     <div
-      class="flex h-9 min-w-[220px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-1 focus-within:ring-ring"
+      class="flex h-9 min-w-[220px] flex-1 items-center overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors hover:border-border-hover focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30"
     >
       <UiSelect
         :model-value="draft.method"
@@ -46,7 +46,7 @@
         aria-label="HTTP 方法"
         mono
         wrapper-class="h-full shrink-0 border-r border-border bg-muted/35"
-        class="h-full min-w-[92px] rounded-none border-0 bg-transparent pl-3 pr-2 text-xs font-semibold shadow-none hover:bg-accent/50 focus-visible:ring-0"
+        class="h-full min-w-[92px] rounded-none border-0 bg-transparent pl-3 pr-2 text-xs font-semibold shadow-none hover:border-transparent hover:bg-hover-bg focus-visible:ring-0"
         content-class="min-w-[116px]"
         @update:model-value="(val) => (draft.method = val)"
       />

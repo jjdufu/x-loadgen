@@ -37,11 +37,11 @@
           type="button"
           role="tab"
           :aria-selected="mode === 'probe'"
-          class="h-6 cursor-pointer rounded text-[11px] font-medium transition-all"
+          class="h-6 cursor-pointer rounded-md text-[11px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
           :class="
             mode === 'probe'
               ? 'bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'
+              : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
           "
           @click="mode = 'probe'"
         >
@@ -51,11 +51,11 @@
           type="button"
           role="tab"
           :aria-selected="mode === 'run'"
-          class="h-6 cursor-pointer rounded text-[11px] font-medium transition-all"
+          class="h-6 cursor-pointer rounded-md text-[11px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
           :class="
             mode === 'run'
               ? 'bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'
+              : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
           "
           @click="mode = 'run'"
         >
@@ -95,7 +95,7 @@
             :key="item.id"
             type="button"
             :disabled="openingId === `p:${item.id}`"
-            class="flex w-full cursor-pointer items-start gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:border-border hover:bg-accent/50 disabled:opacity-60"
+            class="flex w-full cursor-pointer items-start gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:border-border-hover hover:bg-hover-bg active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60"
             @click="openProbe(item)"
           >
             <span
@@ -155,7 +155,7 @@
           <div
             v-for="run in filteredRuns"
             :key="run.id"
-            class="group flex items-start gap-2 rounded-lg border border-transparent px-2.5 py-2 transition-colors hover:border-border hover:bg-accent/50"
+            class="group flex items-start gap-2 rounded-lg border border-transparent px-2.5 py-2 transition-colors hover:border-border-hover hover:bg-hover-bg active:bg-active-bg"
           >
             <button
               type="button"

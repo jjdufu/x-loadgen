@@ -67,11 +67,11 @@
             v-for="m in encryptionModes"
             :key="m.value"
             type="button"
-            class="h-full cursor-pointer rounded px-2.5 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-full cursor-pointer rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               tenant.encryption_mode === m.value
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             @click="setEncryptionMode(m.value)"
           >
@@ -181,7 +181,7 @@
             </label>
             <button
               type="button"
-              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               @click="fillRandomBase64Key('tenant_key_base64', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
@@ -285,7 +285,7 @@
             </label>
             <button
               type="button"
-              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               @click="fillRandomBase64Key('binding_key', 32)"
             >
               <Dices class="h-3.5 w-3.5" />
@@ -336,7 +336,7 @@
               <button
                 v-if="tenant.binding_public_key"
                 type="button"
-                class="inline-flex h-5 cursor-pointer items-center gap-1 rounded px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 @click="copyPublicKey"
               >
                 <Copy class="h-3.5 w-3.5" />

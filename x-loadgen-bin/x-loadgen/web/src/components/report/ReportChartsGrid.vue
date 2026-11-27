@@ -42,16 +42,16 @@
           <div class="inline-flex rounded-md border border-border bg-muted p-0.5 text-[11px]">
             <button
               type="button"
-              class="cursor-pointer rounded px-2 py-0.5 transition-colors"
-              :class="corrMode === 'dual' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+              class="cursor-pointer rounded-md px-2 py-0.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
+              :class="corrMode === 'dual' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'"
               @click="corrMode = 'dual'"
             >
               时序双轴
             </button>
             <button
               type="button"
-              class="cursor-pointer rounded px-2 py-0.5 transition-colors"
-              :class="corrMode === 'scatter' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+              class="cursor-pointer rounded-md px-2 py-0.5 transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
+              :class="corrMode === 'scatter' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'"
               @click="corrMode = 'scatter'"
             >
               拐点散点

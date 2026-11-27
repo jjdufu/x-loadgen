@@ -67,11 +67,11 @@
           type="button"
           role="tab"
           :aria-selected="activeSubTab === tab.id"
-          class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+          class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
           :class="
             activeSubTab === tab.id
               ? 'bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'
+              : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
           "
           @click="activeSubTab = tab.id"
         >
@@ -147,7 +147,7 @@
                 type="button"
                 :title="v.secret ? '敏感变量（导出默认脱敏）' : '标记为敏感变量'"
                 :aria-label="v.secret ? '取消敏感变量标记' : '标记为敏感变量'"
-                class="rounded p-1.5 transition-colors hover:bg-accent"
+                class="rounded-md p-1.5 transition-colors hover:bg-hover-bg active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 :class="v.secret ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'"
                 @click="v.secret = !v.secret"
               >
@@ -158,7 +158,7 @@
                 type="button"
                 title="删除变量"
                 aria-label="删除变量"
-                class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                class="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 @click="form.variables.splice(idx, 1)"
               >
                 <Trash2 class="h-3.5 w-3.5" />
@@ -199,11 +199,11 @@
               v-for="(t, idx) in tenants"
               :key="t.id ?? rowObjectKey(t)"
               type="button"
-              class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-xs transition-colors"
+              class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 font-mono text-xs transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
               :class="
                 selectedTenantIdx === idx
-                  ? 'border-foreground bg-primary text-primary-foreground font-medium'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+                  ? 'border-foreground bg-primary text-primary-foreground font-medium hover:bg-primary-hover'
+                  : 'border-border bg-background text-muted-foreground hover:border-border-hover hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
               "
               @click="selectedTenantIdx = idx"
             >

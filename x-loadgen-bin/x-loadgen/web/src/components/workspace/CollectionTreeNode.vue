@@ -5,7 +5,7 @@
       role="treeitem"
       tabindex="0"
       :aria-expanded="expanded"
-      class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-hover-bg active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       :style="{ paddingLeft: `${depth * 14 + 8}px` }"
       @click="!renaming && (expanded = !expanded)"
       @keydown.enter.self="!renaming && (expanded = !expanded)"
@@ -48,7 +48,7 @@
           type="button"
           title="压测集合"
           aria-label="压测集合"
-          class="rounded p-1 text-foreground hover:bg-background"
+          class="rounded-md p-1 text-foreground transition-colors hover:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           @click="openCollectionLoadRunner(node.id, node.name)"
         >
           <Play class="h-3.5 w-3.5" />
@@ -57,7 +57,7 @@
           type="button"
           title="新建请求"
           aria-label="在此集合新建请求"
-          class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-active-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           @click="emit('create-request', node)"
         >
           <FilePlus2 class="h-3.5 w-3.5" />
@@ -66,7 +66,7 @@
           type="button"
           title="新建子目录"
           aria-label="新建子目录"
-          class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-active-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           @click="emit('create-subfolder', node)"
         >
           <FolderPlus class="h-3.5 w-3.5" />
@@ -75,7 +75,7 @@
           type="button"
           title="重命名集合"
           aria-label="重命名集合"
-          class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-active-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           @click="startRename"
         >
           <Pencil class="h-3.5 w-3.5" />
@@ -84,7 +84,7 @@
           type="button"
           title="删除集合"
           aria-label="删除集合"
-          class="rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           @click="emit('delete-collection', node)"
         >
           <Trash2 class="h-3.5 w-3.5" />
@@ -112,11 +112,11 @@
         role="treeitem"
         tabindex="0"
         :aria-selected="activeTab.draft.id === req.id"
-        class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        class="group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         :class="
           activeTab.draft.id === req.id
-            ? 'bg-accent text-accent-foreground font-medium'
-            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+            ? 'bg-accent text-accent-foreground font-medium hover:bg-accent-hover'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
         "
         :style="{ paddingLeft: `${(depth + 1) * 14 + 14}px` }"
         @click="openSavedRequestInTab(req)"
@@ -147,7 +147,7 @@
             type="button"
             title="压测此请求"
             aria-label="压测此请求"
-            class="rounded p-1 text-foreground hover:bg-background"
+            class="rounded-md p-1 text-foreground transition-colors hover:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="openSingleLoadRunner(req)"
           >
             <Zap class="h-3 w-3" />
@@ -156,7 +156,7 @@
             type="button"
             title="删除请求"
             aria-label="删除请求"
-            class="rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+            class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="emit('delete-request', req)"
           >
             <Trash2 class="h-3 w-3" />

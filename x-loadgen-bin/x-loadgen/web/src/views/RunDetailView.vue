@@ -241,11 +241,11 @@
               type="button"
               role="tab"
               :aria-selected="activeDetailTab === tab.id"
-              class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+              class="relative inline-flex h-full cursor-pointer items-center gap-1.5 rounded-t-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               :class="
                 activeDetailTab === tab.id
-                  ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'text-foreground hover:bg-hover-bg'
+                  : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
               "
               @click="activeDetailTab = tab.id"
             >
@@ -456,7 +456,7 @@
                 <tbody class="divide-y divide-border">
                   <template v-for="s in samples" :key="`${s.worker}-${s.seq}`">
                     <tr
-                      class="hover:bg-muted/35"
+                      class="transition-colors hover:bg-accent-soft-hover"
                       :class="s.response_body ? 'cursor-pointer' : ''"
                       @click="toggleSampleBody(s)"
                     >

@@ -122,7 +122,7 @@
         <button
           v-if="resp.request_id"
           type="button"
-          class="hover:text-foreground"
+          class="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-hover-bg hover:text-foreground"
           title="复制 X-Request-Id"
           @click="copyId(resp.request_id, 'X-Request-Id')"
         >
@@ -130,7 +130,7 @@
         </button>
         <button
           type="button"
-          class="hover:text-foreground"
+          class="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-hover-bg hover:text-foreground"
           title="复制 trace_id"
           @click="copyId(resp.trace_id, 'trace_id')"
         >
@@ -176,11 +176,11 @@
           type="button"
           role="tab"
           :aria-selected="activeTab.responseSubTab === tab.id"
-          class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+          class="relative inline-flex h-full cursor-pointer items-center gap-1.5 rounded-t-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           :class="
             activeTab.responseSubTab === tab.id
-              ? 'text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
+              ? 'text-foreground hover:bg-hover-bg'
+              : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
           "
           @click="activeTab.responseSubTab = tab.id"
         >
@@ -228,7 +228,7 @@
           <div
             v-for="([k, v], idx) in resp.headers"
             :key="idx"
-            class="grid grid-cols-3 px-4 py-2.5 hover:bg-muted/35"
+            class="grid grid-cols-3 px-4 py-2.5 transition-colors hover:bg-accent-soft-hover"
           >
             <span class="truncate pr-3 text-muted-foreground">{{ k }}</span>
             <span class="col-span-2 break-all text-foreground">{{ v }}</span>

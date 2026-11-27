@@ -11,11 +11,11 @@
         type="button"
         role="tab"
         :aria-selected="activeTab.requestSubTab === tab.id"
-        class="relative inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors"
+        class="relative inline-flex h-full cursor-pointer items-center gap-1.5 rounded-t-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         :class="
           activeTab.requestSubTab === tab.id
-            ? 'text-foreground'
-            : 'text-muted-foreground hover:text-foreground'
+            ? 'text-foreground hover:bg-hover-bg'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
         "
         @click="activeTab.requestSubTab = tab.id"
       >
@@ -283,11 +283,11 @@
               <div class="inline-flex h-8 items-center rounded-md border border-border bg-muted p-0.5">
                 <button
                   type="button"
-                  class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+                  class="h-full cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
                   :class="
                     draft.mazbri.tenant_source === 'environment'
                       ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                      : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
                   "
                   @click="setTenantSource('environment')"
                 >
@@ -295,11 +295,11 @@
                 </button>
                 <button
                   type="button"
-                  class="h-full cursor-pointer rounded px-3 text-xs font-medium whitespace-nowrap transition-all"
+                  class="h-full cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
                   :class="
                     draft.mazbri.tenant_source === 'inline'
                       ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
+                      : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
                   "
                   @click="setTenantSource('inline')"
                 >
@@ -414,7 +414,7 @@
                 size="sm"
                 aria-label="断言操作符"
                 wrapper-class="w-full"
-                class="h-9 rounded-none border-0 bg-transparent px-2.5 text-xs shadow-none hover:bg-accent/50 focus-visible:ring-0"
+                class="h-9 rounded-none border-0 bg-transparent px-2.5 text-xs shadow-none hover:border-transparent hover:bg-hover-bg focus-visible:ring-0"
                 @update:model-value="(val) => toggleCheckOp(idx, val)"
               >
                 <option value="exists">存在且非 null</option>
@@ -439,7 +439,7 @@
               <button
                 type="button"
                 aria-label="删除断言"
-                class="cursor-pointer rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                class="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 @click="draft.assertions.checks.splice(idx, 1)"
               >
                 <Trash2 class="h-3.5 w-3.5" />
@@ -502,7 +502,7 @@
               <button
                 type="button"
                 aria-label="删除提取"
-                class="cursor-pointer rounded p-1 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                class="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 @click="captureRows.splice(idx, 1)"
               >
                 <Trash2 class="h-3.5 w-3.5" />

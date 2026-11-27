@@ -31,7 +31,7 @@
           </div>
           <DialogClose
             type="button"
-            class="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            class="cursor-pointer rounded-md p-1.5 text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             aria-label="关闭弹窗"
           >
             <X class="h-4 w-4" />

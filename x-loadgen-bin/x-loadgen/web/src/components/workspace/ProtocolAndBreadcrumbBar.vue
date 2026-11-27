@@ -21,7 +21,7 @@
         type="text"
         aria-label="请求名称"
         placeholder="订单查询"
-        class="min-w-[140px] max-w-xs rounded bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:bg-muted focus:outline-none"
+        class="min-w-[140px] max-w-xs rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm font-medium text-foreground transition-colors hover:border-border-hover hover:bg-hover-bg focus:border-ring focus:bg-background focus:outline-none"
         @input="draft.name = ($event.target as HTMLInputElement).value"
       />
       <span

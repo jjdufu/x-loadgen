@@ -8,11 +8,11 @@
             v-for="f in filters"
             :key="f.value"
             type="button"
-            class="h-7 cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-7 cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               statusFilter === f.value
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             :aria-pressed="statusFilter === f.value"
             @click="selectFilter(f.value)"
@@ -187,7 +187,7 @@
                 tabindex="0"
                 role="link"
                 :aria-label="`查看压测报告 ${run.title || shortRunId(run.id)}`"
-                class="cursor-pointer transition-colors hover:bg-muted/35"
+                class="cursor-pointer transition-colors hover:bg-accent-soft-hover"
                 @click="openRunDetail(run.id)"
                 @keydown.enter.self="openRunDetail(run.id)"
               >

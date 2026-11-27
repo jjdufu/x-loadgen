@@ -7,7 +7,7 @@
         type="button"
         :title="leftSidebarExpanded ? '收起侧栏' : '展开侧栏'"
         aria-label="切换左侧导航栏"
-        class="hidden lg:inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="hidden lg:inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         @click="leftSidebarExpanded = !leftSidebarExpanded"
       >
         <PanelLeft class="h-3.5 w-3.5" />
@@ -15,8 +15,8 @@
 
       <button
         type="button"
-        title="查看压测任务"
-        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded px-1.5 font-mono text-[11px] tabular-nums transition-colors hover:bg-accent hover:text-foreground"
+        title="压测报告"
+        class="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 font-mono text-[11px] tabular-nums transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         @click="router.push({ name: 'runs' })"
       >
         <span
@@ -47,7 +47,7 @@
           <button
             type="button"
             title="展开或收起响应栏"
-            class="hidden md:inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 font-mono text-[11px] tabular-nums transition-colors hover:bg-accent"
+            class="hidden md:inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[11px] tabular-nums transition-colors duration-100 hover:bg-hover-bg active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             @click="responsePaneOpen = !responsePaneOpen"
           >
             <span
@@ -75,7 +75,7 @@
         type="button"
         :title="responsePaneOpen ? '收起响应栏' : '展开响应栏'"
         aria-label="切换响应栏"
-        class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         :class="responsePaneOpen ? 'text-foreground' : 'text-muted-foreground'"
         @click="responsePaneOpen = !responsePaneOpen"
       >
@@ -86,7 +86,7 @@
         type="button"
         :title="horizontalSplit ? '切换为上下分栏' : '切换为左右分栏'"
         aria-label="切换分栏方向"
-        class="hidden md:inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="hidden md:inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         @click="horizontalSplit = !horizontalSplit"
       >
         <Columns2
@@ -99,7 +99,7 @@
         type="button"
         :title="rightSidebarOpen ? '收起右侧栏' : '展开右侧栏'"
         aria-label="切换右侧栏"
-        class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+        class="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-95 active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         :class="rightPanelShown ? 'text-foreground' : 'text-muted-foreground'"
         @click="toggleRightPanel"
       >

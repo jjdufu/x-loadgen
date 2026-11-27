@@ -20,6 +20,8 @@
 
     --primary: 240 5.9% 10%;
     --primary-foreground: 0 0% 98%;
+    --primary-hover: 240 5.5% 20%;
+    --primary-active: 240 5.5% 26%;
 
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
@@ -27,8 +29,14 @@
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 42%;
 
-    --accent: 240 4.8% 95.9%;
+    --accent: 240 4.8% 93.5%;
     --accent-foreground: 240 5.9% 10%;
+
+    --hover-bg: 240 5.5% 91.5%;
+    --active-bg: 240 5.5% 87.5%;
+    --border-hover: 240 5.5% 71%;
+    --accent-hover: 240 5.5% 88.5%;
+    --accent-soft-hover: 240 5.5% 92.5%;
 
     --destructive: 0 72.2% 50.6%;
     --destructive-foreground: 0 0% 98%;
@@ -52,8 +60,10 @@
     --popover: 240 6% 6.5%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    --primary: 240 5% 84%;
+    --primary-foreground: 240 10% 6%;
+    --primary-hover: 240 5% 91%;
+    --primary-active: 240 5% 78%;
 
     --secondary: 240 3.7% 14.5%;
     --secondary-foreground: 0 0% 98%;
@@ -61,14 +71,20 @@
     --muted: 240 3.7% 13%;
     --muted-foreground: 240 5% 65%;
 
-    --accent: 240 3.7% 15.9%;
+    --accent: 240 4.5% 17.5%;
     --accent-foreground: 0 0% 98%;
+
+    --hover-bg: 240 5% 15.5%;
+    --active-bg: 240 5.5% 21%;
+    --border-hover: 240 6% 34%;
+    --accent-hover: 240 5.5% 23.5%;
+    --accent-soft-hover: 240 5% 14.5%;
 
     --destructive: 0 62.8% 54%;
     --destructive-foreground: 0 0% 98%;
 
     --border: 240 3.7% 16.5%;
-    --input: 240 3.7% 17.5%;
+    --input: 240 3.7% 18.5%;
     --ring: 240 4.9% 83.9%;
     color-scheme: dark;
   }

@@ -14,11 +14,11 @@
             v-for="tab in kindFilters"
             :key="tab.value"
             type="button"
-            class="h-7 cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-all"
+            class="h-7 cursor-pointer rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
             :class="
               kindFilter === tab.value
                 ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
             "
             @click="kindFilter = tab.value"
           >
@@ -97,11 +97,11 @@
                 v-for="item in group.items"
                 :key="item.key"
                 type="button"
-                class="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors"
+                class="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 :class="
                   selected?.key === item.key
-                    ? 'border-foreground/30 bg-accent/60'
-                    : 'border-transparent hover:bg-accent/35'
+                    ? 'border-border-hover bg-accent hover:bg-accent-hover'
+                    : 'border-transparent hover:border-border-hover hover:bg-hover-bg active:bg-active-bg'
                 "
                 @click="selectItem(item)"
               >
@@ -303,14 +303,14 @@
               <div class="flex flex-wrap gap-3 font-mono text-[11px] text-muted-foreground">
                 <button
                   type="button"
-                  class="cursor-pointer hover:text-foreground"
+                  class="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-hover-bg hover:text-foreground"
                   @click="copy(probeDetail.request_id, 'X-Request-Id')"
                 >
                   X-Request-Id: <span class="text-foreground">{{ probeDetail.request_id }}</span>
                 </button>
                 <button
                   type="button"
-                  class="cursor-pointer hover:text-foreground"
+                  class="cursor-pointer rounded px-1 py-0.5 transition-colors hover:bg-hover-bg hover:text-foreground"
                   @click="copy(probeDetail.trace_id, 'trace_id')"
                 >
                   trace_id: <span class="text-foreground">{{ probeDetail.trace_id }}</span>

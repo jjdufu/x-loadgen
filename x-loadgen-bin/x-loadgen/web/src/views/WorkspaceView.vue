@@ -26,7 +26,7 @@
               :class="
                 activeTabId === tab.tabId
                   ? 'bg-background text-foreground font-medium'
-                  : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                  : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground'
               "
               @click="activeTabId = tab.tabId"
               @dblclick="duplicateWorkspaceTab(tab.tabId)"
@@ -62,7 +62,7 @@
                 type="button"
                 title="关闭标签页"
                 aria-label="关闭标签页"
-                class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground opacity-60 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                class="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-60 transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:bg-active-bg group-hover:opacity-100 group-focus-within:opacity-100"
                 @click.stop="closeWorkspaceTab(tab.tabId)"
               >
                 <X class="h-3.5 w-3.5" />

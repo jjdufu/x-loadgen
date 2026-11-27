@@ -24,11 +24,11 @@
           v-for="item in navItems"
           :key="item.name"
           :to="{ name: item.name }"
-          class="flex h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors"
+          class="flex h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
           :class="
             isActive(item.name)
-              ? 'bg-accent text-accent-foreground font-medium'
-              : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              ? 'bg-accent text-accent-foreground font-medium hover:bg-accent-hover active:bg-active-bg'
+              : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
           "
           :aria-current="isActive(item.name) ? 'page' : undefined"
         >
@@ -52,14 +52,14 @@
         :title="expanded ? undefined : item.label"
         :aria-label="item.label"
         :aria-current="isActive(item.name) ? 'page' : undefined"
-        class="flex items-center rounded-md text-sm transition-colors"
+        class="flex items-center rounded-md text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.98]"
         :class="[
           expanded
             ? 'h-9 gap-2.5 px-3 justify-start'
             : 'h-9 w-10 mx-auto justify-center',
           isActive(item.name)
-            ? 'bg-accent text-accent-foreground font-medium shadow-sm'
-            : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+            ? 'bg-accent text-accent-foreground font-medium shadow-sm hover:bg-accent-hover active:bg-active-bg'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg',
         ]"
       >
         <component :is="item.icon" class="h-4 w-4 shrink-0" />

@@ -10,11 +10,11 @@
         type="button"
         :title="sec.label"
         :aria-label="sec.label"
-        class="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors"
+        class="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-95"
         :class="
           rightSidebarSection === sec.id
-            ? 'bg-accent text-accent-foreground'
-            : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+            ? 'bg-accent text-accent-foreground hover:bg-accent-hover active:bg-active-bg'
+            : 'text-muted-foreground hover:bg-hover-bg hover:text-foreground active:bg-active-bg'
         "
         @click="rightSidebarSection = sec.id"
       >
@@ -177,7 +177,7 @@
           <!-- Global Row -->
           <div
             v-if="globalEnvRow"
-            class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent/50"
+            class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-card p-3 transition-colors hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg"
             @click="openEnvironmentEditor(globalEnvRow.id)"
           >
             <div>
@@ -198,8 +198,8 @@
             class="flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors"
             :class="
               activeEnvironmentId === env.id
-                ? 'border-foreground bg-accent/40'
-                : 'border-border bg-card hover:bg-accent/40'
+                ? 'border-foreground bg-accent hover:bg-accent-hover'
+                : 'border-border bg-card hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg'
             "
             @click="activeEnvironmentId = env.id"
           >
@@ -275,7 +275,7 @@
           <div
             v-for="p in filteredProfiles"
             :key="p.id"
-            class="cursor-pointer rounded-lg border border-border bg-card p-3 transition-colors hover:bg-accent/50"
+            class="cursor-pointer rounded-lg border border-border bg-card p-3 transition-colors hover:border-border-hover hover:bg-accent-soft-hover active:bg-active-bg"
             @click="router.push({ name: 'profiles' })"
           >
             <div class="text-xs font-semibold text-foreground">{{ p.name }}</div>

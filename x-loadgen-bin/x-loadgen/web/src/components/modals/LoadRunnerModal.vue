@@ -125,7 +125,7 @@
           <div
             v-for="(item, idx) in collectionRows"
             :key="item.key"
-            class="flex items-center justify-between px-4 py-2.5 transition-colors hover:bg-muted/35"
+            class="flex items-center justify-between px-4 py-2.5 transition-colors hover:bg-accent-soft-hover"
           >
             <div class="flex min-w-0 flex-1 items-center gap-3">
               <input
