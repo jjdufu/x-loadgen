@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/jjdufu/x-loadgen/compare/v0.6.2...v0.7.0) (2026-11-27)
+
+### ⚠ BREAKING CHANGES
+
+* 完整历史记录含密钥、压测重跑与报告深度拆解对比，库结构升到 v4 不做迁移 ([fb49fa1](https://github.com/jjdufu/x-loadgen/commit/fb49fa1d0763c4a7e9758eb601812f49d7cfa98a))
+
+### Features
+
+* 完整历史记录含密钥、压测重跑与报告深度拆解对比，库结构升到 v4 不做迁移 ([fb49fa1](https://github.com/jjdufu/x-loadgen/commit/fb49fa1d0763c4a7e9758eb601812f49d7cfa98a))
+
 ## [0.6.2](https://github.com/jjdufu/x-loadgen/compare/v0.6.1...v0.6.2) (2026-11-26)
 
 ### Bug Fixes

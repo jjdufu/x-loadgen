@@ -3135,7 +3135,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "x-loadgen"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3165,7 +3165,7 @@ dependencies = [
 
 [[package]]
 name = "x-loadgen-core"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "hex",
@@ -3178,7 +3178,7 @@ dependencies = [
 
 [[package]]
 name = "x-loadgen-crypto"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "x-loadgen-mockgw"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3233,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "x-loadgen-sdk"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
