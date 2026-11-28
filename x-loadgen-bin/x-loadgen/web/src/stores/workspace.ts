@@ -104,7 +104,6 @@ const SECRET_PATHS: readonly (readonly string[])[] = [
   ["tls", "client_key"],
   ["mazbri", "inline_tenant", "api_key"],
   ["mazbri", "inline_tenant", "tenant_key_base64"],
-  ["mazbri", "inline_tenant", "binding_key"],
 ];
 
 type DraftSecrets = Record<string, string>;

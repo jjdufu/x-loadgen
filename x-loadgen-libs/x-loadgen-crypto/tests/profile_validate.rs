@@ -1,9 +1,9 @@
 //! 租户传输 Profile 校验与命名套件解析。
 
 use x_loadgen_crypto::{
-    AlgorithmId, AlgorithmRegistry, BindingSpec, CryptoError, KeySelection, SUITE_GM_SM4_HMAC_SM3,
-    SUITE_TENANT_CHACHA20, SUITE_TENANT_DEFAULT_2026_11, TenantTransportProfile, TransportMode,
-    known_suites, resolve_suite, suite_data_alg, suite_mac_alg,
+    AlgorithmId, AlgorithmRegistry, CryptoError, SUITE_AES_256_GCM, SUITE_GM_SM4_HMAC_SM3,
+    SUITE_TENANT_CHACHA20, TenantTransportProfile, TransportMode, known_suites, resolve_suite,
+    suite_data_alg, suite_mac_alg,
 };
 
 fn registry() -> AlgorithmRegistry {
@@ -12,7 +12,7 @@ fn registry() -> AlgorithmRegistry {
 
 #[test]
 fn resolve_known_suites_and_reject_unknown() {
-    let def = resolve_suite(SUITE_TENANT_DEFAULT_2026_11).expect("default");
+    let def = resolve_suite(SUITE_AES_256_GCM).expect("default");
     assert_eq!(def.data_alg, AlgorithmId::Aes256Gcm);
     assert_eq!(def.mac_alg, None);
 
@@ -25,7 +25,7 @@ fn resolve_known_suites_and_reject_unknown() {
     assert_eq!(chacha.mac_alg, None);
 
     assert_eq!(
-        suite_data_alg(SUITE_TENANT_DEFAULT_2026_11).expect("data"),
+        suite_data_alg(SUITE_AES_256_GCM).expect("data"),
         AlgorithmId::Aes256Gcm
     );
     assert_eq!(
@@ -45,7 +45,7 @@ fn resolve_known_suites_and_reject_unknown() {
     assert_eq!(
         known_suites(),
         &[
-            SUITE_TENANT_DEFAULT_2026_11,
+            SUITE_AES_256_GCM,
             SUITE_GM_SM4_HMAC_SM3,
             SUITE_TENANT_CHACHA20
         ]
@@ -59,21 +59,13 @@ fn tenant_plaintext_and_default_suite_ok() {
         .validate(&reg)
         .expect("plaintext");
 
-    let mut profile =
-        TenantTransportProfile::from_named_suite(SUITE_TENANT_DEFAULT_2026_11, TransportMode::Full)
-            .expect("suite");
-    profile.key = Some(KeySelection::Latest {
-        key_id: "tenant-main".to_owned(),
-    });
+    let profile = TenantTransportProfile::from_named_suite(SUITE_AES_256_GCM, TransportMode::Full)
+        .expect("suite");
     profile.validate(&reg).expect("aes-gcm full");
 
-    let mut gm =
+    let gm =
         TenantTransportProfile::from_named_suite(SUITE_GM_SM4_HMAC_SM3, TransportMode::Request)
             .expect("gm suite");
-    gm.key = Some(KeySelection::Fixed {
-        key_id: "gm-key".to_owned(),
-        key_version: 1,
-    });
     gm.validate(&reg).expect("gm suite");
 }
 
@@ -84,9 +76,6 @@ fn tenant_rejects_cbc_without_mac_and_legacy_without_allow() {
     let mut cbc = TenantTransportProfile::plaintext();
     cbc.mode = TransportMode::Request;
     cbc.data_alg = Some(AlgorithmId::Aes256Cbc);
-    cbc.key = Some(KeySelection::Latest {
-        key_id: "k".to_owned(),
-    });
     let err = cbc.validate(&reg).expect_err("cbc needs mac");
     assert!(
         matches!(err, CryptoError::InvalidProfile { reason } if reason.contains("requires mac_alg"))
@@ -126,41 +115,21 @@ fn tenant_rejects_mode_none_with_signature_or_algs() {
     let err = p.validate(&reg).expect_err("alg");
     assert!(matches!(err, CryptoError::InvalidProfile { reason } if reason.contains("mode=none")));
 
-    let err =
-        TenantTransportProfile::from_named_suite(SUITE_TENANT_DEFAULT_2026_11, TransportMode::None)
-            .expect_err("none+suite ctor");
+    let err = TenantTransportProfile::from_named_suite(SUITE_AES_256_GCM, TransportMode::None)
+        .expect_err("none+suite ctor");
     assert!(matches!(err, CryptoError::InvalidProfile { .. }));
 }
 
 #[test]
-fn tenant_rejects_suite_alg_conflict_and_missing_key() {
+fn tenant_rejects_suite_alg_conflict() {
     let reg = registry();
-    let mut p = TenantTransportProfile::from_named_suite(
-        SUITE_TENANT_DEFAULT_2026_11,
-        TransportMode::Request,
-    )
-    .expect("suite");
+    let mut p = TenantTransportProfile::from_named_suite(SUITE_AES_256_GCM, TransportMode::Request)
+        .expect("suite");
     p.data_alg = Some(AlgorithmId::Chacha20Poly1305);
     let err = p.validate(&reg).expect_err("conflict");
     assert!(matches!(err, CryptoError::InvalidProfile { reason } if reason.contains("conflicts")));
 
-    let mut p =
-        TenantTransportProfile::from_named_suite(SUITE_TENANT_CHACHA20, TransportMode::Request)
-            .expect("chacha");
-    let err = p.validate(&reg).expect_err("no key");
-    assert!(
-        matches!(err, CryptoError::InvalidProfile { reason } if reason.contains("key selection"))
-    );
-
-    p.key = Some(KeySelection::Latest {
-        key_id: String::new(),
-    });
-    let err = p.validate(&reg).expect_err("empty key");
-    assert!(matches!(err, CryptoError::InvalidProfile { reason } if reason.contains("key_id")));
-
-    p.key = Some(KeySelection::Latest {
-        key_id: "ok".to_owned(),
-    });
-    p.binding = Some(BindingSpec { required: true });
+    let p = TenantTransportProfile::from_named_suite(SUITE_TENANT_CHACHA20, TransportMode::Request)
+        .expect("chacha");
     p.validate(&reg).expect("chacha ok");
 }

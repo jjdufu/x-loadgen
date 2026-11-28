@@ -1,8 +1,7 @@
-//! 单租户网关会话：按 Profile 密封请求、附加绑定头、解码响应。
+//! 单租户网关会话：按 Profile 密封请求、解码响应。
 //!
-//! 会话只持有只读密钥材料，`&self` 方法可并发调用；每次请求生成新的传输 nonce 与绑定 nonce。
+//! 会话只持有只读密钥材料，`&self` 方法可并发调用；每次请求生成新的传输 nonce。
 
-use x_loadgen_core::crypto::request_binding::{RequestBindingError, RequestSigner};
 use x_loadgen_core::crypto::transport::{
     EnvelopeDirection, SealEnvelopeParams, TransportCryptoError, TransportEnvelope, open_envelope,
     seal_envelope,
@@ -34,9 +33,6 @@ pub enum Error {
     /// legacy 算法未放行。
     #[error("legacy transport algorithm denied: {0}")]
     LegacyDenied(String),
-    /// 请求绑定签名失败。
-    #[error("request binding failed: {0}")]
-    Binding(#[from] RequestBindingError),
     /// 页面录入的租户配置非法。
     #[error("invalid tenant settings: {0}")]
     Settings(String),
@@ -45,16 +41,12 @@ pub enum Error {
 /// 会话配置。
 #[derive(Clone)]
 pub struct SessionConfig {
-    /// 租户 UUID（也是 AEAD AAD 与 MAC 规范串的一部分）。
+    /// 租户 UUID（也是 HKDF 盐值、AEAD AAD 与 MAC 规范串的一部分）。
     pub tenant_id: String,
-    /// 租户数据密钥（`mac_alg` 存在时也作 MAC 密钥）。
+    /// 租户唯一主密钥（32 字节）。
     pub tenant_key: Vec<u8>,
-    /// 当前密钥版本（如 `v1`）。
-    pub key_version: String,
     /// 租户传输 Profile。
     pub transport: TenantTransportProfile,
-    /// 可选请求绑定签名器。
-    pub request_signer: Option<RequestSigner>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -62,20 +54,16 @@ impl std::fmt::Debug for SessionConfig {
         f.debug_struct("SessionConfig")
             .field("tenant_id", &self.tenant_id)
             .field("tenant_key", &"<redacted>")
-            .field("key_version", &self.key_version)
             .field("transport", &self.transport)
-            .field("request_signer", &self.request_signer)
             .finish()
     }
 }
 
-/// 编码后的网关请求：最终请求体与需要附加的请求头。
+/// 编码后的网关请求体（明文 JSON 或信封 JSON）。
 #[derive(Debug, Clone)]
 pub struct EncodedRequest {
     /// 请求体（明文 JSON 或信封 JSON）。
     pub body: Vec<u8>,
-    /// 绑定头（头名小写）；未配置签名器时为空。
-    pub headers: Vec<(&'static str, String)>,
 }
 
 /// 单租户网关会话。
@@ -111,17 +99,11 @@ impl GatewaySession {
         self.config.transport.mode
     }
 
-    /// 是否配置了请求绑定。
-    #[must_use]
-    pub fn has_binding(&self) -> bool {
-        self.config.request_signer.is_some()
-    }
-
     /// 编码一次网关调用（`plaintext` 为 [`crate::GatewayRequest`] JSON）。
     ///
     /// # Errors
     ///
-    /// 密封或绑定签名失败时返回错误。
+    /// 密封失败时返回错误。
     pub fn encode_request(
         &self,
         plaintext: &[u8],
@@ -134,15 +116,7 @@ impl GatewaySession {
                 serde_json::to_vec(&envelope)?
             }
         };
-        let headers = match self.config.request_signer.as_ref() {
-            Some(signer) => signer
-                .sign("POST", GATEWAY_INVOKE_PATH, &body)?
-                .pairs()
-                .into_iter()
-                .collect(),
-            None => Vec::new(),
-        };
-        Ok(EncodedRequest { body, headers })
+        Ok(EncodedRequest { body })
     }
 
     /// 按传输模式解码网关响应体。
@@ -171,7 +145,6 @@ impl GatewaySession {
             registry: &self.registry,
             master_key: &self.config.tenant_key,
             direction: EnvelopeDirection::ClientToGateway,
-            key_version: &self.config.key_version,
             tenant_id: &self.config.tenant_id,
             http_path: GATEWAY_INVOKE_PATH,
             plaintext,
@@ -227,9 +200,8 @@ fn map_crypto_error(error: TransportCryptoError) -> Error {
 
 /// 按传输模式解码网关响应体。
 ///
-/// - `full`：成功响应必须是 [`TransportEnvelope`]（由 `open` 解开）；网关在解密 / 鉴权 /
-///   请求绑定阶段的拒绝（非 2xx）以明文错误体返回，按明文解析以保留错误码；
-///   2xx 却是明文 → 视为降级，报错。
+/// - `full`：成功响应必须是 [`TransportEnvelope`]（由 `open` 解开）；网关在解密 / 鉴权阶段
+///   的拒绝（非 2xx）以明文错误体返回，按明文解析以保留错误码；2xx 却是明文 → 视为降级，报错。
 /// - `none` / `request`：响应必须是明文；收到信封视为配置不一致，报错。
 fn decode_gateway_payload(
     mode: TransportMode,
@@ -257,33 +229,18 @@ fn decode_gateway_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use x_loadgen_core::crypto::request_binding::{
-        HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_INPUT, HEADER_TIMESTAMP,
-        binding_key_ref, canonical_http_binding, parse_signature_input, verify_binding,
-    };
-    use x_loadgen_core::crypto::{
-        AlgorithmId, KeySelection, SUITE_TENANT_DEFAULT_2026_11, generate_sign_keypair,
-    };
+    use x_loadgen_core::crypto::{AlgorithmId, SUITE_AES_256_GCM};
 
     fn aes_full_profile() -> TenantTransportProfile {
-        let mut profile = TenantTransportProfile::from_named_suite(
-            SUITE_TENANT_DEFAULT_2026_11,
-            TransportMode::Full,
-        )
-        .expect("suite");
-        profile.key = Some(KeySelection::Latest {
-            key_id: "tenant-default".into(),
-        });
-        profile
+        TenantTransportProfile::from_named_suite(SUITE_AES_256_GCM, TransportMode::Full)
+            .expect("suite")
     }
 
-    fn session(transport: TenantTransportProfile, signer: Option<RequestSigner>) -> GatewaySession {
+    fn session(transport: TenantTransportProfile) -> GatewaySession {
         GatewaySession::new(SessionConfig {
             tenant_id: "00000000-0000-0000-0000-000000000001".into(),
             tenant_key: vec![7u8; 32],
-            key_version: "v1".into(),
             transport,
-            request_signer: signer,
         })
         .expect("session")
     }
@@ -319,7 +276,6 @@ mod tests {
             registry: &registry,
             master_key: &[7u8; 32],
             direction: EnvelopeDirection::GatewayToClient,
-            key_version: "v1",
             tenant_id: "tenant-1",
             http_path: GATEWAY_INVOKE_PATH,
             plaintext: br#"{"success":true,"status":200}"#,
@@ -356,7 +312,7 @@ mod tests {
 
     #[test]
     fn full_session_roundtrips_through_peer_seal_and_rejects_reflected_request() {
-        let sdk = session(aes_full_profile(), None);
+        let sdk = session(aes_full_profile());
         let encoded = sdk
             .encode_request(br#"{"product_id":"demo"}"#, 1_710_000_000)
             .expect("encode");
@@ -384,7 +340,6 @@ mod tests {
             registry: &registry,
             master_key: &[7u8; 32],
             direction: EnvelopeDirection::GatewayToClient,
-            key_version: "v1",
             tenant_id: "00000000-0000-0000-0000-000000000001",
             http_path: GATEWAY_INVOKE_PATH,
             plaintext: br#"{"success":true,"data":{"ok":1},"status":200}"#,
@@ -408,9 +363,7 @@ mod tests {
         let err = GatewaySession::new(SessionConfig {
             tenant_id: "t".into(),
             tenant_key: vec![1u8; 32],
-            key_version: "v1".into(),
             transport: profile,
-            request_signer: None,
         })
         .expect_err("legacy denied");
         assert!(matches!(err, Error::LegacyDenied(id) if id == "aes-256-ecb"));
@@ -430,89 +383,5 @@ mod tests {
             Error::UnsupportedAlgorithm(_) => {}
             other => panic!("unexpected {other:?}"),
         }
-    }
-
-    #[test]
-    fn request_binding_headers_verify_with_registered_public_key() {
-        for alg in [
-            AlgorithmId::Ed25519,
-            AlgorithmId::Sm2Sign,
-            AlgorithmId::EcdsaP256Sha256,
-        ] {
-            let pair = generate_sign_keypair(alg).expect("keygen");
-            let signer = RequestSigner::new("3", alg, pair.private_pem.as_bytes()).expect("signer");
-            let sdk = session(TenantTransportProfile::plaintext(), Some(signer));
-            let body = br#"{"product_id":"p1","path":"/x"}"#;
-            let encoded = sdk.encode_request(body, 0).expect("encode");
-            assert_eq!(encoded.body, body);
-            let header = |name: &str| {
-                encoded
-                    .headers
-                    .iter()
-                    .find(|(key, _)| *key == name)
-                    .map_or_else(|| panic!("missing {name}"), |(_, value)| value.clone())
-            };
-            assert_eq!(header(HEADER_KEY_ID), "3");
-            assert_eq!(
-                parse_signature_input(&header(HEADER_SIGNATURE_INPUT)).expect("input"),
-                alg
-            );
-            let timestamp: i64 = header(HEADER_TIMESTAMP).parse().expect("ts");
-            let canonical = canonical_http_binding(
-                "POST",
-                GATEWAY_INVOKE_PATH,
-                timestamp,
-                &header(HEADER_NONCE),
-                body,
-            );
-            let public = binding_key_ref(alg, pair.public_pem.as_bytes()).expect("public");
-            verify_binding(
-                &AlgorithmRegistry::default_registry(),
-                alg,
-                &public,
-                &canonical,
-                &header(HEADER_SIGNATURE),
-            )
-            .unwrap_or_else(|e| panic!("{alg}: {e}"));
-        }
-    }
-
-    #[test]
-    fn request_binding_covers_sealed_body() {
-        let signer = RequestSigner::new("9", AlgorithmId::HmacSha256, &[5u8; 32]).expect("signer");
-        let sdk = session(aes_full_profile(), Some(signer));
-        let encoded = sdk.encode_request(b"{}", 1_710_000_000).expect("encode");
-        assert!(serde_json::from_slice::<TransportEnvelope>(&encoded.body).is_ok());
-        let header = |name: &str| {
-            encoded
-                .headers
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map_or_default(|(_, value)| value.clone())
-        };
-        let canonical = canonical_http_binding(
-            "POST",
-            GATEWAY_INVOKE_PATH,
-            header(HEADER_TIMESTAMP).parse().expect("ts"),
-            &header(HEADER_NONCE),
-            &encoded.body,
-        );
-        let key = binding_key_ref(AlgorithmId::HmacSha256, &[5u8; 32]).expect("key");
-        verify_binding(
-            &AlgorithmRegistry::default_registry(),
-            AlgorithmId::HmacSha256,
-            &key,
-            &canonical,
-            &header(HEADER_SIGNATURE),
-        )
-        .expect("binding covers sealed body");
-    }
-
-    #[test]
-    fn request_binding_absent_without_signer() {
-        let sdk = session(TenantTransportProfile::plaintext(), None);
-        let encoded = sdk.encode_request(b"{}", 0).expect("encode");
-        assert_eq!(encoded.headers, Vec::new());
-        assert!(!sdk.has_binding());
     }
 }

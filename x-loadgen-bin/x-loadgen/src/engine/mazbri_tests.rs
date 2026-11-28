@@ -1,8 +1,7 @@
-//! Mazbri executor against the local mock gateway (token, binding, envelopes, failures).
+//! Mazbri executor against the local mock gateway (token, envelopes, failures).
 
 use serde_json::{Value, json};
 use x_loadgen_mockgw::{Fault, MockConfig, MockGateway, MockStats, MockTenant};
-use x_loadgen_sdk::generate_binding_keypair;
 
 use super::execute::execute_one;
 use super::metrics::OutcomeClass;
@@ -15,8 +14,6 @@ use crate::db::profiles::LoadConfig;
 
 /// Base64 of the 32-byte key `x-loadgen-test-tenant-key-32byte`.
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
-/// Base64 of `x-loadgen-binding-key`.
-const HMAC_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const API_KEY: &str = "ak-mazbri-test";
 const TENANT_ID: &str = "3f0c7f9e-0000-4000-8000-00000000a001";
 const REQUESTS: u64 = 3;
@@ -51,7 +48,6 @@ impl Case {
             "encryption_mode": mode,
             "tenant_id": TENANT_ID,
             "tenant_key_base64": TENANT_KEY,
-            "key_version": "7",
             "suite": suite,
             "data_alg": data_alg,
             "mac_alg": mac_alg,
@@ -59,7 +55,6 @@ impl Case {
         case.gateway.encryption_mode = mode.into();
         case.gateway.tenant_id = Some(TENANT_ID.into());
         case.gateway.tenant_key_base64 = Some(TENANT_KEY.into());
-        case.gateway.key_version = Some("7".into());
         case.gateway.suite = suite.map(str::to_string);
         case.gateway.data_alg = data_alg.map(str::to_string);
         case.gateway.mac_alg = mac_alg.map(str::to_string);
@@ -69,22 +64,6 @@ impl Case {
     fn insecure(mut self) -> Self {
         self.client["allow_insecure"] = json!(true);
         self.gateway.allow_insecure = true;
-        self
-    }
-
-    /// Add request binding; asymmetric algorithms get a fresh key pair.
-    fn bound(mut self, alg: &str) -> Self {
-        let (client_key, verify_key) = if alg.starts_with("hmac-") {
-            (HMAC_KEY.to_string(), HMAC_KEY.to_string())
-        } else {
-            generate_binding_keypair(alg).expect("key pair")
-        };
-        self.client["binding_kid"] = json!(format!("kid-{alg}"));
-        self.client["binding_alg"] = json!(alg);
-        self.client["binding_key"] = json!(client_key);
-        self.gateway.binding_kid = Some(format!("kid-{alg}"));
-        self.gateway.binding_alg = Some(alg.into());
-        self.gateway.binding_verify_key = Some(verify_key);
         self
     }
 
@@ -220,12 +199,6 @@ async fn assert_all_succeed(label: &str, case: &Case) {
         "{label}: one token for all requests"
     );
     assert_eq!(stats.accepted, REQUESTS, "{label}");
-    let bound = case.gateway.binding_alg.is_some();
-    assert_eq!(
-        stats.bindings_verified,
-        if bound { REQUESTS } else { 0 },
-        "{label}"
-    );
     let opened = if case.encrypted_mode() { REQUESTS } else { 0 };
     assert_eq!(stats.envelopes_opened, opened, "{label}");
     let sealed = if case.gateway.encryption_mode == "full" {
@@ -262,28 +235,9 @@ async fn token_exchange_and_plaintext_gateway_call() {
 }
 
 #[tokio::test]
-async fn every_request_binding_family_is_verified_by_the_gateway() {
-    for alg in [
-        "hmac-sha256",
-        "hmac-sha384",
-        "hmac-sha512",
-        "hmac-sm3",
-        "rsa-pkcs1v15-sign-sha256",
-        "rsa-pkcs1v15-sign-sha384",
-        "rsa-pkcs1v15-sign-sha512",
-        "ecdsa-p256-sha256",
-        "ecdsa-p384-sha384",
-        "ed25519",
-        "sm2-sign",
-    ] {
-        assert_all_succeed(alg, &Case::plain().bound(alg)).await;
-    }
-}
-
-#[tokio::test]
 async fn named_suites_seal_requests_and_open_full_responses() {
     for suite in [
-        "suite/tenant-default-2026-11",
+        "suite/aes-256-gcm",
         "suite/gm-sm4-hmac-sm3",
         "suite/tenant-chacha20",
     ] {
@@ -295,12 +249,11 @@ async fn named_suites_seal_requests_and_open_full_responses() {
 }
 
 #[tokio::test]
-async fn custom_algorithms_and_binding_cover_the_signed_envelope() {
-    let custom =
-        Case::encrypted("full", None, Some("sm4-cbc-pkcs7"), Some("hmac-sha256")).bound("sm2-sign");
-    assert_all_succeed("custom sm4 + hmac-sha256 + sm2", &custom).await;
-    let aead = Case::encrypted("request", None, Some("aes-128-gcm"), None).bound("hmac-sm3");
-    assert_all_succeed("custom aes-128-gcm + hmac-sm3 binding", &aead).await;
+async fn custom_algorithms_cover_signed_and_aead_envelopes() {
+    let custom = Case::encrypted("full", None, Some("sm4-cbc-pkcs7"), Some("hmac-sha256"));
+    assert_all_succeed("custom sm4 + hmac-sha256", &custom).await;
+    let aead = Case::encrypted("request", None, Some("aes-128-gcm"), None);
+    assert_all_succeed("custom aes-128-gcm", &aead).await;
 }
 
 #[tokio::test]
@@ -319,7 +272,7 @@ async fn legacy_algorithms_need_allow_insecure() {
 
 #[tokio::test]
 async fn response_decrypt_or_verify_failures_are_errors() {
-    for suite in ["suite/tenant-default-2026-11", "suite/gm-sm4-hmac-sm3"] {
+    for suite in ["suite/aes-256-gcm", "suite/gm-sm4-hmac-sm3"] {
         let case = Case::encrypted("full", Some(suite), None, None);
         let mut tampered = case.gateway.clone();
         tampered.fault = Fault::TamperResponse;
@@ -333,16 +286,6 @@ async fn response_decrypt_or_verify_failures_are_errors() {
 
 #[tokio::test]
 async fn gateway_rejections_and_token_failures_are_counted() {
-    let bound = Case::plain().bound("ed25519");
-    let mut other_key = bound.gateway.clone();
-    other_key.binding_verify_key = Some(generate_binding_keypair("ed25519").expect("pair").1);
-    let stats = assert_all_fail("wrong binding key", &bound, Some(other_key), "transport").await;
-    assert_eq!(stats.rejected, REQUESTS);
-    assert_eq!(
-        stats.tokens_issued, REQUESTS,
-        "a 401 drops the cached token"
-    );
-
     let sealed = Case::encrypted("request", Some("suite/tenant-chacha20"), None, None);
     let mut wrong_key = sealed.gateway.clone();
     wrong_key.tenant_key_base64 = Some("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=".into());
@@ -364,7 +307,7 @@ async fn gateway_rejections_and_token_failures_are_counted() {
 
 #[tokio::test]
 async fn business_checks_run_on_the_decrypted_data() {
-    let case = Case::encrypted("full", Some("suite/gm-sm4-hmac-sm3"), None, None).bound("sm2-sign");
+    let case = Case::encrypted("full", Some("suite/gm-sm4-hmac-sm3"), None, None);
     let (outcomes, stats) = run_with(&case, None, |target| {
         target.requests[0].assertions.checks = serde_json::from_value(json!([
             {"path": "echo.body.note", "eq": "不是这个"}
@@ -531,7 +474,7 @@ async fn sampled_flag_and_request_id_switch_follow_the_template() {
 
 #[tokio::test]
 async fn captures_are_recorded_and_feed_later_requests() {
-    let case = Case::encrypted("full", Some("suite/tenant-default-2026-11"), None, None);
+    let case = Case::encrypted("full", Some("suite/aes-256-gcm"), None, None);
     let (outcomes, _) = run_with(&case, None, |target| {
         let body = serde_json::to_string(&json!({
             "seq": "{{seq}}",

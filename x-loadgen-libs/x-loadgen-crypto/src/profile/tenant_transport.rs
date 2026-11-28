@@ -1,4 +1,4 @@
-//! 租户 ↔ 网关传输 Profile。
+//! 租户 ↔ 网关传输 Profile（单租户唯一主密钥，无多版本密钥状态机与请求绑定字段）。
 
 use serde::{Deserialize, Serialize};
 
@@ -8,10 +8,7 @@ use crate::registry::{AlgorithmRegistry, require_mac_for};
 use crate::suite::{SuiteSpec, resolve_suite};
 use crate::traits::CryptoError;
 
-/// Profile schema 版本（本步起点）。
-pub const PROFILE_VERSION_V1: u32 = 1;
-
-/// 默认 nonce TTL（秒），与现网 binding 默认对齐。
+/// 默认 nonce TTL（秒）。
 pub const DEFAULT_NONCE_TTL_SECS: u32 = 300;
 
 /// 默认时钟偏移容忍（秒）。
@@ -29,46 +26,9 @@ pub enum TransportMode {
     Full,
 }
 
-/// 请求绑定策略（nonce / 时间窗等细节由网关侧执行；此处仅开关与标记）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BindingSpec {
-    /// 是否强制请求绑定。
-    pub required: bool,
-}
-
-/// 密钥选择策略。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "strategy", rename_all = "snake_case")]
-pub enum KeySelection {
-    /// 固定 key id + 版本。
-    Fixed {
-        /// 密钥标识。
-        key_id: String,
-        /// 密钥版本。
-        key_version: u32,
-    },
-    /// 使用该 key id 的当前激活版本。
-    Latest {
-        /// 密钥标识。
-        key_id: String,
-    },
-}
-
-impl KeySelection {
-    /// 取出 key id。
-    #[must_use]
-    pub fn key_id(&self) -> &str {
-        match self {
-            Self::Fixed { key_id, .. } | Self::Latest { key_id } => key_id,
-        }
-    }
-}
-
-/// 租户传输 Profile（可版本化 / serde；后续 DB / `OpenAPI` 对齐）。
+/// 租户传输 Profile（单一生效配置，与 DB / `OpenAPI` 对齐）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TenantTransportProfile {
-    /// Schema 版本。
-    pub version: u32,
     /// 传输模式。
     pub mode: TransportMode,
     /// 命名套件（可选）；与 `data_alg` / `mac_alg` 同时出现时必须一致。
@@ -80,18 +40,12 @@ pub struct TenantTransportProfile {
     /// 外挂 MAC（CBC/CTR/CFB 等非 AEAD **必须**）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mac_alg: Option<AlgorithmId>,
-    /// 密钥选择；加密模式下必填。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<KeySelection>,
     /// 是否要求外层签名 / MAC（与 AEAD 完整性可叠加）。
     #[serde(default)]
     pub require_signature: bool,
     /// 是否允许 Legacy 算法。
     #[serde(default)]
     pub allow_insecure: bool,
-    /// 可选请求绑定。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding: Option<BindingSpec>,
     /// Nonce 存活时间（秒）。
     pub nonce_ttl_secs: u32,
     /// 时钟偏移容忍（秒）。
@@ -99,7 +53,7 @@ pub struct TenantTransportProfile {
 }
 
 impl TenantTransportProfile {
-    /// 由命名套件构造加密侧默认 Profile（`version=1`，TTL/skew=300）。
+    /// 由命名套件构造加密侧默认 Profile（TTL/skew=300）。
     ///
     /// # Errors
     ///
@@ -113,15 +67,12 @@ impl TenantTransportProfile {
         }
         let spec = resolve_suite(suite)?;
         Ok(Self {
-            version: PROFILE_VERSION_V1,
             mode,
             suite: Some(suite.to_owned()),
             data_alg: Some(spec.data_alg),
             mac_alg: spec.mac_alg,
-            key: None,
             require_signature: false,
             allow_insecure: false,
-            binding: None,
             nonce_ttl_secs: DEFAULT_NONCE_TTL_SECS,
             clock_skew_secs: DEFAULT_CLOCK_SKEW_SECS,
         })
@@ -131,15 +82,12 @@ impl TenantTransportProfile {
     #[must_use]
     pub fn plaintext() -> Self {
         Self {
-            version: PROFILE_VERSION_V1,
             mode: TransportMode::None,
             suite: None,
             data_alg: None,
             mac_alg: None,
-            key: None,
             require_signature: false,
             allow_insecure: false,
-            binding: None,
             nonce_ttl_secs: DEFAULT_NONCE_TTL_SECS,
             clock_skew_secs: DEFAULT_CLOCK_SKEW_SECS,
         }
@@ -209,11 +157,6 @@ impl TenantTransportProfile {
     /// - Legacy 未 `allow_insecure`
     /// - 算法未登记
     pub fn validate(&self, registry: &AlgorithmRegistry) -> Result<(), CryptoError> {
-        if self.version == 0 {
-            return Err(CryptoError::InvalidProfile {
-                reason: "version must be >= 1".to_owned(),
-            });
-        }
         if self.nonce_ttl_secs == 0 {
             return Err(CryptoError::InvalidProfile {
                 reason: "nonce_ttl_secs must be > 0".to_owned(),
@@ -247,18 +190,6 @@ impl TenantTransportProfile {
         let data = data_alg.ok_or_else(|| CryptoError::InvalidProfile {
             reason: "mode=request|full requires data_alg or suite".to_owned(),
         })?;
-
-        let key = self
-            .key
-            .as_ref()
-            .ok_or_else(|| CryptoError::InvalidProfile {
-                reason: "mode=request|full requires key selection".to_owned(),
-            })?;
-        if key.key_id().is_empty() {
-            return Err(CryptoError::InvalidProfile {
-                reason: "key_id must not be empty".to_owned(),
-            });
-        }
 
         let data_meta = registry.get(data)?;
         match data_meta.kind {

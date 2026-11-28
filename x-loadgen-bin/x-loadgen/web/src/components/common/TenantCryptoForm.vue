@@ -81,7 +81,7 @@
       </div>
 
       <template v-if="tenant.encryption_mode === 'request' || tenant.encryption_mode === 'full'">
-        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div class="space-y-1.5">
             <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
               网关租户 ID *
@@ -91,18 +91,6 @@
               mono
               placeholder="例如 t-001"
               @update:model-value="(v) => patch({ tenant_id: v })"
-            />
-          </div>
-
-          <div class="space-y-1.5">
-            <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-              密钥版本 *
-            </label>
-            <UiInput
-              :model-value="tenant.key_version ?? ''"
-              mono
-              placeholder="例如 v1"
-              @update:model-value="(v) => patch({ key_version: v })"
             />
           </div>
 
@@ -125,7 +113,7 @@
             密码套件 *
           </label>
           <UiSelect
-            :model-value="tenant.suite ?? 'suite/tenant-default-2026-11'"
+            :model-value="tenant.suite ?? 'suite/aes-256-gcm'"
             mono
             @update:model-value="
               (v) =>
@@ -182,7 +170,7 @@
             <button
               type="button"
               class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-              @click="fillRandomBase64Key('tenant_key_base64', 32)"
+              @click="fillRandomBase64Key(32)"
             >
               <Dices class="h-3.5 w-3.5" />
               <span>随机生成</span>
@@ -226,166 +214,23 @@
         </div>
       </template>
     </div>
-
-    <!-- Request Binding Signature Section -->
-    <div class="rounded-lg border border-border bg-surface/50 p-4 space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <KeyRound class="h-4 w-4 text-foreground shrink-0" />
-          <span class="text-sm font-semibold text-foreground">
-            请求绑定签名
-          </span>
-        </div>
-        <UiButton
-          v-if="asymmetricBinding"
-          variant="outline"
-          size="sm"
-          :loading="generatingKeypair"
-          @click="generateKeypair"
-        >
-          <Sparkles class="h-3.5 w-3.5" />
-          <span>生成密钥对</span>
-        </UiButton>
-      </div>
-
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            签名算法
-          </label>
-          <UiSelect
-            :model-value="tenant.binding_alg ?? ''"
-            mono
-            @update:model-value="(v) => patch({ binding_alg: v })"
-          >
-            <option v-for="b in MAZBRI_BINDING_ALGS" :key="b.value" :value="b.value">
-              {{ b.label }}
-            </option>
-          </UiSelect>
-        </div>
-
-        <div v-if="tenant.binding_alg" class="space-y-1.5">
-          <label class="block text-xs font-medium text-muted-foreground whitespace-nowrap">
-            签名密钥 ID *
-          </label>
-          <UiInput
-            :model-value="tenant.binding_kid ?? ''"
-            mono
-            placeholder="例如 k1"
-            @update:model-value="(v) => patch({ binding_kid: v })"
-          />
-        </div>
-      </div>
-
-      <template v-if="tenant.binding_alg">
-        <div v-if="!asymmetricBinding" class="space-y-1.5">
-          <div class="flex h-5 items-center justify-between gap-2">
-            <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-              对称签名密钥 (Base64) *
-            </label>
-            <button
-              type="button"
-              class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-              @click="fillRandomBase64Key('binding_key', 32)"
-            >
-              <Dices class="h-3.5 w-3.5" />
-              <span>随机生成</span>
-            </button>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <UiInput
-              :model-value="tenant.binding_key ?? ''"
-              :type="showBindingKey ? 'text' : 'password'"
-              mono
-              placeholder="Base64 编码 HMAC 密钥"
-              class="flex-1"
-              @update:model-value="(v) => patch({ binding_key: v })"
-            />
-            <UiButton
-              variant="outline"
-              size="icon"
-              @click="showBindingKey = !showBindingKey"
-            >
-              <EyeOff v-if="showBindingKey" class="h-4 w-4" />
-              <Eye v-else class="h-4 w-4" />
-            </UiButton>
-          </div>
-        </div>
-
-        <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div class="space-y-1.5">
-            <div class="flex h-5 items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                私钥 PEM *
-              </label>
-            </div>
-            <UiTextarea
-              :model-value="tenant.binding_key ?? ''"
-              :rows="5"
-              mono
-              placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
-              @update:model-value="(v) => patch({ binding_key: v })"
-            />
-          </div>
-
-          <div class="space-y-1.5">
-            <div class="flex h-5 items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                公钥 PEM
-              </label>
-              <button
-                v-if="tenant.binding_public_key"
-                type="button"
-                class="inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-hover-bg hover:text-foreground active:scale-[0.98] active:bg-active-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                @click="copyPublicKey"
-              >
-                <Copy class="h-3.5 w-3.5" />
-                <span>复制公钥</span>
-              </button>
-            </div>
-            <UiTextarea
-              :model-value="tenant.binding_public_key ?? ''"
-              :rows="5"
-              readonly
-              mono
-              placeholder="点击「生成密钥对」后自动回填公钥 PEM"
-              class="bg-muted/30"
-            />
-          </div>
-        </div>
-      </template>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
-import { isAxiosError } from "axios";
-import {
-  Copy,
-  Dices,
-  Eye,
-  EyeOff,
-  KeyRound,
-  ShieldCheck,
-  Sparkles,
-} from "lucide-vue-next";
-import { api } from "../../api/workspace";
+import { computed, ref } from "vue";
+import { Dices, Eye, EyeOff, ShieldCheck } from "lucide-vue-next";
 import type { TenantSpec } from "../../api/types";
 import {
-  MAZBRI_BINDING_ALGS,
   MAZBRI_DATA_ALGS,
   MAZBRI_MAC_ALGS,
   MAZBRI_SUITES,
-  isAsymmetricBindingAlg,
 } from "../../helpers/format";
 import { toast } from "../../modules/toast";
-import { copyText } from "../../utils/clipboard";
 import UiButton from "../ui/UiButton.vue";
 import UiInput from "../ui/UiInput.vue";
 import UiSelect from "../ui/UiSelect.vue";
 import UiSwitch from "../ui/UiSwitch.vue";
-import UiTextarea from "../ui/UiTextarea.vue";
 
 const props = defineProps<{
   modelValue: TenantSpec;
@@ -398,8 +243,6 @@ const emit = defineEmits<{
 
 const showApiKey = ref(false);
 const showTenantKey = ref(false);
-const showBindingKey = ref(false);
-const generatingKeypair = ref(false);
 
 const encryptionModes = [
   { value: "none", label: "明文" },
@@ -413,10 +256,6 @@ const useCustomCipher = ref(
   Boolean(!props.modelValue.suite && props.modelValue.data_alg),
 );
 
-const asymmetricBinding = computed(() =>
-  isAsymmetricBindingAlg(tenant.value.binding_alg),
-);
-
 function patch(partial: Partial<TenantSpec>): void {
   emit("update:modelValue", { ...tenant.value, ...partial });
 }
@@ -428,10 +267,9 @@ function setEncryptionMode(mode: string): void {
   }
   patch({
     encryption_mode: mode,
-    key_version: tenant.value.key_version || "v1",
     suite: useCustomCipher.value
       ? ""
-      : tenant.value.suite || "suite/tenant-default-2026-11",
+      : tenant.value.suite || "suite/aes-256-gcm",
     data_alg: useCustomCipher.value
       ? tenant.value.data_alg || "aes-256-gcm"
       : "",
@@ -448,90 +286,21 @@ function toggleCipherSource(mode: string): void {
   } else {
     useCustomCipher.value = false;
     patch({
-      suite: tenant.value.suite || "suite/tenant-default-2026-11",
+      suite: tenant.value.suite || "suite/aes-256-gcm",
       data_alg: "",
       mac_alg: "",
     });
   }
 }
 
-function fillRandomBase64Key(
-  field: "tenant_key_base64" | "binding_key",
-  byteLen: number,
-): void {
+function fillRandomBase64Key(byteLen: number): void {
   const bytes = new Uint8Array(byteLen);
   window.crypto.getRandomValues(bytes);
   let binary = "";
   for (const b of bytes) {
     binary += String.fromCharCode(b);
   }
-  patch({ [field]: window.btoa(binary) });
+  patch({ tenant_key_base64: window.btoa(binary) });
   toast.info("已生成随机 Base64 密钥");
-}
-
-// The parent remounts this form per tenant (`:key`), so once unmounted any
-// pending result belongs to a tenant that is no longer being edited.
-let disposed = false;
-onBeforeUnmount(() => {
-  disposed = true;
-});
-
-function droppedAfterSwitch(): boolean {
-  if (!disposed) return false;
-  toast.info("已切换租户，生成的密钥对未写入表单");
-  return true;
-}
-
-async function generateKeypair(): Promise<void> {
-  const alg = tenant.value.binding_alg?.trim();
-  if (!alg) return;
-  const kid = tenant.value.binding_kid?.trim() || "k1";
-  generatingKeypair.value = true;
-  try {
-    if (props.environmentId && tenant.value.id) {
-      try {
-        const res = await api.generateTenantKeypair(
-          props.environmentId,
-          tenant.value.id,
-          alg,
-          kid,
-        );
-        if (droppedAfterSwitch()) return;
-        patch({
-          binding_kid: res.binding_kid,
-          binding_alg: res.binding_alg,
-          binding_public_key: res.public_key_pem,
-          ...(res.private_key_pem ? { binding_key: res.private_key_pem } : {}),
-        });
-        toast.success(`已为租户生成并持久化 ${alg} 密钥对`);
-        return;
-      } catch (err) {
-        // Fall through to stateless generation only if the tenant row isn't
-        // saved yet; other failures were already reported by the interceptor.
-        if (!(isAxiosError(err) && err.response?.status === 404)) return;
-      }
-    }
-    const res = await api.generateStatelessKeypair(alg, kid);
-    if (droppedAfterSwitch()) return;
-    patch({
-      binding_kid: res.binding_kid,
-      binding_alg: res.binding_alg,
-      binding_key: res.private_key_pem ?? "",
-      binding_public_key: res.public_key_pem,
-    });
-    toast.success(`已生成 ${alg} 密钥对（私钥已填入表单）`);
-  } finally {
-    generatingKeypair.value = false;
-  }
-}
-
-async function copyPublicKey(): Promise<void> {
-  if (!tenant.value.binding_public_key) return;
-  const ok = await copyText(tenant.value.binding_public_key);
-  if (ok) {
-    toast.success("公钥 PEM 已复制");
-  } else {
-    toast.error("复制失败");
-  }
 }
 </script>

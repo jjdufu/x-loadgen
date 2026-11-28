@@ -311,7 +311,7 @@ mod tests {
         let err = open_central(&paths).expect_err("v2 central database is refused");
         let text = format!("{err:#}");
         assert!(text.contains("schema v2"), "{text}");
-        assert!(text.contains("needs v4"), "{text}");
+        assert!(text.contains("needs v5"), "{text}");
         assert!(text.contains("clear the data directory"), "{text}");
         assert!(text.contains(&dir.path.display().to_string()), "{text}");
 

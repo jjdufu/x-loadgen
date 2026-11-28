@@ -14,7 +14,6 @@ struct Golden {
     source: String,
     tenant_id: String,
     http_path: String,
-    key_version: String,
     timestamp: i64,
     secret_hex: String,
     plaintext: String,
@@ -68,7 +67,6 @@ fn golden() -> Golden {
                     registry: &registry,
                     master_key: &secret_bytes,
                     direction: c.direction,
-                    key_version: &doc.key_version,
                     tenant_id: &doc.tenant_id,
                     http_path: &doc.http_path,
                     plaintext: doc.plaintext.as_bytes(),
@@ -88,7 +86,6 @@ fn golden() -> Golden {
                 registry: &registry,
                 master_key: &secret_bytes,
                 direction: EnvelopeDirection::GatewayToClient,
-                key_version: &doc.key_version,
                 tenant_id: &doc.tenant_id,
                 http_path: &doc.http_path,
                 plaintext: doc.plaintext.as_bytes(),
@@ -105,7 +102,7 @@ fn golden() -> Golden {
             envelope: g2c_env,
         });
         doc.source =
-            "mazbri TransportEnvelope v1 (4-way HKDF c2g/g2c + full metadata AAD/MAC binding)"
+            "mazbri v0.7.0 TransportEnvelope v1 (4-way HKDF salt=tenant_id + versionless AAD/MAC)"
                 .to_owned();
         doc.cases = rebuilt;
         let mut text = serde_json::to_string_pretty(&doc).expect("serialize golden");
@@ -222,7 +219,6 @@ fn seals_byte_identical_to_mazbri() {
                 registry: &registry,
                 master_key: &secret,
                 direction: case.direction,
-                key_version: &golden.key_version,
                 tenant_id: &golden.tenant_id,
                 http_path: &golden.http_path,
                 plaintext: golden.plaintext.as_bytes(),

@@ -3,8 +3,8 @@
 //! Executes either a `SavedRequest` or an unsaved `RequestDraft` against an
 //! optional `Environment`, returning response headers, pretty/raw body, timing,
 //! per-rule assertion outcomes, unresolved variable warnings, and (for `mazbri`
-//! requests) a full `MazbriWireDebug` breakdown of `/auth/token` + `x-mazbri-*`
-//! binding headers + sealed/unsealed envelopes.
+//! requests) a full `MazbriWireDebug` breakdown of `/auth/token` and
+//! sealed/unsealed envelopes.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,7 +14,6 @@ use reqwest::Method;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use x_loadgen_core::crypto::request_binding::unix_now_secs;
 use x_loadgen_sdk::{
     GATEWAY_INVOKE_PATH, TOKEN_PATH, TRACEPARENT_HEADER, parse_token_response, token_request_body,
 };
@@ -24,7 +23,7 @@ use crate::db::collections::RequestDraft;
 use crate::db::profiles::LoadConfig;
 use crate::db::workspace::{PROTOCOL_MAZBRI, TenantSpec, non_empty_str};
 use crate::db::{StoreError, TraceEcho};
-use crate::engine::mazbri::{build_gateway_request, decode_error_class};
+use crate::engine::mazbri::{build_gateway_request, decode_error_class, unix_now_secs};
 use crate::engine::snapshot::{ExecutionRequest, ExecutionTarget, compile_single_request_target};
 use crate::engine::transport::{
     PreparedRequest, RequestIds, Weighted, active_kv_pairs, build_client_for_tls, join_url,
@@ -80,10 +79,6 @@ pub struct MazbriWireDebug {
     pub data_alg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mac_alg: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub binding_alg: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub binding_kid: Option<String>,
     pub token_url: String,
     pub token_exchange_us: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,7 +86,6 @@ pub struct MazbriWireDebug {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_expires_in: Option<u64>,
     pub invoke_url: String,
-    pub binding_headers: BTreeMap<String, String>,
     pub inner_gateway_request: Value,
     pub wire_request_body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -631,14 +625,11 @@ async fn run_mazbri_probe(
                 suite: tenant.suite.clone(),
                 data_alg: tenant.data_alg.clone(),
                 mac_alg: tenant.mac_alg.clone(),
-                binding_alg: tenant.binding_alg.clone(),
-                binding_kid: tenant.binding_kid.clone(),
                 token_url,
                 token_exchange_us: tok_us,
                 token_preview: None,
                 token_expires_in: None,
                 invoke_url: invoke_url.clone(),
-                binding_headers: BTreeMap::new(),
                 inner_gateway_request: inner_json,
                 wire_request_body: String::new(),
                 wire_response_status: None,
@@ -710,11 +701,6 @@ async fn run_mazbri_probe(
         .and_then(|v| serde_json::to_string_pretty(&v).ok())
         .unwrap_or_else(|| String::from_utf8_lossy(&encoded.body).into_owned());
 
-    let mut binding_map = BTreeMap::new();
-    for (k, v) in &encoded.headers {
-        binding_map.insert((*k).to_string(), v.clone());
-    }
-
     let mut preview_headers = vec![
         (
             "Authorization".to_string(),
@@ -723,9 +709,6 @@ async fn run_mazbri_probe(
         ("Content-Type".to_string(), "application/json".to_string()),
     ];
     preview_headers.extend(ids.headers());
-    for (k, v) in &encoded.headers {
-        preview_headers.push(((*k).to_string(), v.clone()));
-    }
 
     let request_preview = ProbeRequestPreview {
         method: "POST".into(),
@@ -746,9 +729,6 @@ async fn run_mazbri_probe(
     if let Some(timeout) = prepared.timeout {
         builder = builder.timeout(timeout);
     }
-    for (k, v) in &encoded.headers {
-        builder = builder.header(*k, v);
-    }
 
     let response = match builder.send().await {
         Ok(resp) => resp,
@@ -759,14 +739,11 @@ async fn run_mazbri_probe(
                 suite: tenant.suite.clone(),
                 data_alg: tenant.data_alg.clone(),
                 mac_alg: tenant.mac_alg.clone(),
-                binding_alg: tenant.binding_alg.clone(),
-                binding_kid: tenant.binding_kid.clone(),
                 token_url,
                 token_exchange_us: tok_us,
                 token_preview: Some(mask_token(&issued.access_token)),
                 token_expires_in: Some(issued.expires_in),
                 invoke_url,
-                binding_headers: binding_map,
                 inner_gateway_request: inner_json,
                 wire_request_body: wire_req_text,
                 wire_response_status: None,
@@ -922,14 +899,11 @@ async fn run_mazbri_probe(
         suite: tenant.suite.clone(),
         data_alg: tenant.data_alg.clone(),
         mac_alg: tenant.mac_alg.clone(),
-        binding_alg: tenant.binding_alg.clone(),
-        binding_kid: tenant.binding_kid.clone(),
         token_url,
         token_exchange_us: tok_us,
         token_preview: Some(mask_token(&issued.access_token)),
         token_expires_in: Some(issued.expires_in),
         invoke_url,
-        binding_headers: binding_map,
         inner_gateway_request: inner_json,
         wire_request_body: wire_req_text,
         wire_response_status: Some(http_status),

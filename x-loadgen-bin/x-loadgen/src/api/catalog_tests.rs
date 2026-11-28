@@ -16,8 +16,6 @@ const API_KEY_NONE: &str = "secret-api-key-alpha";
 const API_KEY_FULL: &str = "secret-api-key-omega";
 /// Base64 of the 32-byte key `x-loadgen-test-tenant-key-32byte`.
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
-/// Base64 of `x-loadgen-binding-key` (HMAC request binding key).
-const BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const CLIENT_CERT: &str = "-----BEGIN CERTIFICATE-----\nTESTCERT\n-----END CERTIFICATE-----";
 const CLIENT_KEY: &str = "-----BEGIN PRIVATE KEY-----\nSECRETCLIENTKEY\n-----END PRIVATE KEY-----";
 const BEARER_SECRET: &str = "secret-bearer-token-xyz";
@@ -114,11 +112,7 @@ fn env_payload() -> Value {
                 "encryption_mode": "full",
                 "tenant_id": "t-1001",
                 "tenant_key_base64": TENANT_KEY,
-                "key_version": "1",
-                "suite": "suite/tenant-default-2026-11",
-                "binding_kid": "kid-1",
-                "binding_alg": "hmac-sha256",
-                "binding_key": BINDING_KEY
+                "suite": "suite/aes-256-gcm"
             }
         ]
     })
@@ -172,7 +166,6 @@ async fn environments_preserve_global_and_redact_secrets_on_list_and_export() {
         .expect("encrypted tenant");
     assert_eq!(encrypted["api_key"], API_KEY_FULL);
     assert_eq!(encrypted["tenant_key_base64"], TENANT_KEY);
-    assert_eq!(encrypted["binding_key"], BINDING_KEY);
 
     // Summary list must never expose secret fields.
     let list = body(
@@ -194,7 +187,6 @@ async fn environments_preserve_global_and_redact_secrets_on_list_and_export() {
         API_KEY_NONE,
         API_KEY_FULL,
         TENANT_KEY,
-        BINDING_KEY,
         CLIENT_KEY,
         BEARER_SECRET,
         ENV_SECRET_VAL,
@@ -218,7 +210,6 @@ async fn environments_preserve_global_and_redact_secrets_on_list_and_export() {
         API_KEY_NONE,
         API_KEY_FULL,
         TENANT_KEY,
-        BINDING_KEY,
         CLIENT_KEY,
         BEARER_SECRET,
         ENV_SECRET_VAL,
@@ -617,8 +608,7 @@ async fn mazbri_tenants_are_validated_against_the_client_contract() {
             "api_key": "k",
             "encryption_mode": "request",
             "tenant_id": "t-2002",
-            "tenant_key_base64": TENANT_KEY,
-            "key_version": "2"
+            "tenant_key_base64": TENANT_KEY
         });
         for (key, field) in extra.as_object().expect("object") {
             value[key] = field.clone();
@@ -629,12 +619,8 @@ async fn mazbri_tenants_are_validated_against_the_client_contract() {
         json!({}),
         json!({"suite": "suite/unknown"}),
         json!({"data_alg": "aes-128-ecb"}),
-        json!({"suite": "suite/tenant-default-2026-11", "tenant_key_base64": "c2hvcnQ="}),
-        json!({"suite": "suite/tenant-default-2026-11", "api_key": ""}),
-        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "hmac-sha1", "binding_key": BINDING_KEY}),
-        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "hmac-sha256", "binding_key": "not base64!"}),
-        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "ed25519", "binding_key": BINDING_KEY}),
-        json!({"suite": "suite/tenant-chacha20", "binding_kid": "k1", "binding_alg": "ed25519"}),
+        json!({"suite": "suite/aes-256-gcm", "tenant_key_base64": "c2hvcnQ="}),
+        json!({"suite": "suite/aes-256-gcm", "api_key": ""}),
         json!({"encryption_mode": "partial", "suite": "suite/tenant-chacha20"}),
     ];
     for (index, extra) in rejected.into_iter().enumerate() {
@@ -650,8 +636,8 @@ async fn mazbri_tenants_are_validated_against_the_client_contract() {
         json!({"suite": "suite/gm-sm4-hmac-sm3"}),
         json!({"encryption_mode": "full", "suite": "suite/tenant-chacha20"}),
         json!({"data_alg": "aes-128-ecb", "mac_alg": "hmac-md5", "allow_insecure": true}),
-        json!({"data_alg": "sm4-cbc-pkcs7", "mac_alg": "hmac-sha256", "binding_kid": "k1", "binding_alg": "hmac-sm3", "binding_key": BINDING_KEY}),
-        json!({"encryption_mode": "none", "tenant_key_base64": null, "binding_kid": "k1", "binding_alg": "hmac-sha512", "binding_key": BINDING_KEY}),
+        json!({"data_alg": "sm4-cbc-pkcs7", "mac_alg": "hmac-sha256"}),
+        json!({"encryption_mode": "none", "tenant_key_base64": null}),
     ];
     for (index, extra) in accepted.into_iter().enumerate() {
         let mut payload = tenant(extra);
@@ -662,132 +648,6 @@ async fn mazbri_tenants_are_validated_against_the_client_contract() {
             "case {index} should be accepted"
         );
     }
-
-    shutdown.send(()).ok();
-}
-
-#[tokio::test]
-async fn binding_keypair_endpoints_support_environment_and_stateless_modes() {
-    let tmp = TempDir::new("keypair");
-    let (base, shutdown) = start(&tmp.path, true, None).await;
-    let client = client();
-    let env = create_env(&client, &base).await;
-    let env_id = env["id"].as_str().expect("id");
-    let tenant = env["tenants"]
-        .as_array()
-        .expect("tenants")
-        .iter()
-        .find(|t| t["name"] == "encrypted")
-        .expect("encrypted");
-    let tid = tenant["id"].as_str().expect("tid");
-    let url = format!("{base}/api/v1/environments/{env_id}/tenants/{tid}/binding-keypair");
-
-    assert_eq!(
-        post_status(&client, &url, &json!({"alg": "hmac-sha256"})).await,
-        reqwest::StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        post_status(&client, &url, &json!({"alg": "rsa-oaep-sha256"})).await,
-        reqwest::StatusCode::BAD_REQUEST
-    );
-    for alg in ["ed25519", "ecdsa-p256-sha256", "sm2-sign"] {
-        let response = client
-            .post(&url)
-            .json(&json!({"alg": alg, "kid": format!("kid-{alg}")}))
-            .send()
-            .await
-            .expect("keypair");
-        assert_eq!(response.status(), reqwest::StatusCode::OK, "{alg}");
-        let text = response.text().await.expect("text");
-        assert!(
-            !text.contains("PRIVATE KEY"),
-            "tenant keypair response must not leak private key"
-        );
-        let generated: Value = serde_json::from_str(&text).expect("json");
-        assert_eq!(generated["binding_alg"], alg);
-        assert_eq!(generated["binding_kid"], format!("kid-{alg}"));
-        let public = generated["public_key_pem"].as_str().expect("public");
-        assert!(public.starts_with("-----BEGIN PUBLIC KEY-----"), "{alg}");
-
-        let stored = body(
-            client
-                .get(format!("{base}/api/v1/environments/{env_id}/tenants/{tid}"))
-                .send()
-                .await
-                .expect("tenant"),
-        )
-        .await;
-        assert_eq!(stored["binding_alg"], alg);
-        assert_eq!(stored["binding_public_key"], public);
-        assert!(
-            stored["binding_key"]
-                .as_str()
-                .is_some_and(|pem| pem.starts_with("-----BEGIN PRIVATE KEY-----"))
-        );
-    }
-
-    // Re-saving the environment preserves tenant IDs and generated public keys.
-    assert_eq!(
-        post_status(&client, &url, &json!({"alg": "rsa-pkcs1v15-sign-sha256"}),).await,
-        reqwest::StatusCode::OK
-    );
-    let current_detail = body(
-        client
-            .get(format!("{base}/api/v1/environments/{env_id}"))
-            .send()
-            .await
-            .expect("detail"),
-    )
-    .await;
-    let saved = client
-        .put(format!("{base}/api/v1/environments/{env_id}"))
-        .json(&current_detail)
-        .send()
-        .await
-        .expect("resave");
-    assert_eq!(saved.status(), reqwest::StatusCode::OK);
-    let resaved = body(saved).await;
-    let kept = resaved["tenants"]
-        .as_array()
-        .expect("tenants")
-        .iter()
-        .find(|t| t["name"] == "encrypted")
-        .expect("encrypted");
-    assert_eq!(kept["id"], tid);
-    assert!(kept["binding_public_key"].is_string());
-
-    // Switching back to symmetric HMAC clears binding_public_key.
-    let mut changed = kept.clone();
-    changed["binding_alg"] = json!("hmac-sha256");
-    changed["binding_key"] = json!(BINDING_KEY);
-    let updated = client
-        .put(format!("{base}/api/v1/environments/{env_id}/tenants/{tid}"))
-        .json(&changed)
-        .send()
-        .await
-        .expect("switch to hmac");
-    assert_eq!(updated.status(), reqwest::StatusCode::OK);
-    assert!(body(updated).await["binding_public_key"].is_null());
-
-    // Stateless keypair helper returns both PEMs for inline ad-hoc Mazbri requests.
-    let inline_kp = client
-        .post(format!("{base}/api/v1/crypto/binding-keypair"))
-        .json(&json!({"alg": "ed25519", "kid": "inline-kid"}))
-        .send()
-        .await
-        .expect("stateless keypair");
-    assert_eq!(inline_kp.status(), reqwest::StatusCode::OK);
-    let kp_json = body(inline_kp).await;
-    assert!(
-        kp_json["private_key_pem"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("-----BEGIN PRIVATE KEY-----"))
-    );
-    assert!(
-        kp_json["public_key_pem"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("-----BEGIN PUBLIC KEY-----"))
-    );
 
     shutdown.send(()).ok();
 }

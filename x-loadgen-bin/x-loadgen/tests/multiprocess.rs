@@ -539,7 +539,6 @@ async fn processes_two_request_once_finishes_and_consolidates_report_and_verdict
 }
 
 const MP_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
-const MP_BINDING_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const MP_TENANT_UUID: &str = "1a2b3c4d-0000-4000-8000-00000000c003";
 
 fn mazbri_mock_config() -> x_loadgen_mockgw::MockConfig {
@@ -549,11 +548,7 @@ fn mazbri_mock_config() -> x_loadgen_mockgw::MockConfig {
             encryption_mode: "full".into(),
             tenant_id: Some(MP_TENANT_UUID.into()),
             tenant_key_base64: Some(MP_TENANT_KEY.into()),
-            key_version: Some("1".into()),
             suite: Some("suite/tenant-chacha20".into()),
-            binding_kid: Some("kid-mp".into()),
-            binding_alg: Some("hmac-sha256".into()),
-            binding_verify_key: Some(MP_BINDING_KEY.into()),
             ..x_loadgen_mockgw::MockTenant::default()
         }],
         ..x_loadgen_mockgw::MockConfig::default()
@@ -586,11 +581,7 @@ async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_success
                 "encryption_mode": "full",
                 "tenant_id": MP_TENANT_UUID,
                 "tenant_key_base64": MP_TENANT_KEY,
-                "key_version": "1",
-                "suite": "suite/tenant-chacha20",
-                "binding_kid": "kid-mp",
-                "binding_alg": "hmac-sha256",
-                "binding_key": MP_BINDING_KEY
+                "suite": "suite/tenant-chacha20"
             }]
         }),
     )
@@ -677,7 +668,6 @@ async fn processes_two_encrypted_mazbri_once_finishes_with_every_request_success
     assert_eq!(counters["failure"], 0, "{counters}");
     let stats = gateway.stats();
     assert_eq!(stats.tokens_issued, 2, "one token per worker process");
-    assert_eq!(stats.bindings_verified, request_count);
     assert_eq!(stats.envelopes_opened, request_count);
     assert_eq!(stats.responses_sealed, request_count);
     child.shutdown();

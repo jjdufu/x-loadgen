@@ -13,7 +13,7 @@ use x_loadgen_crypto::profile::{TenantTransportProfile, TransportMode};
 use x_loadgen_crypto::registry::AlgorithmRegistry;
 use x_loadgen_crypto::sm::SM4_BLOCK_LEN;
 use x_loadgen_crypto::traits::{AeadSeal, BlockCipher, CryptoError, Mac};
-use x_loadgen_crypto::{SUITE_TENANT_DEFAULT_2026_11, hkdf_sha256, resolve_suite};
+use x_loadgen_crypto::{SUITE_AES_256_GCM, hkdf_sha256, resolve_suite};
 use x_loadgen_crypto::{sm4_ecb_decrypt, sm4_ecb_encrypt};
 
 /// 传输信封规范版本前缀。
@@ -22,7 +22,7 @@ pub const ENVELOPE_PROTOCOL_VERSION: &str = "v1";
 /// 默认租户传输套件名（闭集 kebab-case；禁止再引入单一硬编码算法常量）。
 #[must_use]
 pub fn default_suite() -> &'static str {
-    SUITE_TENANT_DEFAULT_2026_11
+    SUITE_AES_256_GCM
 }
 
 /// 租户传输主密钥字节数（`tenantSecretKey` 恒为 32 字节）。
@@ -58,14 +58,12 @@ impl EnvelopeDirection {
     }
 }
 
-/// 线上传输信封（算法字段为注册表 kebab-case id）。
+/// 线上传输信封（算法字段为注册表 kebab-case id，单租户单密钥无版本模型）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TransportEnvelope {
     /// 是否含密文载荷。
     pub encrypted: bool,
-    /// 密钥版本。
-    pub key_version: String,
     /// 数据算法（kebab-case，如 `aes-256-gcm`）。
     pub data_alg: String,
     /// 外挂 MAC 算法；AEAD 且不要求外层签名时可省略。
@@ -140,8 +138,6 @@ pub struct EnvelopeHeaderRef<'a> {
     pub tenant_id: &'a str,
     /// HTTP 路径。
     pub http_path: &'a str,
-    /// 密钥版本。
-    pub key_version: &'a str,
     /// 数据算法 ID（kebab-case）。
     pub data_alg: &'a str,
     /// 外挂 MAC 算法 ID（无则为 `None`）。
@@ -165,13 +161,12 @@ pub fn canonical_envelope_aad(header: EnvelopeHeaderRef<'_>) -> String {
             + dir_str.len()
             + header.tenant_id.len()
             + header.http_path.len()
-            + header.key_version.len()
             + header.data_alg.len()
             + mac_str.len()
             + ts.len()
             + header.nonce.len()
             + header.iv_b64.len()
-            + 9,
+            + 8,
     );
     aad.push_str(ENVELOPE_PROTOCOL_VERSION);
     aad.push('\n');
@@ -180,8 +175,6 @@ pub fn canonical_envelope_aad(header: EnvelopeHeaderRef<'_>) -> String {
     aad.push_str(header.tenant_id);
     aad.push('\n');
     aad.push_str(header.http_path);
-    aad.push('\n');
-    aad.push_str(header.key_version);
     aad.push('\n');
     aad.push_str(header.data_alg);
     aad.push('\n');
@@ -207,7 +200,6 @@ pub fn canonical_signature_payload(
         direction,
         tenant_id,
         http_path,
-        key_version: &envelope.key_version,
         data_alg: &envelope.data_alg,
         mac_alg: envelope.mac_alg.as_deref(),
         timestamp: envelope.timestamp,
@@ -228,27 +220,26 @@ pub fn canonical_signature_payload(
 ///
 /// # Errors
 ///
-/// 主密钥非 32 字节、密钥版本为空或数据算法不受支持时返回错误。
+/// 主密钥非 32 字节、租户标识为空或数据算法不受支持时返回错误。
 pub fn derive_transport_enc_key(
     master_key: &[u8],
     tenant_id: &str,
-    key_version: &str,
     direction: EnvelopeDirection,
     data_alg: AlgorithmId,
 ) -> Result<ZeroizingBytes, TransportCryptoError> {
     if master_key.len() != TENANT_SECRET_KEY_BYTES {
         return Err(TransportCryptoError::InvalidKeyLength);
     }
-    if key_version.trim().is_empty() {
+    if tenant_id.trim().is_empty() {
         return Err(TransportCryptoError::InvalidProfile(
-            "key_version must not be empty".to_owned(),
+            "tenant_id must not be empty".to_owned(),
         ));
     }
     let key_len = data_key_len(data_alg)?;
     let info = format!("mazbri-transport-v1|{tenant_id}|{}|enc", direction.as_str());
     let mut out = vec![0u8; key_len];
     hkdf_sha256(
-        Some(key_version.as_bytes()),
+        Some(tenant_id.as_bytes()),
         master_key,
         info.as_bytes(),
         &mut out,
@@ -261,25 +252,24 @@ pub fn derive_transport_enc_key(
 ///
 /// # Errors
 ///
-/// 主密钥非 32 字节或密钥版本为空时返回错误。
+/// 主密钥非 32 字节或租户标识为空时返回错误。
 pub fn derive_transport_mac_key(
     master_key: &[u8],
     tenant_id: &str,
-    key_version: &str,
     direction: EnvelopeDirection,
 ) -> Result<ZeroizingBytes, TransportCryptoError> {
     if master_key.len() != TENANT_SECRET_KEY_BYTES {
         return Err(TransportCryptoError::InvalidKeyLength);
     }
-    if key_version.trim().is_empty() {
+    if tenant_id.trim().is_empty() {
         return Err(TransportCryptoError::InvalidProfile(
-            "key_version must not be empty".to_owned(),
+            "tenant_id must not be empty".to_owned(),
         ));
     }
     let info = format!("mazbri-transport-v1|{tenant_id}|{}|mac", direction.as_str());
     let mut out = vec![0u8; TENANT_SECRET_KEY_BYTES];
     hkdf_sha256(
-        Some(key_version.as_bytes()),
+        Some(tenant_id.as_bytes()),
         master_key,
         info.as_bytes(),
         &mut out,
@@ -558,11 +548,6 @@ pub fn validate_transport_algorithms(
     if !envelope.encrypted {
         return Err(TransportCryptoError::UnsupportedAlgorithm);
     }
-    if envelope.key_version.trim().is_empty() {
-        return Err(TransportCryptoError::InvalidProfile(
-            "envelope key_version must not be empty".to_owned(),
-        ));
-    }
     let data_alg = parse_algorithm_id(&envelope.data_alg)?;
     let _ = registry.get(data_alg)?;
     assert_not_legacy_or_allowed(data_alg, profile.allow_insecure)?;
@@ -610,8 +595,6 @@ pub struct SealEnvelopeParams<'a> {
     pub master_key: &'a [u8],
     /// 传输方向（`c2g` 或 `g2c`）。
     pub direction: EnvelopeDirection,
-    /// 密钥版本。
-    pub key_version: &'a str,
     /// 租户 id。
     pub tenant_id: &'a str,
     /// HTTP 路径。
@@ -644,7 +627,6 @@ fn seal_envelope_with(
         registry,
         master_key,
         direction,
-        key_version,
         tenant_id,
         http_path,
         plaintext,
@@ -668,8 +650,7 @@ fn seal_envelope_with(
         ));
     }
 
-    let enc_key =
-        derive_transport_enc_key(master_key, tenant_id, key_version, direction, data_alg)?;
+    let enc_key = derive_transport_enc_key(master_key, tenant_id, direction, data_alg)?;
     let cipher = TransportCipher::for_profile(registry, profile);
     let iv = make_iv(iv_len_for(data_alg)?);
     let iv_b64 = STANDARD.encode(&iv);
@@ -677,7 +658,6 @@ fn seal_envelope_with(
         direction,
         tenant_id,
         http_path,
-        key_version,
         data_alg: data_alg.as_str(),
         mac_alg: mac_alg.map(AlgorithmId::as_str),
         timestamp,
@@ -694,7 +674,6 @@ fn seal_envelope_with(
     )?;
     let mut envelope = TransportEnvelope {
         encrypted: true,
-        key_version: key_version.to_owned(),
         data_alg: data_alg.as_str().to_owned(),
         mac_alg: mac_alg.map(|id| id.as_str().to_owned()),
         timestamp,
@@ -706,7 +685,7 @@ fn seal_envelope_with(
     };
 
     if let Some(mac_id) = mac_alg {
-        let mac_key = derive_transport_mac_key(master_key, tenant_id, key_version, direction)?;
+        let mac_key = derive_transport_mac_key(master_key, tenant_id, direction)?;
         let payload = canonical_signature_payload(&envelope, direction, tenant_id, http_path);
         envelope.signature = sign_payload(cipher, mac_id, mac_key.as_slice(), &payload)?;
     }
@@ -732,8 +711,7 @@ pub fn open_envelope(
     let data_alg = parse_algorithm_id(&envelope.data_alg)?;
     if let Some(mac_raw) = envelope.mac_alg.as_deref() {
         let mac_id = parse_algorithm_id(mac_raw)?;
-        let mac_key =
-            derive_transport_mac_key(master_key, tenant_id, &envelope.key_version, direction)?;
+        let mac_key = derive_transport_mac_key(master_key, tenant_id, direction)?;
         let payload = canonical_signature_payload(envelope, direction, tenant_id, http_path);
         verify_payload_signature(
             cipher,
@@ -747,18 +725,11 @@ pub fn open_envelope(
             "signature present without mac_alg".to_owned(),
         ));
     }
-    let enc_key = derive_transport_enc_key(
-        master_key,
-        tenant_id,
-        &envelope.key_version,
-        direction,
-        data_alg,
-    )?;
+    let enc_key = derive_transport_enc_key(master_key, tenant_id, direction, data_alg)?;
     let aad = canonical_envelope_aad(EnvelopeHeaderRef {
         direction,
         tenant_id,
         http_path,
-        key_version: &envelope.key_version,
         data_alg: &envelope.data_alg,
         mac_alg: envelope.mac_alg.as_deref(),
         timestamp: envelope.timestamp,
@@ -865,10 +836,8 @@ fn random_bytes(len: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use x_loadgen_crypto::profile::{KeySelection, TransportMode};
-    use x_loadgen_crypto::{
-        SUITE_GM_SM4_HMAC_SM3, SUITE_TENANT_CHACHA20, SUITE_TENANT_DEFAULT_2026_11,
-    };
+    use x_loadgen_crypto::profile::TransportMode;
+    use x_loadgen_crypto::{SUITE_AES_256_GCM, SUITE_GM_SM4_HMAC_SM3, SUITE_TENANT_CHACHA20};
 
     fn registry() -> AlgorithmRegistry {
         AlgorithmRegistry::default_registry()
@@ -877,9 +846,6 @@ mod tests {
     fn profile_for_suite(suite: &str) -> TenantTransportProfile {
         let mut profile =
             TenantTransportProfile::from_named_suite(suite, TransportMode::Full).unwrap();
-        profile.key = Some(KeySelection::Latest {
-            key_id: "tenant-default".to_owned(),
-        });
         profile.require_signature = profile.mac_alg.is_some();
         profile
     }
@@ -898,7 +864,6 @@ mod tests {
                 registry: &registry,
                 master_key,
                 direction,
-                key_version: "v1",
                 tenant_id: "tenant-1",
                 http_path: "/api/v1/gateway",
                 plaintext,
@@ -923,7 +888,7 @@ mod tests {
 
     #[test]
     fn roundtrip_aes_256_gcm_default_suite() {
-        roundtrip(SUITE_TENANT_DEFAULT_2026_11, &[9u8; 32]);
+        roundtrip(SUITE_AES_256_GCM, &[9u8; 32]);
     }
 
     #[test]
@@ -939,14 +904,13 @@ mod tests {
     #[test]
     fn reflection_across_directions_is_rejected() {
         let registry = registry();
-        let profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
+        let profile = profile_for_suite(SUITE_AES_256_GCM);
         let key = [0x42u8; 32];
         let c2g = seal_envelope(SealEnvelopeParams {
             profile: &profile,
             registry: &registry,
             master_key: &key,
             direction: EnvelopeDirection::ClientToGateway,
-            key_version: "v1",
             tenant_id: "tenant-1",
             http_path: "/api/v1/gateway",
             plaintext: b"secret-payload",
@@ -972,7 +936,7 @@ mod tests {
         mac_alg: AlgorithmId,
         allow_insecure: bool,
     ) -> TenantTransportProfile {
-        let mut profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
+        let mut profile = profile_for_suite(SUITE_AES_256_GCM);
         profile.suite = None;
         profile.data_alg = Some(data_alg);
         profile.mac_alg = Some(mac_alg);
@@ -991,7 +955,6 @@ mod tests {
             registry: &registry,
             master_key: secret,
             direction: EnvelopeDirection::ClientToGateway,
-            key_version: "v1",
             tenant_id: "tenant-legacy",
             http_path: "/api/v1/gateway",
             plaintext: b"legacy-roundtrip-payload-over-one-block",
@@ -1073,10 +1036,9 @@ mod tests {
     #[test]
     fn rejects_uppercase_algorithm_id() {
         let registry = registry();
-        let profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
+        let profile = profile_for_suite(SUITE_AES_256_GCM);
         let envelope = TransportEnvelope {
             encrypted: true,
-            key_version: "v1".into(),
             data_alg: "AES-256-GCM".into(),
             mac_alg: None,
             timestamp: 1,
@@ -1093,7 +1055,6 @@ mod tests {
     fn envelope_json_field_names_and_canonical_payload_are_stable() {
         let envelope = TransportEnvelope {
             encrypted: true,
-            key_version: "v1".into(),
             data_alg: "sm4-cbc-pkcs7".into(),
             mac_alg: Some("hmac-sm3".into()),
             timestamp: 1_710_000_000,
@@ -1105,7 +1066,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&envelope).unwrap(),
-            r#"{"encrypted":true,"keyVersion":"v1","dataAlg":"sm4-cbc-pkcs7","macAlg":"hmac-sm3","timestamp":1710000000,"nonce":"n","iv":"aXY=","ciphertext":"Y3Q=","tag":"","signature":"ab"}"#
+            r#"{"encrypted":true,"dataAlg":"sm4-cbc-pkcs7","macAlg":"hmac-sm3","timestamp":1710000000,"nonce":"n","iv":"aXY=","ciphertext":"Y3Q=","tag":"","signature":"ab"}"#
         );
         assert_eq!(
             canonical_signature_payload(
@@ -1114,7 +1075,7 @@ mod tests {
                 "t1",
                 "/api/v1/gateway",
             ),
-            "v1\nc2g\nt1\n/api/v1/gateway\nv1\nsm4-cbc-pkcs7\nhmac-sm3\n1710000000\nn\naXY=\nY3Q=\n"
+            "v1\nc2g\nt1\n/api/v1/gateway\nsm4-cbc-pkcs7\nhmac-sm3\n1710000000\nn\naXY=\nY3Q=\n"
         );
         let aead_only = TransportEnvelope {
             mac_alg: None,
@@ -1130,20 +1091,19 @@ mod tests {
     #[test]
     fn default_suite_resolves_aes_256_gcm() {
         assert_eq!(default_data_alg(), AlgorithmId::Aes256Gcm);
-        assert_eq!(default_suite(), SUITE_TENANT_DEFAULT_2026_11);
+        assert_eq!(default_suite(), SUITE_AES_256_GCM);
     }
 
     #[test]
     fn aead_aad_binds_all_metadata_fields() {
         let registry = registry();
-        let profile = profile_for_suite(SUITE_TENANT_DEFAULT_2026_11);
+        let profile = profile_for_suite(SUITE_AES_256_GCM);
         let key = [0x42u8; 32];
         let sealed = seal_envelope(SealEnvelopeParams {
             profile: &profile,
             registry: &registry,
             master_key: &key,
             direction: EnvelopeDirection::ClientToGateway,
-            key_version: "v1",
             tenant_id: "tenant-1",
             http_path: "/api/v1/gateway",
             plaintext: b"secret-payload",

@@ -5,6 +5,5 @@
 pub mod tenant_transport;
 
 pub use tenant_transport::{
-    BindingSpec, DEFAULT_CLOCK_SKEW_SECS, DEFAULT_NONCE_TTL_SECS, KeySelection, PROFILE_VERSION_V1,
-    TenantTransportProfile, TransportMode,
+    DEFAULT_CLOCK_SKEW_SECS, DEFAULT_NONCE_TTL_SECS, TenantTransportProfile, TransportMode,
 };

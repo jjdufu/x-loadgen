@@ -7,7 +7,6 @@ use serde_json::Value;
 const SECRET_KEYS: &[&str] = &[
     "api_key",
     "tenant_key_base64",
-    "binding_key",
     "client_key",
     "client_key_pem",
     "private_key",

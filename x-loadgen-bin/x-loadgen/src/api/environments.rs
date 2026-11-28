@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::error::ApiError;
 use super::server::{AppState, require_ready_auth};
 use crate::db::environments::{self, EnvironmentDetail, EnvironmentInput, EnvironmentSummary};
-use crate::db::workspace::{GeneratedBindingKeypair, TenantSpec};
+use crate::db::workspace::TenantSpec;
 
 /// Query parameters for `GET /api/v1/environments/export`.
 #[derive(Debug, Default, Deserialize)]
@@ -19,14 +19,6 @@ pub struct ExportEnvironmentsQuery {
     pub environment_id: Option<String>,
     #[serde(default)]
     pub include_secrets: bool,
-}
-
-/// Request body for `POST /api/v1/environments/{id}/tenants/{tid}/binding-keypair`.
-#[derive(Debug, Deserialize)]
-pub struct TenantKeypairRequest {
-    pub alg: String,
-    #[serde(default)]
-    pub kid: Option<String>,
 }
 
 /// `GET /api/v1/environments`
@@ -219,30 +211,4 @@ pub async fn delete_tenant(
     let db = state.lock_db()?;
     environments::delete_tenant(&db, &id, &tid)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// `POST /api/v1/environments/{id}/tenants/{tid}/binding-keypair`
-///
-/// Generates an asymmetric request-binding keypair (`ed25519`, `sm2-sign`, `ecdsa-*`, `rsa-*`),
-/// persists the private key on the tenant row, and returns the SPKI public key PEM.
-///
-/// # Errors
-///
-/// Returns 400 for symmetric/invalid algorithm or missing `kid`, 404 if missing, 401/403 if unauthorized.
-pub async fn generate_tenant_binding_keypair(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path((id, tid)): Path<(String, String)>,
-    Json(req): Json<TenantKeypairRequest>,
-) -> Result<Json<GeneratedBindingKeypair>, ApiError> {
-    require_ready_auth(&state, &headers)?;
-    let db = state.lock_db()?;
-    let out = environments::generate_tenant_binding_keypair(
-        &db,
-        &id,
-        &tid,
-        &req.alg,
-        req.kid.as_deref(),
-    )?;
-    Ok(Json(out))
 }

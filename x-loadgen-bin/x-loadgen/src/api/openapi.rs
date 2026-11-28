@@ -79,10 +79,6 @@ fn expected_router_operations() -> Vec<(&'static str, &'static str)> {
         ("GET", "/api/v1/environments/{id}/tenants/{tid}"),
         ("PUT", "/api/v1/environments/{id}/tenants/{tid}"),
         ("DELETE", "/api/v1/environments/{id}/tenants/{tid}"),
-        (
-            "POST",
-            "/api/v1/environments/{id}/tenants/{tid}/binding-keypair",
-        ),
         ("GET", "/api/v1/load-profiles"),
         ("POST", "/api/v1/load-profiles"),
         ("GET", "/api/v1/load-profiles/{id}"),
@@ -93,7 +89,6 @@ fn expected_router_operations() -> Vec<(&'static str, &'static str)> {
         ("DELETE", "/api/v1/probes"),
         ("GET", "/api/v1/probes/{id}"),
         ("DELETE", "/api/v1/probes/{id}"),
-        ("POST", "/api/v1/crypto/binding-keypair"),
         ("GET", "/api/v1/runs"),
         ("POST", "/api/v1/runs"),
         ("GET", "/api/v1/runs/compare"),

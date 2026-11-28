@@ -309,37 +309,23 @@ async fn interactive_probe_executes_http_and_encrypted_mazbri_with_wire_debug() 
         "{probe_http}"
     );
 
-    // 2. Mazbri probe (full envelope encryption + SM4/SM3 suite + SM2 signature) via mockgw.
+    // 2. Mazbri probe (full envelope encryption + SM4/SM3 suite) via mockgw.
     let gateway = x_loadgen_mockgw::MockGateway::start(
         "127.0.0.1:0",
-        &x_loadgen_mockgw::MockConfig::default(),
-    )
-    .await
-    .expect("mockgw");
-    let (st, kp) = post_json(
-        &client,
-        &format!("{base}/api/v1/crypto/binding-keypair"),
-        &json!({"alg": "sm2-sign", "kid": "kid-probe"}),
-    )
-    .await;
-    assert_eq!(st, reqwest::StatusCode::OK, "{kp}");
-    gateway
-        .set_config(&x_loadgen_mockgw::MockConfig {
+        &x_loadgen_mockgw::MockConfig {
             tenants: vec![x_loadgen_mockgw::MockTenant {
                 api_key: "ak-probe".into(),
                 encryption_mode: "full".into(),
                 tenant_id: Some(TENANT_UUID.into()),
                 tenant_key_base64: Some(TENANT_KEY.into()),
-                key_version: Some("1".into()),
                 suite: Some("suite/gm-sm4-hmac-sm3".into()),
-                binding_kid: Some("kid-probe".into()),
-                binding_alg: Some("sm2-sign".into()),
-                binding_verify_key: Some(kp["public_key_pem"].as_str().expect("pub").to_string()),
                 ..x_loadgen_mockgw::MockTenant::default()
             }],
             ..x_loadgen_mockgw::MockConfig::default()
-        })
-        .expect("set mockgw config");
+        },
+    )
+    .await
+    .expect("mockgw");
 
     let (st, probe_mazbri) = post_json(
         &client,
@@ -365,11 +351,7 @@ async fn interactive_probe_executes_http_and_encrypted_mazbri_with_wire_debug() 
                         "encryption_mode": "full",
                         "tenant_id": TENANT_UUID,
                         "tenant_key_base64": TENANT_KEY,
-                        "key_version": "1",
-                        "suite": "suite/gm-sm4-hmac-sm3",
-                        "binding_kid": "kid-probe",
-                        "binding_alg": "sm2-sign",
-                        "binding_key": kp["private_key_pem"]
+                        "suite": "suite/gm-sm4-hmac-sm3"
                     }
                 },
                 "assertions": {
@@ -388,8 +370,6 @@ async fn interactive_probe_executes_http_and_encrypted_mazbri_with_wire_debug() 
     let wire = &probe_mazbri["mazbri_wire"];
     assert_eq!(wire["encryption_mode"], "full");
     assert_eq!(wire["suite"], "suite/gm-sm4-hmac-sm3");
-    assert_eq!(wire["binding_alg"], "sm2-sign");
-    assert!(wire["binding_headers"]["x-mazbri-signature"].is_string());
     assert!(wire["decoded_envelope"].is_object());
 
     gateway.stop().await;

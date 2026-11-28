@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "mazbri gateway client contract: token exchange, request sealing, binding headers and response decoding"
+description = "mazbri gateway client contract: token exchange, request sealing and response decoding"
 
 [dependencies]
 x-loadgen-core = { workspace = true }

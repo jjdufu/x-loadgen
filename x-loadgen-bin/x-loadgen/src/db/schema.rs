@@ -1,10 +1,10 @@
-//! SQL schema for the central database (v4) and per-worker sample databases (v3).
+//! SQL schema for the central database (v5) and per-worker sample databases (v3).
 //!
 //! There is no migration path: a database written by another schema version is
 //! refused at startup and the data directory has to be cleared.
 
 /// Current `PRAGMA user_version` for the central catalog & run database.
-pub const USER_VERSION: i32 = 4;
+pub const USER_VERSION: i32 = 5;
 
 /// Current `PRAGMA user_version` for per-worker sample databases (`wNN.sqlite`).
 pub const WORKER_USER_VERSION: i32 = 3;
@@ -83,16 +83,11 @@ CREATE TABLE IF NOT EXISTS environment_tenants (
   encryption_mode    TEXT NOT NULL DEFAULT 'none',
   tenant_id          TEXT,
   tenant_key_base64  TEXT,
-  key_version        TEXT,
   suite              TEXT,
   data_alg           TEXT,
   mac_alg            TEXT,
   require_signature  INTEGER,
   allow_insecure     INTEGER NOT NULL DEFAULT 0,
-  binding_kid        TEXT,
-  binding_alg        TEXT,
-  binding_key        TEXT,
-  binding_public_key TEXT,
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL,
   UNIQUE(environment_id, name)

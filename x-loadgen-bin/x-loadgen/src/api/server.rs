@@ -23,13 +23,13 @@ use super::collections::{
 };
 use super::environments::{
     create_environment, create_tenant, delete_environment, delete_tenant, export_environments,
-    generate_tenant_binding_keypair, get_environment, get_tenant, import_environments,
-    list_environments, list_tenants, update_environment, update_tenant,
+    get_environment, get_tenant, import_environments, list_environments, list_tenants,
+    update_environment, update_tenant,
 };
 use super::openapi::openapi;
 use super::probe::{
-    clear_probes_handler, delete_probe_handler, generate_stateless_binding_keypair,
-    get_probe_handler, list_probes_handler, probe_handler,
+    clear_probes_handler, delete_probe_handler, get_probe_handler, list_probes_handler,
+    probe_handler,
 };
 use super::profiles::{
     create_load_profile, delete_load_profile, get_load_profile, list_load_profiles,
@@ -97,10 +97,6 @@ pub fn router(state: AppState) -> Router {
             get(get_tenant).put(update_tenant).delete(delete_tenant),
         )
         .route(
-            "/api/v1/environments/{id}/tenants/{tid}/binding-keypair",
-            post(generate_tenant_binding_keypair),
-        )
-        .route(
             "/api/v1/load-profiles",
             get(list_load_profiles).post(create_load_profile),
         )
@@ -118,10 +114,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/probes/{id}",
             get(get_probe_handler).delete(delete_probe_handler),
-        )
-        .route(
-            "/api/v1/crypto/binding-keypair",
-            post(generate_stateless_binding_keypair),
         )
         .route("/api/v1/runs", get(list_runs).post(create_run))
         .route("/api/v1/runs/compare", get(super::report::compare_reports))

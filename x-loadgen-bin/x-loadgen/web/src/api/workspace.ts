@@ -7,7 +7,6 @@ import type {
   EnvironmentDetail,
   EnvironmentInput,
   EnvironmentSummary,
-  GeneratedBindingKeypair,
   LoadProfile,
   LoadProfileInput,
   MeResponse,
@@ -135,27 +134,8 @@ export const api = {
     http
       .delete<void>(`/api/v1/environments/${envId}/tenants/${tid}`)
       .then((r) => r.data),
-  generateTenantKeypair: (
-    envId: string,
-    tid: string,
-    alg: string,
-    kid?: string,
-  ) =>
-    http
-      .post<GeneratedBindingKeypair>(
-        `/api/v1/environments/${envId}/tenants/${tid}/binding-keypair`,
-        { alg, kid },
-      )
-      .then((r) => r.data),
 
-  // Stateless Crypto & Interactive Probe
-  generateStatelessKeypair: (alg: string, kid: string) =>
-    http
-      .post<GeneratedBindingKeypair>("/api/v1/crypto/binding-keypair", {
-        alg,
-        kid,
-      })
-      .then((r) => r.data),
+  // Interactive Probe
   probe: (req: ProbeRequest) =>
     http.post<ProbeResponse>("/api/v1/probe", req).then((r) => r.data),
   listProbes: (params?: ProbesQuery) =>

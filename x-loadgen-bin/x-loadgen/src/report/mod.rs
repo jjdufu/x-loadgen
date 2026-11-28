@@ -1038,14 +1038,13 @@ mod tests {
                 "tenants": [{
                     "name": "t1",
                     "api_key": "SECRET-API-KEY-AAAA",
-                    "tenant_key_base64": "SECRET-TENANT-KEY-BBBB",
-                    "binding_key": "SECRET-BINDING-KEY-CCCC"
+                    "tenant_key_base64": "SECRET-TENANT-KEY-BBBB"
                 }]
             },
             "template": { "name": "once" }
         });
         let secrets = collect_secrets(&snapshot);
-        assert_eq!(secrets.len(), 4);
+        assert_eq!(secrets.len(), 3);
         let redacted = redact_value(snapshot.clone());
         let html = html::render(&json!({
             "id": "run-1",
@@ -1063,15 +1062,11 @@ mod tests {
         assert!(!contains_any_secret(&html, &secrets));
         assert!(!json_text.contains("api_key"));
         assert!(!json_text.contains("client_key"));
-        assert!(!json_text.contains("binding_key"));
         assert!(!json_text.contains("tenant_key_base64"));
     }
 
     #[test]
-    fn generated_binding_private_key_is_redacted_but_public_key_and_algorithms_stay() {
-        let private_pem =
-            "-----BEGIN PRIVATE KEY-----\nTUMwMDAxUFJJVkFURQ==\n-----END PRIVATE KEY-----\n";
-        let public_pem = "-----BEGIN PUBLIC KEY-----\nTUMwMDAxUFVCTElD\n-----END PUBLIC KEY-----\n";
+    fn tenant_secret_is_redacted_while_suite_and_mode_stay() {
         let snapshot = json!({
             "target": {
                 "name": "gw",
@@ -1081,20 +1076,15 @@ mod tests {
                     "api_key": "SECRET-API-KEY-EEEE",
                     "encryption_mode": "full",
                     "suite": "suite/gm-sm4-hmac-sm3",
-                    "tenant_key_base64": "U0VDUkVULVRFTkFOVC1LRVktRkZGRg==",
-                    "binding_kid": "kid-1",
-                    "binding_alg": "sm2-sign",
-                    "binding_key": private_pem,
-                    "binding_public_key": public_pem
+                    "tenant_key_base64": "U0VDUkVULVRFTkFOVC1LRVktRkZGRg=="
                 }]
             }
         });
         let secrets = collect_secrets(&snapshot);
         let redacted = redact_value(snapshot).to_string();
         assert!(!contains_any_secret(&redacted, &secrets), "{redacted}");
-        assert!(!redacted.contains("PRIVATE KEY"));
-        assert!(redacted.contains("BEGIN PUBLIC KEY"));
-        assert!(redacted.contains("sm2-sign"));
+        assert!(!redacted.contains("SECRET-API-KEY-EEEE"));
+        assert!(!redacted.contains("U0VDUkVULVRFTkFOVC1LRVktRkZGRg=="));
         assert!(redacted.contains("suite/gm-sm4-hmac-sm3"));
     }
 }

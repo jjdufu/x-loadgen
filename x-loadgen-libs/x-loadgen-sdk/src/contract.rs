@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::session::Error;
 
-/// 网关调用路径（也是请求绑定签名覆盖的 `path_and_query`）。
+/// 网关调用路径。
 pub const GATEWAY_INVOKE_PATH: &str = "/api/v1/gateway";
 /// 换 token 路径。
 pub const TOKEN_PATH: &str = "/auth/token";

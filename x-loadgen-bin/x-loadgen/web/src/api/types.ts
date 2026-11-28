@@ -89,16 +89,11 @@ export interface TenantSpec {
   encryption_mode: EncryptionMode | string;
   tenant_id?: string | null;
   tenant_key_base64?: string | null;
-  key_version?: string | null;
   suite?: string | null;
   data_alg?: string | null;
   mac_alg?: string | null;
   require_signature?: boolean | null;
   allow_insecure?: boolean;
-  binding_kid?: string | null;
-  binding_alg?: string | null;
-  binding_key?: string | null;
-  binding_public_key?: string | null;
 }
 
 export interface MazbriRequestSpec {
@@ -107,13 +102,6 @@ export interface MazbriRequestSpec {
   tenant_source: "environment" | "inline" | string;
   tenant_name?: string | null;
   inline_tenant?: TenantSpec | null;
-}
-
-export interface GeneratedBindingKeypair {
-  binding_kid: string;
-  binding_alg: string;
-  private_key_pem?: string | null;
-  public_key_pem: string;
 }
 
 export interface RequestDraft {
@@ -229,14 +217,11 @@ export interface MazbriWireDebug {
   suite?: string | null;
   data_alg?: string | null;
   mac_alg?: string | null;
-  binding_alg?: string | null;
-  binding_kid?: string | null;
   token_url: string;
   token_exchange_us: number;
   token_preview?: string | null;
   token_expires_in?: number | null;
   invoke_url: string;
-  binding_headers: Record<string, string>;
   inner_gateway_request: unknown;
   wire_request_body: string;
   wire_response_status?: number | null;

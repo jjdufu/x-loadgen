@@ -10,8 +10,8 @@
   - `x-loadgen-bin/x-loadgen`：守护进程与库，二进制名 `x-loadgen`
   - `x-loadgen-bin/x-loadgen-mockgw`：基于 `x-loadgen-core` 的 mock mazbri 网关，仅供 `cargo test` 与端到端联调自测，不进入产品镜像或生产二进制
   - `x-loadgen-libs/x-loadgen-crypto`：算法闭集、注册表与软件密码学原语
-  - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封与请求绑定签名编解码
-  - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、绑定头、解码响应）
+  - `x-loadgen-libs/x-loadgen-core`：mazbri 传输信封编解码
+  - `x-loadgen-libs/x-loadgen-sdk`：mazbri 网关客户端合同（换 token、密封请求、解码响应）
 - 前端：`x-loadgen-bin/x-loadgen/web`（Vue 3 + Shadcn/ui + Reka UI + Vercel Geist 可变字体，`Light` / `Black` 跟随系统明暗主题），发布时完整嵌入单二进制
 - 依赖全部来自 crates.io（sparse），不添加项目级 `.cargo` 代理。
 
@@ -310,25 +310,12 @@ TENANT=$(xlg -X POST "$XLG/api/v1/environments/$ENV_ID/tenants" --data-binary @-
   "api_key": "gm-api-key",
   "encryption_mode": "full",
   "tenant_id": "t-gm-01",
-  "key_version": "v1",
   "tenant_key_base64": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-  "suite": "suite/gm-sm4-hmac-sm3",
-  "binding_alg": "sm2-sign",
-  "binding_kid": "kid-gm-01"
+  "suite": "suite/gm-sm4-hmac-sm3"
 }
 EOF
 )
 TENANT_ID=$(echo "$TENANT" | jq -r .id)
-
-# 为环境租户生成非对称请求绑定密钥对（私钥自动存入该租户，响应只返回公钥 PEM）
-xlg -X POST "$XLG/api/v1/environments/$ENV_ID/tenants/$TENANT_ID/binding-keypair" \
-  --data-binary '{"alg":"sm2-sign","kid":"kid-gm-01"}' \
-  | jq '{binding_kid, binding_alg, public_key_pem}'
-
-# 无状态生成非对称绑定密钥对（供未保存的草稿请求内联租户使用，返回公私钥 PEM）
-xlg -X POST "$XLG/api/v1/crypto/binding-keypair" \
-  --data-binary '{"alg":"ed25519","kid":"draft-kid"}' \
-  | jq '{binding_kid, binding_alg, public_key_pem}'
 
 # 导入 / 导出环境（兼容 Hoppscotch Environment JSON 与原生格式）
 xlg "$XLG/api/v1/environments/export" | jq 'length'
@@ -429,7 +416,7 @@ xlg "$XLG/api/v1/collections/export" | jq 'length'
 `POST /api/v1/probe` 对应工作台里的 **`Send`** 按钮：可按 `request_id`（已保存请求的 ID）发送已保存请求，也可直接传未保存草稿 `request`，结合可选 `environment_id` 发起 **1 次真实请求**。
 - 两种协议都返回本次发送的 `request_id`（`probe-<UUIDv7>`）、`trace_id`、`traceparent`（默认采样 `01`，`"trace_sampled": false` 改为 `00`）与 `trace_echo`。
 - `http` 模式返回状态码、耗时（`latency_us`）、字节数、响应头、格式化 JSON、逐项断言结果与实际发出的请求预览。
-- `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、5 个 `x-mazbri-*` 绑定签名头、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
+- `mazbri` 模式额外返回 `mazbri_wire`（Token 换取耗时与摘要、内层明文 `GatewayRequest`、外层密文 `TransportEnvelope` 与解密结果）。
 - `captures` 返回本次按请求 `captures` 取到的值。
 - `history_id` 是本次单发在单发历史里的 ID（见下文）；`tenant_name` 是本次使用的租户。
 
@@ -692,7 +679,7 @@ curl -fsS -H @"$HDR" -o "run-$RUN_ID-report.html" "$XLG/api/v1/runs/$RUN_ID/repo
 xlg "$XLG/api/v1/runs/$RUN_ID/report" | jq '.breakdown | {status_codes, products: [.products[] | {product_id, samples, p99_us}], top: .top_errors[:3]}'
 ```
 
-报告、任务快照和默认集合/环境导出会自动脱敏所有敏感凭据（`api_key`、`binding_key`、`tenant_key_base64`、`client_key`、环境变量 secret、HTTP auth 令牌/密码等）。
+报告、任务快照和默认集合/环境导出会自动脱敏所有敏感凭据（`api_key`、`tenant_key_base64`、`client_key`、环境变量 secret、HTTP auth 令牌/密码等）。
 
 ### 错误格式与状态码
 
@@ -792,7 +779,7 @@ esac
 登录（或 `--no-auth`）之后可以在 Web 工作台完成全部交互调试与压测操作：
 
 1. **配置环境与租户池**：在工作台顶栏环境选择器新建或编辑环境，配置键值变量（如 `base_url`）、默认 `gateway_base_url`、TLS 证书与 Mazbri 加权租户池。
-2. **多标签接口调试（`发送`）**：在工作台新建标签页或导入 cURL，通过协议胶囊一键切换 `HTTP 通用` / `Mazbri 网关` 模式，配置参数、请求头、CodeMirror 请求体、鉴权与响应断言，点击 **`发送`** 自动展开响应栏查看格式化响应、断言结果及 Mazbri 信封与签名追踪。
+2. **多标签接口调试（`发送`）**：在工作台新建标签页或导入 cURL，通过协议胶囊切换 `HTTP 通用` / `Mazbri 网关` 模式，配置参数、请求头、CodeMirror 请求体、鉴权与响应断言，发起 **`发送`** 即可查看格式化响应、断言结果及 Mazbri 信封追踪。
 3. **组织集合与预设**：点击「保存」将请求存入右侧「接口集合」目录树（支持行内重命名与 JSON 导入导出）；在「负载预设」管理可复用的开环/闭环流量模型与 SLA 阈值。
 4. **发起单接口或集合加权压测（`压测`）**：在任意请求栏点击「压测」或在集合节点上点击「集合压测」，勾选参与压测的接口、调整各自权重（`weight`）、选择预设或临时覆盖 QPS/并发/多进程参数并一键启动。
 5. **实时监控与报告**：跳转至 `/runs/:id` 查看 ECharts 实时吞吐曲线、延迟分位卡片、在线调整 QPS/并发、停止/续跑、游标分页样本明细表，并一键下载脱敏 JSON 或独立离线 HTML 报告。
@@ -801,15 +788,14 @@ esac
 
 页面路由：`/`（工作台）、`/runs`（压测任务）、`/runs/:id`（任务实时监控详情）、`/profiles`（负载预设）、`/docs`（内置离线接口文档）、`/settings`（右上角图标进入，含浅色/纯黑主题切换、快捷键录制管理与口令轮换）、`/login`、`/password`。
 
-## 接入 mazbri 网关（加密与签名）
+## 接入 mazbri 网关（传输加密）
 
 请求协议选 **`Mazbri`** 时，x-loadgen 按 mazbri 官方客户端合同发请求，加解密逻辑完全来自仓库内的 `x-loadgen-libs`，报文格式与网关一致：
 
 1. 换 token：`POST {gateway_base_url}/auth/token`，body 为 `{"api_key":"...","grant_type":"client_credentials"}`。token 按进程、按租户缓存，过期前（`expires_in` 减去刷新提前量）单飞刷新；网关返回 401 时作废缓存并重新换取。
 2. 调用：`POST {gateway_base_url}/api/v1/gateway`，带 `Authorization: Bearer <token>`。请求体为 `GatewayRequest`（`product_id`、`path`、`method`、`query`、`headers`、`body`），请求里的 `<<var>>` / `{{var}}` 与压测动态变量 `{{seq}}`、`{{$timestamp}}`、`{{$randomUUID}}` 在发送前自动渲染。
-3. 请求绑定（可选）：对 `METHOD\npath\ntimestamp\nnonce\nbody` 签名，附带 `x-mazbri-timestamp`、`x-mazbri-nonce`、`x-mazbri-signature`、`x-mazbri-signature-input`、`x-mazbri-key-id`。
-4. 加密：`none` 发明文；`request` 只密封请求，响应按明文解析；`full` 请求和响应都加密，响应解密并校验 MAC 后才参与统计。
-5. 请求标识与链路追踪：见下一节。
+3. 加密：`none` 发明文；`request` 只密封请求，响应按明文解析；`full` 请求和响应都加密，响应解密并校验 MAC 后才参与统计。
+4. 请求标识与链路追踪：见下一节。
 
 耗时、状态统计和业务校验（`assertions.expect_transport`、`assertions.checks`）都基于解密后的响应。
 
@@ -831,22 +817,19 @@ esac
 | 类别 | 取值 |
 | --- | --- |
 | 加密模式 | `none`、`request`、`full` |
-| 套件 | `suite/tenant-default-2026-11`（AES-256-GCM）、`suite/gm-sm4-hmac-sm3`（SM4-CBC + HMAC-SM3）、`suite/tenant-chacha20`（ChaCha20-Poly1305） |
+| 套件 | `suite/aes-256-gcm`（AES-256-GCM 默认）、`suite/gm-sm4-hmac-sm3`（SM4-CBC + HMAC-SM3）、`suite/tenant-chacha20`（ChaCha20-Poly1305） |
 | 自定义 AEAD（`data_alg`） | `aes-128-gcm`、`aes-192-gcm`、`aes-256-gcm`、`chacha20-poly1305` |
 | 自定义分组密码（`data_alg`，需配 `mac_alg`） | `aes-128-cbc`、`aes-256-cbc`、`aes-128-ctr`、`aes-256-ctr`、`aes-128-cfb`、`aes-256-cfb`、`sm4-cbc-pkcs7`、`sm4-ctr` |
 | MAC（`mac_alg`） | `hmac-sha256`、`hmac-sha384`、`hmac-sha512`、`hmac-sm3` |
 | legacy（需打开「允许不安全算法」） | `aes-128-ecb`、`aes-256-ecb`、`sm4-ecb-pkcs7`、`des-cbc-pkcs5`、`hmac-md5` |
-| 请求绑定 | `hmac-sha256`、`hmac-sha384`、`hmac-sha512`、`hmac-sm3`；`rsa-pkcs1v15-sign-sha256/384/512`；`ecdsa-p256-sha256`、`ecdsa-p384-sha384`；`ed25519`；`sm2-sign` |
 
-页面上的「数据算法」「MAC 算法」「绑定算法」下拉框列出的就是可选闭集，保存时由 SDK 做完整校验（密钥长度、算法组合、legacy 开关、签名私钥可解析），不合法的配置不能保存。
+页面上的「数据算法」「MAC 算法」下拉框列出的就是可选闭集，保存时由 SDK 做完整校验（密钥长度、算法组合、legacy 开关），不合法的配置不能保存。
 
 ### 在页面上完成配置
 
-Mazbri 请求既可以引用当前激活环境中的加权租户池（支持多租户混合压测，也可指定单一租户名），也可以在当前请求标签页直接使用「内联独立租户（Inline Tenant）」快速联调。每个租户可填写：API Key、加密模式、租户 ID、密钥版本、租户密钥（标准 Base64）、套件或自定义 `data_alg`/`mac_alg`、信封签名要求、允许不安全算法；请求绑定填写算法、Key ID，以及 HMAC 密钥或 PKCS#8 PEM 私钥。
+Mazbri 请求既可以引用当前激活环境中的加权租户池（支持多租户混合压测，也可指定单一租户名），也可以在当前请求标签页直接使用「内联独立租户（Inline Tenant）」快速联调。每个租户可填写：API Key、加密模式、租户 ID、租户密钥（标准 Base64）、套件或自定义 `data_alg`/`mac_alg`、信封签名要求、允许不安全算法。
 
-非对称绑定无需手工准备私钥文件：填写算法与 Key ID 后点击「一键生成非对称密钥对」，环境租户会把私钥安全保存在本机 SQLite 并展示公钥 PEM，复制公钥到网关管理端（或联调时的 `mockgw`）登记该 `kid` 即可。
-
-API Key、租户密钥、HMAC 密钥和私钥在编辑表单里默认遮盖，可点眼睛图标切换显示；环境列表、任务详情、报告和默认导出始终脱敏，公钥不属于敏感字段。
+API Key 和租户密钥在编辑表单里默认遮盖，可切换显示；环境列表、任务详情、报告和默认导出始终脱敏。
 
 ### 错误分类
 
@@ -867,14 +850,14 @@ API Key、租户密钥、HMAC 密钥和私钥在编辑表单里默认遮盖，�
 
 ## Mock 网关
 
-`x-loadgen-mockgw` 按同一份合同实现 `/auth/token` 与 `/api/v1/gateway`：校验 token、请求绑定签名、打开请求信封，并把请求原样回显（`data.echo`），`full` 模式下加密响应。请求标识与网关一致：合规的 `X-Request-Id` 原样保留、缺失或不合规时换成新 UUID；合法的入站 `traceparent` 以相同 trace-id 和 flags 接续、缺失或非法时新开一条采样链路；两者在每个响应（含拒绝）的响应头里回写。它用于自动化测试和本地端到端联调：
+`x-loadgen-mockgw` 按同一份合同实现 `/auth/token` 与 `/api/v1/gateway`：校验 token、打开请求信封，并把请求原样回显（`data.echo`），`full` 模式下加密响应。请求标识与网关一致：合规的 `X-Request-Id` 原样保留、缺失或不合规时换成新 UUID；合法的入站 `traceparent` 以相同 trace-id 和 flags 接续、缺失或非法时新开一条采样链路；两者在每个响应（含拒绝）的响应头里回写。它用于自动化测试和本地端到端联调：
 
 ```bash
 cargo run -p x-loadgen-mockgw -- --example > /tmp/mockgw.json   # 示例配置
 cargo run -p x-loadgen-mockgw -- --listen 0.0.0.0:18080 --config /tmp/mockgw.json
 ```
 
-配置字段与页面上的租户字段同名，另有 `binding_verify_key`（HMAC 密钥或签名公钥 PEM）和故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置（例如登记页面生成的公钥），`GET /__mock/stats` 查看已签发 token、已验签与已解封的计数（`traces_continued` / `traces_sampled` 为收到合法 / 带采样位的 `traceparent` 的次数），`GET /__mock/health` 做存活检查。
+配置字段与页面上的租户字段同名，另有故障注入 `fault`（`none` / `tamper_response` / `plaintext_response`）。运行中可以用 `PUT /__mock/tenants` 替换租户配置，`GET /__mock/stats` 查看已签发 token 与已解封计数（`traces_continued` / `traces_sampled` 为收到合法 / 带采样位的 `traceparent` 的次数），`GET /__mock/health` 做存活检查。
 
 > mockgw 与 x-loadgen 共用同一份 `x-loadgen-core` 加解密代码，只能验证流程，测不出信封协议与真实 mazbri 网关是否一致。协议一致性由 `x-loadgen-libs/x-loadgen-core/src/crypto/transport/golden_mazbri.json` 固定测试向量保证（用 mazbri 真实实现生成，x-loadgen 必须逐字节一致）；mazbri 改动信封协议时，须先用 mazbri 源码重新生成这组向量，再同步修改 x-loadgen。
 

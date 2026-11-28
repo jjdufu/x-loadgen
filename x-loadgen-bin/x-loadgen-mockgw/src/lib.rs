@@ -6,11 +6,9 @@
 //!
 //! - `POST /auth/token`: `{api_key, grant_type: client_credentials}` →
 //!   `{success, access_token, token_type, expires_in}`.
-//! - `POST /api/v1/gateway`: requires `Authorization: Bearer`; verifies the
-//!   `x-mazbri-*` request binding (signature over the final body, timestamp
-//!   window, nonce replay); opens the transport envelope under `request` /
-//!   `full`; answers with a `GatewayResponseEnvelope` echoing the
-//!   `GatewayRequest`, sealed under `full`.
+//! - `POST /api/v1/gateway`: requires `Authorization: Bearer`; opens the
+//!   transport envelope under `request` / `full`; answers with a
+//!   `GatewayResponseEnvelope` echoing the `GatewayRequest`, sealed under `full`.
 //! - Request identity like the gateway: a protocol-valid `X-Request-Id` is
 //!   kept, a missing or invalid one is replaced by a new UUID; an inbound W3C
 //!   `traceparent` is continued (same trace-id and flags, new parent-id), a
@@ -27,7 +25,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
@@ -40,27 +38,25 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use x_loadgen_core::crypto::request_binding::{
-    HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_INPUT, HEADER_TIMESTAMP,
-    binding_key_ref, canonical_http_binding, parse_binding_alg, parse_signature_input,
-    parse_unix_timestamp, unix_now_secs, validate_binding_nonce, verify_binding,
-};
 use x_loadgen_core::crypto::transport::{
     EnvelopeDirection, SealEnvelopeParams, TransportEnvelope, open_envelope, seal_envelope,
 };
-use x_loadgen_core::crypto::{
-    AlgorithmId, AlgorithmKind, AlgorithmRegistry, KeyRef, TenantTransportProfile, TransportMode,
-};
+use x_loadgen_core::crypto::{AlgorithmRegistry, TenantTransportProfile, TransportMode};
 use x_loadgen_sdk::{
     GATEWAY_INVOKE_PATH, GRANT_TYPE_CLIENT_CREDENTIALS, GatewayRequest, GatewayResponseEnvelope,
     REQUEST_ID_HEADER, TOKEN_PATH, TRACEPARENT_HEADER, TenantSettings, TraceParent,
     is_valid_request_id, new_request_id, transport_profile,
 };
 
-/// Allowed distance between a binding timestamp and the mock's clock.
-const BINDING_CLOCK_SKEW_SECS: i64 = 300;
-/// Nonces remembered for replay detection before the set is reset.
-const NONCE_CAPACITY: usize = 200_000;
+fn unix_now_secs() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX)
+}
 
 /// Injected misbehaviour for one tenant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,8 +84,6 @@ pub struct MockTenant {
     #[serde(default)]
     pub tenant_key_base64: Option<String>,
     #[serde(default)]
-    pub key_version: Option<String>,
-    #[serde(default)]
     pub suite: Option<String>,
     #[serde(default)]
     pub data_alg: Option<String>,
@@ -99,14 +93,6 @@ pub struct MockTenant {
     pub require_signature: Option<bool>,
     #[serde(default)]
     pub allow_insecure: bool,
-    /// Expected `x-mazbri-key-id`; binding is required when set.
-    #[serde(default)]
-    pub binding_kid: Option<String>,
-    #[serde(default)]
-    pub binding_alg: Option<String>,
-    /// HMAC key (standard base64) or signature public key PEM.
-    #[serde(default)]
-    pub binding_verify_key: Option<String>,
     #[serde(default)]
     pub fault: Fault,
 }
@@ -119,8 +105,6 @@ impl std::fmt::Debug for MockTenant {
             .field("suite", &self.suite)
             .field("data_alg", &self.data_alg)
             .field("mac_alg", &self.mac_alg)
-            .field("binding_kid", &self.binding_kid)
-            .field("binding_alg", &self.binding_alg)
             .field("fault", &self.fault)
             .finish_non_exhaustive()
     }
@@ -161,7 +145,6 @@ pub struct MockStats {
     pub calls: u64,
     pub accepted: u64,
     pub rejected: u64,
-    pub bindings_verified: u64,
     pub envelopes_opened: u64,
     pub responses_sealed: u64,
     /// Calls that carried a valid `traceparent` (continued trace).
@@ -177,7 +160,6 @@ struct Counters {
     calls: AtomicU64,
     accepted: AtomicU64,
     rejected: AtomicU64,
-    bindings_verified: AtomicU64,
     envelopes_opened: AtomicU64,
     responses_sealed: AtomicU64,
     traces_continued: AtomicU64,
@@ -193,7 +175,6 @@ impl Counters {
             calls: read(&self.calls),
             accepted: read(&self.accepted),
             rejected: read(&self.rejected),
-            bindings_verified: read(&self.bindings_verified),
             envelopes_opened: read(&self.envelopes_opened),
             responses_sealed: read(&self.responses_sealed),
             traces_continued: read(&self.traces_continued),
@@ -206,19 +187,11 @@ fn bump(counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
-struct Binding {
-    kid: String,
-    alg: AlgorithmId,
-    key: KeyRef,
-}
-
 struct PreparedTenant {
     config: MockTenant,
     profile: TenantTransportProfile,
     tenant_id: String,
     tenant_key: Vec<u8>,
-    key_version: String,
-    binding: Option<Binding>,
 }
 
 impl PreparedTenant {
@@ -227,15 +200,11 @@ impl PreparedTenant {
             encryption_mode: &config.encryption_mode,
             tenant_id: config.tenant_id.as_deref(),
             tenant_key_base64: config.tenant_key_base64.as_deref(),
-            key_version: config.key_version.as_deref(),
             suite: config.suite.as_deref(),
             data_alg: config.data_alg.as_deref(),
             mac_alg: config.mac_alg.as_deref(),
             require_signature: config.require_signature,
             allow_insecure: config.allow_insecure,
-            binding_kid: None,
-            binding_alg: None,
-            binding_key: None,
         };
         let profile = transport_profile(&settings).map_err(|error| anyhow!("{error}"))?;
         let tenant_key = match config.tenant_key_base64.as_deref() {
@@ -244,56 +213,19 @@ impl PreparedTenant {
                 .context("tenant_key_base64 must be standard base64")?,
             _ => Vec::new(),
         };
-        let binding = match (
-            filled(config.binding_kid.as_deref()),
-            filled(config.binding_alg.as_deref()),
-            filled(config.binding_verify_key.as_deref()),
-        ) {
-            (None, None, None) => None,
-            (Some(kid), Some(alg), Some(key)) => Some(prepare_binding(kid, alg, key)?),
-            _ => {
-                return Err(anyhow!(
-                    "binding_kid, binding_alg, and binding_verify_key go together"
-                ));
-            }
-        };
         Ok(Self {
             tenant_id: config.tenant_id.clone().unwrap_or_default(),
-            key_version: config.key_version.clone().unwrap_or_default(),
             profile,
             tenant_key,
-            binding,
             config,
         })
     }
-}
-
-fn filled(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|text| !text.is_empty())
-}
-
-fn prepare_binding(kid: &str, alg: &str, key: &str) -> Result<Binding> {
-    let alg = parse_binding_alg(alg).map_err(|_| anyhow!("unsupported binding_alg {alg:?}"))?;
-    let material = if alg.kind() == AlgorithmKind::Mac {
-        STANDARD
-            .decode(key)
-            .context("HMAC binding_verify_key must be standard base64")?
-    } else {
-        key.as_bytes().to_vec()
-    };
-    let key = binding_key_ref(alg, &material).map_err(|error| anyhow!("{error}"))?;
-    Ok(Binding {
-        kid: kid.to_string(),
-        alg,
-        key,
-    })
 }
 
 struct Tables {
     token_ttl: Duration,
     tenants: HashMap<String, Arc<PreparedTenant>>,
     tokens: HashMap<String, (String, Instant)>,
-    nonces: HashMap<String, i64>,
     issued: u64,
 }
 
@@ -339,7 +271,6 @@ impl MockGateway {
                 token_ttl: Duration::from_secs(config.token_ttl_secs),
                 tenants: prepare_tenants(config)?,
                 tokens: HashMap::new(),
-                nonces: HashMap::new(),
                 issued: 0,
             }),
             counters: Counters::default(),
@@ -554,10 +485,6 @@ fn handle_invoke(
     request_id: Option<String>,
 ) -> Result<Response, Rejection> {
     let tenant = authenticate(shared, headers)?;
-    if let Some(binding) = tenant.binding.as_ref() {
-        verify_request_binding(shared, binding, headers, body)?;
-        bump(&shared.counters.bindings_verified);
-    }
     let plaintext = match tenant.profile.mode {
         TransportMode::None => body.to_vec(),
         TransportMode::Request | TransportMode::Full => {
@@ -631,66 +558,6 @@ fn authenticate(shared: &Shared, headers: &HeaderMap) -> Result<Arc<PreparedTena
         .ok_or((StatusCode::UNAUTHORIZED, "tenant no longer exists"))
 }
 
-fn verify_request_binding(
-    shared: &Shared,
-    binding: &Binding,
-    headers: &HeaderMap,
-    body: &[u8],
-) -> Result<(), Rejection> {
-    let missing = (StatusCode::UNAUTHORIZED, "request binding headers missing");
-    let alg = parse_signature_input(header(headers, HEADER_SIGNATURE_INPUT).ok_or(missing)?)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "unsupported signature input"))?;
-    if alg != binding.alg {
-        return Err((StatusCode::UNAUTHORIZED, "binding algorithm mismatch"));
-    }
-    if header(headers, HEADER_KEY_ID).ok_or(missing)? != binding.kid {
-        return Err((StatusCode::UNAUTHORIZED, "unknown binding key id"));
-    }
-    let timestamp = parse_unix_timestamp(header(headers, HEADER_TIMESTAMP).ok_or(missing)?)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid binding timestamp"))?;
-    let now = unix_now_secs();
-    let skew_limit = u64::try_from(BINDING_CLOCK_SKEW_SECS).unwrap_or(300);
-    if now.abs_diff(timestamp) > skew_limit {
-        return Err((StatusCode::UNAUTHORIZED, "binding timestamp outside window"));
-    }
-    let nonce = header(headers, HEADER_NONCE).ok_or(missing)?;
-    validate_binding_nonce(nonce).map_err(|_| (StatusCode::UNAUTHORIZED, "invalid nonce"))?;
-    let signature = header(headers, HEADER_SIGNATURE).ok_or(missing)?;
-    let payload = canonical_http_binding("POST", GATEWAY_INVOKE_PATH, timestamp, nonce, body);
-    verify_binding(
-        &shared.registry,
-        binding.alg,
-        &binding.key,
-        &payload,
-        signature,
-    )
-    .map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            "request binding signature mismatch",
-        )
-    })?;
-    let mut tables = shared.tables();
-    if let Some(&seen_ts) = tables.nonces.get(nonce)
-        && now.abs_diff(seen_ts) <= skew_limit
-    {
-        return Err((StatusCode::UNAUTHORIZED, "binding nonce replayed"));
-    }
-    if tables.nonces.len() >= NONCE_CAPACITY {
-        tables
-            .nonces
-            .retain(|_, ts| now.abs_diff(*ts) <= skew_limit);
-        if tables.nonces.len() >= NONCE_CAPACITY {
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                "nonce replay cache saturated",
-            ));
-        }
-    }
-    tables.nonces.insert(nonce.to_string(), timestamp);
-    Ok(())
-}
-
 fn seal_reply(
     shared: &Shared,
     tenant: &PreparedTenant,
@@ -705,7 +572,6 @@ fn seal_reply(
         registry: &shared.registry,
         master_key: &tenant.tenant_key,
         direction: EnvelopeDirection::GatewayToClient,
-        key_version: &tenant.key_version,
         tenant_id: &tenant.tenant_id,
         http_path: GATEWAY_INVOKE_PATH,
         plaintext,
@@ -744,11 +610,7 @@ pub fn example_config() -> Value {
             "encryption_mode": "full",
             "tenant_id": "<tenant uuid>",
             "tenant_key_base64": "<32-byte key, base64>",
-            "key_version": "1",
-            "suite": "suite/gm-sm4-hmac-sm3",
-            "binding_kid": "<kid>",
-            "binding_alg": "sm2-sign",
-            "binding_verify_key": "<public key PEM or HMAC key base64>"
+            "suite": "suite/gm-sm4-hmac-sm3"
         }]
     })
 }

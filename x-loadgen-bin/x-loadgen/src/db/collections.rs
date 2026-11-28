@@ -671,18 +671,6 @@ pub fn update_request(
     if merged.collection_id.is_none() {
         merged.collection_id = Some(existing.collection_id.clone());
     }
-    // Preserve generated inline binding_public_key when binding_alg & binding_key did not change.
-    if let (Some(old_inline), Some(new_inline)) = (
-        existing.mazbri.inline_tenant.as_ref(),
-        merged.mazbri.inline_tenant.as_mut(),
-    ) && new_inline.binding_public_key.is_none()
-        && old_inline.binding_alg == new_inline.binding_alg
-        && old_inline.binding_key == new_inline.binding_key
-    {
-        new_inline
-            .binding_public_key
-            .clone_from(&old_inline.binding_public_key);
-    }
     let norm = merged.validate(true)?;
     let collection_id = norm.collection_id.as_deref().unwrap_or_default();
     let _ = get_collection(conn, collection_id)?;

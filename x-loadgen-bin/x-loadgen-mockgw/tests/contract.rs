@@ -1,8 +1,9 @@
-//! The mock enforces the client contract: grant type, bearer, binding, replay, envelopes,
+//! The mock enforces the client contract: grant type, bearer, envelopes,
 //! and request identity (`X-Request-Id`, W3C `traceparent`).
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use serde_json::{Value, json};
-use x_loadgen_core::crypto::request_binding::unix_now_secs;
 use x_loadgen_mockgw::{MockConfig, MockGateway, MockTenant};
 use x_loadgen_sdk::{
     GatewayRequest, REQUEST_ID_HEADER, TRACEPARENT_HEADER, TenantSettings, TraceParent,
@@ -10,8 +11,17 @@ use x_loadgen_sdk::{
 };
 
 const TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
-const HMAC_KEY: &str = "eC1sb2FkZ2VuLWJpbmRpbmcta2V5";
 const TENANT_ID: &str = "9e8d7c6b-0000-4000-8000-00000000d004";
+
+fn unix_now_secs() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX)
+}
 
 fn tenant() -> MockTenant {
     MockTenant {
@@ -19,11 +29,7 @@ fn tenant() -> MockTenant {
         encryption_mode: "full".into(),
         tenant_id: Some(TENANT_ID.into()),
         tenant_key_base64: Some(TENANT_KEY.into()),
-        key_version: Some("1".into()),
-        suite: Some("suite/tenant-default-2026-11".into()),
-        binding_kid: Some("kid-c".into()),
-        binding_alg: Some("hmac-sha384".into()),
-        binding_verify_key: Some(HMAC_KEY.into()),
+        suite: Some("suite/aes-256-gcm".into()),
         ..MockTenant::default()
     }
 }
@@ -33,11 +39,7 @@ fn settings() -> TenantSettings<'static> {
         encryption_mode: "full",
         tenant_id: Some(TENANT_ID),
         tenant_key_base64: Some(TENANT_KEY),
-        key_version: Some("1"),
-        suite: Some("suite/tenant-default-2026-11"),
-        binding_kid: Some("kid-c"),
-        binding_alg: Some("hmac-sha384"),
-        binding_key: Some(HMAC_KEY),
+        suite: Some("suite/aes-256-gcm"),
         ..TenantSettings::default()
     }
 }
@@ -90,7 +92,7 @@ async fn token_endpoint_checks_grant_type_and_api_key() {
 }
 
 #[tokio::test]
-async fn gateway_requires_bearer_binding_and_rejects_replays() {
+async fn gateway_requires_bearer_and_roundtrips_envelopes() {
     let gateway = MockGateway::start(
         "127.0.0.1:0",
         &MockConfig {
@@ -125,22 +127,13 @@ async fn gateway_requires_bearer_binding_and_rejects_replays() {
     assert_eq!(no_bearer.status(), reqwest::StatusCode::UNAUTHORIZED);
 
     let bearer = token(&http, &base).await;
-    let send = |with_binding: bool| {
-        let mut builder = http
-            .post(format!("{base}/api/v1/gateway"))
-            .bearer_auth(&bearer)
-            .body(encoded.body.clone());
-        if with_binding {
-            for (name, value) in &encoded.headers {
-                builder = builder.header(*name, value);
-            }
-        }
-        builder.send()
-    };
-    let unsigned = send(false).await.expect("send");
-    assert_eq!(unsigned.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-    let accepted = send(true).await.expect("send");
+    let accepted = http
+        .post(format!("{base}/api/v1/gateway"))
+        .bearer_auth(&bearer)
+        .body(encoded.body.clone())
+        .send()
+        .await
+        .expect("send");
     assert_eq!(accepted.status(), reqwest::StatusCode::OK);
     let raw = accepted.bytes().await.expect("bytes");
     let sealed: Value = serde_json::from_slice(&raw).expect("json");
@@ -152,12 +145,11 @@ async fn gateway_requires_bearer_binding_and_rejects_replays() {
     assert!(decoded.success);
     assert_eq!(decoded.data.expect("data")["echo"]["body"]["k"], "v");
 
-    let replay = send(true).await.expect("send");
-    assert_eq!(replay.status(), reqwest::StatusCode::UNAUTHORIZED);
     let stats = gateway.stats();
     assert_eq!(stats.accepted, 1);
-    assert_eq!(stats.rejected, 3);
-    assert_eq!(stats.bindings_verified, 1);
+    assert_eq!(stats.rejected, 1);
+    assert_eq!(stats.envelopes_opened, 1);
+    assert_eq!(stats.responses_sealed, 1);
     gateway.stop().await;
 }
 
@@ -186,7 +178,7 @@ async fn tenant_table_can_be_replaced_and_rejects_invalid_tenants() {
     assert_eq!(replaced.status(), reqwest::StatusCode::OK);
     assert_ne!(token(&http, &base).await, "");
     let debug = format!("{:?}", tenant());
-    assert!(!debug.contains(TENANT_KEY) && !debug.contains(HMAC_KEY));
+    assert!(!debug.contains(TENANT_KEY));
     gateway.stop().await;
 }
 

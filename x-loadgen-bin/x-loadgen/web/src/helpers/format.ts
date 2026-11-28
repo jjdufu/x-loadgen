@@ -34,8 +34,8 @@ export const BODY_CONTENT_TYPES = [
 
 export const MAZBRI_SUITES = [
   {
-    value: "suite/tenant-default-2026-11",
-    label: "suite/tenant-default-2026-11 (AES-256-GCM 默认)",
+    value: "suite/aes-256-gcm",
+    label: "suite/aes-256-gcm (AES-256-GCM 默认)",
   },
   {
     value: "suite/gm-sm4-hmac-sm3",
@@ -74,47 +74,6 @@ export const MAZBRI_MAC_ALGS = [
   { value: "hmac-sm3", label: "hmac-sm3 (国密)" },
   { value: "hmac-md5", label: "hmac-md5 (需开启兼容算法)" },
 ] as const;
-
-export const MAZBRI_BINDING_ALGS = [
-  { value: "", label: "不启用请求绑定签名" },
-  { value: "hmac-sha256", label: "hmac-sha256 (对称密钥)", asymmetric: false },
-  { value: "hmac-sha384", label: "hmac-sha384 (对称密钥)", asymmetric: false },
-  { value: "hmac-sha512", label: "hmac-sha512 (对称密钥)", asymmetric: false },
-  { value: "hmac-sm3", label: "hmac-sm3 (国密对称)", asymmetric: false },
-  { value: "ed25519", label: "ed25519 (非对称密钥对)", asymmetric: true },
-  { value: "sm2-sign", label: "sm2-sign (国密 SM2)", asymmetric: true },
-  {
-    value: "ecdsa-p256-sha256",
-    label: "ecdsa-p256-sha256 (ECDSA P-256)",
-    asymmetric: true,
-  },
-  {
-    value: "ecdsa-p384-sha384",
-    label: "ecdsa-p384-sha384 (ECDSA P-384)",
-    asymmetric: true,
-  },
-  {
-    value: "rsa-pkcs1v15-sign-sha256",
-    label: "rsa-pkcs1v15-sign-sha256 (RSA-2048)",
-    asymmetric: true,
-  },
-  {
-    value: "rsa-pkcs1v15-sign-sha384",
-    label: "rsa-pkcs1v15-sign-sha384 (RSA-2048)",
-    asymmetric: true,
-  },
-  {
-    value: "rsa-pkcs1v15-sign-sha512",
-    label: "rsa-pkcs1v15-sign-sha512 (RSA-2048)",
-    asymmetric: true,
-  },
-] as const;
-
-export function isAsymmetricBindingAlg(alg: string | null | undefined): boolean {
-  if (!alg) return false;
-  const found = MAZBRI_BINDING_ALGS.find((item) => item.value === alg);
-  return Boolean(found && "asymmetric" in found && found.asymmetric);
-}
 
 export function methodColorClass(method: string): string {
   switch (method.toUpperCase()) {
@@ -393,16 +352,11 @@ export function createDefaultTenant(name = "default"): TenantSpec {
     encryption_mode: "none",
     tenant_id: "",
     tenant_key_base64: "",
-    key_version: "v1",
-    suite: "suite/tenant-default-2026-11",
+    suite: "suite/aes-256-gcm",
     data_alg: "",
     mac_alg: "",
     require_signature: null,
     allow_insecure: false,
-    binding_kid: "",
-    binding_alg: "",
-    binding_key: "",
-    binding_public_key: "",
   };
 }
 
@@ -494,7 +448,6 @@ export function normalizeTenantForApi(raw: TenantSpec): TenantSpec {
   // When a named suite is chosen, omit explicit data_alg/mac_alg so they don't conflict
   const dataAlg = isEncrypted && !suite ? (raw.data_alg?.trim() || null) : null;
   const macAlg = isEncrypted && !suite ? (raw.mac_alg?.trim() || null) : null;
-  const bindingAlg = raw.binding_alg?.trim() || null;
 
   return {
     id: raw.id,
@@ -506,18 +459,11 @@ export function normalizeTenantForApi(raw: TenantSpec): TenantSpec {
     tenant_key_base64: isEncrypted
       ? (raw.tenant_key_base64?.trim() || null)
       : null,
-    key_version: isEncrypted ? (raw.key_version?.trim() || null) : null,
     suite,
     data_alg: dataAlg,
     mac_alg: macAlg,
     require_signature: isEncrypted ? (raw.require_signature ?? null) : null,
     allow_insecure: Boolean(raw.allow_insecure),
-    binding_kid: bindingAlg ? (raw.binding_kid?.trim() || null) : null,
-    binding_alg: bindingAlg,
-    binding_key: bindingAlg ? (raw.binding_key?.trim() || null) : null,
-    binding_public_key: bindingAlg
-      ? (raw.binding_public_key?.trim() || null)
-      : null,
   };
 }
 

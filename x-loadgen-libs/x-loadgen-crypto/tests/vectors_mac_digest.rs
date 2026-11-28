@@ -65,8 +65,7 @@ fn hmac_sha_rfc4231_case2() {
 #[test]
 fn suite_tenant_default_maps_aes256_gcm() {
     assert_eq!(
-        x_loadgen_crypto::suite_data_alg(x_loadgen_crypto::SUITE_TENANT_DEFAULT_2026_11)
-            .expect("suite"),
+        x_loadgen_crypto::suite_data_alg(x_loadgen_crypto::SUITE_AES_256_GCM).expect("suite"),
         AlgorithmId::Aes256Gcm
     );
     let err = x_loadgen_crypto::suite_data_alg("suite/unknown").expect_err("unknown");

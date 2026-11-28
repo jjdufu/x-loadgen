@@ -41,8 +41,7 @@ pub use id::{AlgorithmId, AlgorithmKind};
 pub use mac::{MacAlgorithm, hkdf_sha256};
 pub use material::{KeyPurpose, KeyRef, NoncePolicy, ZeroizingBytes};
 pub use profile::{
-    BindingSpec, DEFAULT_CLOCK_SKEW_SECS, DEFAULT_NONCE_TTL_SECS, KeySelection, PROFILE_VERSION_V1,
-    TenantTransportProfile, TransportMode,
+    DEFAULT_CLOCK_SKEW_SECS, DEFAULT_NONCE_TTL_SECS, TenantTransportProfile, TransportMode,
 };
 pub use registry::{AlgorithmMeta, AlgorithmRegistry, parse_algorithm_id, require_mac_for};
 pub use security::SecurityClass;
@@ -55,8 +54,8 @@ pub use sm::{
     Sm4Algorithm, sm2_private_key_to_pem, sm2_public_key_to_pem, sm4_ecb_decrypt, sm4_ecb_encrypt,
 };
 pub use suite::{
-    SUITE_GM_SM4_HMAC_SM3, SUITE_TENANT_CHACHA20, SUITE_TENANT_DEFAULT_2026_11, SuiteSpec,
-    known_suites, resolve_suite, suite_data_alg, suite_mac_alg,
+    SUITE_AES_256_GCM, SUITE_GM_SM4_HMAC_SM3, SUITE_TENANT_CHACHA20, SuiteSpec, known_suites,
+    resolve_suite, suite_data_alg, suite_mac_alg,
 };
 pub use symmetric::{CfbParams, SymmetricAlgorithm, decrypt_cfb, encrypt_cfb};
 pub use traits::{AeadSeal, AsymSign, BlockCipher, CryptoError, Mac};

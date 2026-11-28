@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 
 use super::error::StoreError;
 use super::workspace::{
-    EnvVarRow, GeneratedBindingKeypair, HttpAuthSpec, TenantSpec, TlsSpec, create_binding_keypair,
-    new_id, non_empty_owned, now_ms, validate_optional_base_url,
+    EnvVarRow, HttpAuthSpec, TenantSpec, TlsSpec, new_id, non_empty_owned, now_ms,
+    validate_optional_base_url,
 };
 
 /// Reserved deterministic ID for the built-in Global variables environment.
@@ -363,8 +363,7 @@ pub fn list_tenants(
     }
     let mut stmt = conn.prepare(
         "SELECT id, name, weight, api_key, encryption_mode, tenant_id, tenant_key_base64,
-                key_version, suite, data_alg, mac_alg, require_signature, allow_insecure,
-                binding_kid, binding_alg, binding_key, binding_public_key
+                suite, data_alg, mac_alg, require_signature, allow_insecure
          FROM environment_tenants
          WHERE environment_id = ?1
          ORDER BY created_at ASC, name ASC",
@@ -386,8 +385,7 @@ pub fn get_tenant(
 ) -> Result<TenantSpec, StoreError> {
     conn.query_row(
         "SELECT id, name, weight, api_key, encryption_mode, tenant_id, tenant_key_base64,
-                key_version, suite, data_alg, mac_alg, require_signature, allow_insecure,
-                binding_kid, binding_alg, binding_key, binding_public_key
+                suite, data_alg, mac_alg, require_signature, allow_insecure
          FROM environment_tenants
          WHERE environment_id = ?1 AND id = ?2",
         params![environment_id, tenant_id],
@@ -412,17 +410,15 @@ pub fn create_tenant(
     spec: &TenantSpec,
 ) -> Result<TenantSpec, StoreError> {
     let _ = get_environment(conn, environment_id)?;
-    let mut cleaned = spec.clone();
-    normalize_tenant_public_key(&mut cleaned, None);
-    cleaned.validate_pool_entry()?;
+    spec.validate_pool_entry()?;
     let id = new_id();
     let now = now_ms()?;
-    insert_tenant_row(conn, environment_id, &id, &cleaned, now)
-        .map_err(|err| map_unique_err(err, cleaned.name.trim()))?;
+    insert_tenant_row(conn, environment_id, &id, spec, now)
+        .map_err(|err| map_unique_err(err, spec.name.trim()))?;
     get_tenant(conn, environment_id, &id)
 }
 
-/// Update one tenant in an environment pool (preserving `binding_public_key` if key unchanged).
+/// Update one tenant in an environment pool.
 ///
 /// # Errors
 ///
@@ -433,42 +429,33 @@ pub fn update_tenant(
     tenant_row_id: &str,
     spec: &TenantSpec,
 ) -> Result<TenantSpec, StoreError> {
-    let existing = get_tenant(conn, environment_id, tenant_row_id)?;
-    let mut merged = spec.clone();
-    normalize_tenant_public_key(&mut merged, Some(&existing));
-    merged.validate_pool_entry()?;
+    let _ = get_tenant(conn, environment_id, tenant_row_id)?;
+    spec.validate_pool_entry()?;
     let now = now_ms()?;
     conn.execute(
         "UPDATE environment_tenants SET
             name = ?1, weight = ?2, api_key = ?3, encryption_mode = ?4,
-            tenant_id = ?5, tenant_key_base64 = ?6, key_version = ?7,
-            suite = ?8, data_alg = ?9, mac_alg = ?10, require_signature = ?11,
-            allow_insecure = ?12, binding_kid = ?13, binding_alg = ?14,
-            binding_key = ?15, binding_public_key = ?16, updated_at = ?17
-         WHERE environment_id = ?18 AND id = ?19",
+            tenant_id = ?5, tenant_key_base64 = ?6, suite = ?7, data_alg = ?8,
+            mac_alg = ?9, require_signature = ?10, allow_insecure = ?11, updated_at = ?12
+         WHERE environment_id = ?13 AND id = ?14",
         params![
-            merged.name.trim(),
-            merged.weight,
-            non_empty_owned(merged.api_key.as_deref()),
-            merged.encryption_mode.trim(),
-            non_empty_owned(merged.tenant_id.as_deref()),
-            non_empty_owned(merged.tenant_key_base64.as_deref()),
-            non_empty_owned(merged.key_version.as_deref()),
-            non_empty_owned(merged.suite.as_deref()),
-            non_empty_owned(merged.data_alg.as_deref()),
-            non_empty_owned(merged.mac_alg.as_deref()),
-            merged.require_signature.map(i64::from),
-            i64::from(merged.allow_insecure),
-            non_empty_owned(merged.binding_kid.as_deref()),
-            non_empty_owned(merged.binding_alg.as_deref()),
-            non_empty_owned(merged.binding_key.as_deref()),
-            non_empty_owned(merged.binding_public_key.as_deref()),
+            spec.name.trim(),
+            spec.weight,
+            non_empty_owned(spec.api_key.as_deref()),
+            spec.encryption_mode.trim(),
+            non_empty_owned(spec.tenant_id.as_deref()),
+            non_empty_owned(spec.tenant_key_base64.as_deref()),
+            non_empty_owned(spec.suite.as_deref()),
+            non_empty_owned(spec.data_alg.as_deref()),
+            non_empty_owned(spec.mac_alg.as_deref()),
+            spec.require_signature.map(i64::from),
+            i64::from(spec.allow_insecure),
             now,
             environment_id,
             tenant_row_id
         ],
     )
-    .map_err(|err| map_unique_err(err, merged.name.trim()))?;
+    .map_err(|err| map_unique_err(err, spec.name.trim()))?;
     get_tenant(conn, environment_id, tenant_row_id)
 }
 
@@ -492,47 +479,6 @@ pub fn delete_tenant(
         )));
     }
     Ok(())
-}
-
-/// Generate an asymmetric request-binding keypair for a saved environment tenant,
-/// storing the private PKCS#8 PEM in `binding_key` and SPKI PEM in `binding_public_key`.
-///
-/// # Errors
-///
-/// Returns validation/not-found/storage error.
-pub fn generate_tenant_binding_keypair(
-    conn: &Connection,
-    environment_id: &str,
-    tenant_row_id: &str,
-    alg: &str,
-    kid_override: Option<&str>,
-) -> Result<GeneratedBindingKeypair, StoreError> {
-    let existing = get_tenant(conn, environment_id, tenant_row_id)?;
-    let effective_kid = non_empty_owned(kid_override)
-        .or_else(|| non_empty_owned(existing.binding_kid.as_deref()))
-        .ok_or_else(|| {
-            StoreError::invalid(
-                "binding_kid is required (provide `kid` in request or save binding_kid on tenant first)",
-            )
-        })?;
-    let (private_pem, out) = create_binding_keypair(alg, &effective_kid, false)?;
-    let now = now_ms()?;
-    conn.execute(
-        "UPDATE environment_tenants SET
-            binding_kid = ?1, binding_alg = ?2, binding_key = ?3,
-            binding_public_key = ?4, updated_at = ?5
-         WHERE environment_id = ?6 AND id = ?7",
-        params![
-            out.binding_kid,
-            out.binding_alg,
-            private_pem,
-            out.public_key_pem,
-            now,
-            environment_id,
-            tenant_row_id
-        ],
-    )?;
-    Ok(out)
 }
 
 /// Build the merged static variable map from `Global` + optional selected `Environment`.
@@ -710,44 +656,16 @@ fn replace_tenants(
     )?;
     let now = now_ms()?;
     for item in incoming {
-        let mut merged = item.clone();
         let row_id = if let Some(old) = prev_by_name.get(item.name.trim()) {
-            normalize_tenant_public_key(&mut merged, Some(old));
             old.id.clone()
+        } else if item.id.trim().is_empty() {
+            new_id()
         } else {
-            normalize_tenant_public_key(&mut merged, None);
-            if merged.id.trim().is_empty() {
-                new_id()
-            } else {
-                merged.id.clone()
-            }
+            item.id.clone()
         };
-        insert_tenant_row(conn, environment_id, &row_id, &merged, now)?;
+        insert_tenant_row(conn, environment_id, &row_id, item, now)?;
     }
     Ok(())
-}
-
-fn normalize_tenant_public_key(merged: &mut TenantSpec, existing: Option<&TenantSpec>) {
-    let is_asym = merged
-        .binding_alg
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|alg| !alg.is_empty() && !alg.to_ascii_lowercase().starts_with("hmac-"));
-    if !is_asym {
-        merged.binding_public_key = None;
-        return;
-    }
-    if let Some(old) = existing {
-        if old.binding_alg == merged.binding_alg && old.binding_key == merged.binding_key {
-            if merged.binding_public_key.is_none() {
-                merged
-                    .binding_public_key
-                    .clone_from(&old.binding_public_key);
-            }
-        } else if merged.binding_public_key == old.binding_public_key {
-            merged.binding_public_key = None;
-        }
-    }
 }
 
 fn insert_tenant_row(
@@ -760,10 +678,9 @@ fn insert_tenant_row(
     conn.execute(
         "INSERT INTO environment_tenants (
             id, environment_id, name, weight, api_key, encryption_mode,
-            tenant_id, tenant_key_base64, key_version, suite, data_alg, mac_alg,
-            require_signature, allow_insecure, binding_kid, binding_alg,
-            binding_key, binding_public_key, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)",
+            tenant_id, tenant_key_base64, suite, data_alg, mac_alg,
+            require_signature, allow_insecure, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
         params![
             row_id,
             environment_id,
@@ -773,23 +690,18 @@ fn insert_tenant_row(
             spec.encryption_mode.trim(),
             non_empty_owned(spec.tenant_id.as_deref()),
             non_empty_owned(spec.tenant_key_base64.as_deref()),
-            non_empty_owned(spec.key_version.as_deref()),
             non_empty_owned(spec.suite.as_deref()),
             non_empty_owned(spec.data_alg.as_deref()),
             non_empty_owned(spec.mac_alg.as_deref()),
             spec.require_signature.map(i64::from),
             i64::from(spec.allow_insecure),
-            non_empty_owned(spec.binding_kid.as_deref()),
-            non_empty_owned(spec.binding_alg.as_deref()),
-            non_empty_owned(spec.binding_key.as_deref()),
-            non_empty_owned(spec.binding_public_key.as_deref()),
             now
         ],
     )
 }
 
 fn tenant_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TenantSpec> {
-    let req_sig: Option<i64> = row.get(11)?;
+    let req_sig: Option<i64> = row.get(10)?;
     Ok(TenantSpec {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -798,16 +710,11 @@ fn tenant_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TenantSpec> {
         encryption_mode: row.get(4)?,
         tenant_id: row.get(5)?,
         tenant_key_base64: row.get(6)?,
-        key_version: row.get(7)?,
-        suite: row.get(8)?,
-        data_alg: row.get(9)?,
-        mac_alg: row.get(10)?,
+        suite: row.get(7)?,
+        data_alg: row.get(8)?,
+        mac_alg: row.get(9)?,
         require_signature: req_sig.map(|v| v != 0),
-        allow_insecure: row.get::<_, i64>(12)? != 0,
-        binding_kid: row.get(13)?,
-        binding_alg: row.get(14)?,
-        binding_key: row.get(15)?,
-        binding_public_key: row.get(16)?,
+        allow_insecure: row.get::<_, i64>(11)? != 0,
     })
 }
 

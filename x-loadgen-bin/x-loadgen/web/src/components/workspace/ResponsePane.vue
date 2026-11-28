@@ -331,7 +331,7 @@
           v-else-if="activeTab.responseSubTab === 'mazbri_wire' && resp.mazbri_wire"
           class="p-4 space-y-4 text-xs select-text"
         >
-          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div class="rounded-lg border border-border bg-card p-3">
               <div class="text-muted-foreground">命中租户</div>
               <div class="mt-1 font-mono text-sm font-semibold text-foreground">
@@ -349,32 +349,6 @@
               <div class="text-muted-foreground">/auth/token 换票耗时</div>
               <div class="mt-1 font-mono text-sm font-semibold text-foreground tabular-nums">
                 {{ formatLatencyUs(resp.mazbri_wire.token_exchange_us) }}
-              </div>
-            </div>
-            <div class="rounded-lg border border-border bg-card p-3">
-              <div class="text-muted-foreground">请求绑定签名</div>
-              <div class="mt-1 font-mono text-sm font-semibold text-foreground truncate">
-                {{ resp.mazbri_wire.binding_alg || "未启用" }}
-                {{ resp.mazbri_wire.binding_kid ? `(kid=${resp.mazbri_wire.binding_kid})` : "" }}
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="Object.keys(resp.mazbri_wire.binding_headers).length > 0"
-            class="space-y-1.5"
-          >
-            <div class="font-medium text-foreground">
-              请求绑定签名头 ({{ resp.mazbri_wire.invoke_url }})
-            </div>
-            <div class="divide-y divide-border overflow-hidden rounded-lg border border-border font-mono">
-              <div
-                v-for="(hv, hk) in resp.mazbri_wire.binding_headers"
-                :key="hk"
-                class="grid grid-cols-3 px-3.5 py-2"
-              >
-                <span class="font-medium text-foreground">{{ hk }}</span>
-                <span class="col-span-2 break-all text-muted-foreground">{{ hv }}</span>
               </div>
             </div>
           </div>
@@ -499,7 +473,7 @@ const responseTabs = computed<
   if (r.mazbri_wire) {
     items.push({
       id: "mazbri_wire",
-      label: "Mazbri 信封与签名追踪",
+      label: "Mazbri 信封追踪",
       count: 0,
       dot: true,
       errorDot: false,

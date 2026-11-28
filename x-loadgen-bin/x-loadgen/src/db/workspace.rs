@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use x_loadgen_sdk::{TenantSettings, generate_binding_keypair};
+use x_loadgen_sdk::TenantSettings;
 
 use super::error::StoreError;
 use super::unix_now_ms;
@@ -11,7 +11,7 @@ use crate::expect::{FieldCheck, TransportExpect};
 
 /// Generic HTTP / REST protocol.
 pub const PROTOCOL_HTTP: &str = "http";
-/// Mazbri gateway protocol (token exchange + request binding + envelope crypto).
+/// Mazbri gateway protocol (token exchange + versionless single-key envelope crypto).
 pub const PROTOCOL_MAZBRI: &str = "mazbri";
 
 /// Generate a new `UUIDv4` string identifier.
@@ -382,8 +382,6 @@ pub struct TenantSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_key_base64: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suite: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_alg: Option<String>,
@@ -393,14 +391,6 @@ pub struct TenantSpec {
     pub require_signature: Option<bool>,
     #[serde(default)]
     pub allow_insecure: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_kid: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_alg: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_public_key: Option<String>,
 }
 
 impl Default for TenantSpec {
@@ -413,16 +403,11 @@ impl Default for TenantSpec {
             encryption_mode: default_encryption_none(),
             tenant_id: None,
             tenant_key_base64: None,
-            key_version: None,
             suite: None,
             data_alg: None,
             mac_alg: None,
             require_signature: None,
             allow_insecure: false,
-            binding_kid: None,
-            binding_alg: None,
-            binding_key: None,
-            binding_public_key: None,
         }
     }
 }
@@ -435,15 +420,11 @@ impl TenantSpec {
             encryption_mode: self.encryption_mode.trim(),
             tenant_id: non_empty_str(self.tenant_id.as_deref()),
             tenant_key_base64: non_empty_str(self.tenant_key_base64.as_deref()),
-            key_version: non_empty_str(self.key_version.as_deref()),
             suite: non_empty_str(self.suite.as_deref()),
             data_alg: non_empty_str(self.data_alg.as_deref()),
             mac_alg: non_empty_str(self.mac_alg.as_deref()),
             require_signature: self.require_signature,
             allow_insecure: self.allow_insecure,
-            binding_kid: non_empty_str(self.binding_kid.as_deref()),
-            binding_alg: non_empty_str(self.binding_alg.as_deref()),
-            binding_key: non_empty_str(self.binding_key.as_deref()),
         }
     }
 
@@ -453,7 +434,7 @@ impl TenantSpec {
     /// # Errors
     ///
     /// Returns validation error if `weight <= 0`, `api_key` is missing, or any
-    /// crypto / signature parameter is invalid.
+    /// crypto parameter is invalid.
     pub fn validate_for_mazbri(&self) -> Result<(), StoreError> {
         if self.name.trim().is_empty() {
             return Err(StoreError::invalid("tenant name must not be empty"));
@@ -478,7 +459,7 @@ impl TenantSpec {
     }
 
     /// Validate a tenant stored in an environment pool:
-    /// if any Mazbri crypto/signature field is populated or `encryption_mode != "none"`,
+    /// if any Mazbri crypto field is populated or `encryption_mode != "none"`,
     /// validates the full Mazbri session; otherwise validates basic weight/name so it
     /// can also serve as an HTTP multi-key tenant.
     ///
@@ -494,24 +475,19 @@ impl TenantSpec {
         }
         let has_mazbri_crypto = self.encryption_mode.trim() != "none"
             || non_empty_str(self.suite.as_deref()).is_some()
-            || non_empty_str(self.data_alg.as_deref()).is_some()
-            || non_empty_str(self.binding_alg.as_deref()).is_some()
-            || non_empty_str(self.binding_kid.as_deref()).is_some()
-            || non_empty_str(self.binding_key.as_deref()).is_some();
+            || non_empty_str(self.data_alg.as_deref()).is_some();
         if has_mazbri_crypto {
             self.validate_for_mazbri()?;
         }
         Ok(())
     }
 
-    /// Strip secret keys (`api_key`, `tenant_key_base64`, `binding_key`) while
-    /// keeping algorithm names and `binding_public_key`.
+    /// Strip secret keys (`api_key`, `tenant_key_base64`) while keeping algorithm names.
     #[must_use]
     pub fn redacted(&self) -> Self {
         Self {
             api_key: None,
             tenant_key_base64: None,
-            binding_key: None,
             ..self.clone()
         }
     }
@@ -584,44 +560,6 @@ impl MazbriRequestSpec {
             inline_tenant: self.inline_tenant.as_ref().map(TenantSpec::redacted),
         }
     }
-}
-
-/// Output of asymmetric request-binding keypair generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeneratedBindingKeypair {
-    pub binding_kid: String,
-    pub binding_alg: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub private_key_pem: Option<String>,
-    pub public_key_pem: String,
-}
-
-/// Generate a fresh asymmetric request-binding keypair (`ed25519`, `sm2-sign`,
-/// `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, `rsa-pkcs1v15-sign-sha256/384/512`).
-///
-/// # Errors
-///
-/// Returns validation error if `alg` is unsupported/symmetric or `kid` is empty.
-pub fn create_binding_keypair(
-    alg: &str,
-    kid: &str,
-    include_private_key: bool,
-) -> Result<(String, GeneratedBindingKeypair), StoreError> {
-    let trimmed_alg = alg.trim();
-    let trimmed_kid = kid.trim();
-    if trimmed_kid.is_empty() {
-        return Err(StoreError::invalid("binding_kid must not be empty"));
-    }
-    let (private_key_pem, public_key_pem) = generate_binding_keypair(trimmed_alg)
-        .map_err(|err| StoreError::invalid(format!("generate keypair ({trimmed_alg}): {err}")))?;
-    let private_pem = private_key_pem.clone();
-    let out = GeneratedBindingKeypair {
-        binding_kid: trimmed_kid.to_string(),
-        binding_alg: trimmed_alg.to_string(),
-        private_key_pem: include_private_key.then_some(private_key_pem),
-        public_key_pem,
-    };
-    Ok((private_pem, out))
 }
 
 /// Helper returning `Some(trimmed)` when non-empty.

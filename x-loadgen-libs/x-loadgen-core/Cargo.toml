@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Tenant transport envelope and HTTP request binding codecs (mazbri wire format)"
+description = "Tenant transport envelope codecs (mazbri wire format)"
 
 [dependencies]
 x-loadgen-crypto = { workspace = true }

@@ -645,7 +645,7 @@ interface ParsedOperation {
 const TAG_META: Record<string, { title: string; subtitle: string }> = {
   mazbri: {
     title: "Mazbri 租户与密钥",
-    subtitle: "环境租户密钥池、请求绑定密钥对（持久化写入租户或无状态生成）。",
+    subtitle: "环境租户密钥池管理。",
   },
   meta: {
     title: "系统与元信息",

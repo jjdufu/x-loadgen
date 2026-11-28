@@ -715,11 +715,11 @@ const MAZBRI_TENANT_KEY: &str = "eC1sb2FkZ2VuLXRlc3QtdGVuYW50LWtleS0zMmJ5dGU=";
 const MAZBRI_API_KEY: &str = "SECRET-MAZBRI-API-KEY-EEEE";
 const MAZBRI_TENANT_UUID: &str = "7d1c2b3a-0000-4000-8000-00000000b002";
 
-async fn mazbri_workspace_with_generated_sm2_key(
+async fn mazbri_workspace_with_gm_suite(
     http: &reqwest::Client,
     base: &str,
     gateway: &x_loadgen_mockgw::MockGateway,
-) -> (String, String, String) {
+) -> (String, String) {
     use x_loadgen_mockgw::{MockConfig, MockTenant};
 
     let (status, env) = post_json(
@@ -734,7 +734,6 @@ async fn mazbri_workspace_with_generated_sm2_key(
                 "encryption_mode": "full",
                 "tenant_id": MAZBRI_TENANT_UUID,
                 "tenant_key_base64": MAZBRI_TENANT_KEY,
-                "key_version": "3",
                 "suite": "suite/gm-sm4-hmac-sm3"
             }]
         }),
@@ -742,19 +741,6 @@ async fn mazbri_workspace_with_generated_sm2_key(
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{env}");
     let env_id = env["id"].as_str().expect("env id").to_string();
-    let tid = env["tenants"][0]["id"].as_str().expect("tid").to_string();
-
-    let (status, keypair) = post_json(
-        http,
-        &format!("{base}/api/v1/environments/{env_id}/tenants/{tid}/binding-keypair"),
-        &json!({"alg": "sm2-sign", "kid": "kid-gm"}),
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::OK, "{keypair}");
-    let public_pem = keypair["public_key_pem"]
-        .as_str()
-        .expect("public")
-        .to_string();
 
     gateway
         .set_config(&MockConfig {
@@ -763,11 +749,7 @@ async fn mazbri_workspace_with_generated_sm2_key(
                 encryption_mode: "full".into(),
                 tenant_id: Some(MAZBRI_TENANT_UUID.into()),
                 tenant_key_base64: Some(MAZBRI_TENANT_KEY.into()),
-                key_version: Some("3".into()),
                 suite: Some("suite/gm-sm4-hmac-sm3".into()),
-                binding_kid: Some("kid-gm".into()),
-                binding_alg: Some("sm2-sign".into()),
-                binding_verify_key: Some(public_pem),
                 ..MockTenant::default()
             }],
             ..MockConfig::default()
@@ -807,13 +789,7 @@ async fn mazbri_workspace_with_generated_sm2_key(
     .await;
     assert_eq!(status, reqwest::StatusCode::CREATED, "{req}");
     let req_id = req["id"].as_str().expect("req id").to_string();
-
-    let (_, stored) = get_json(http, &format!("{base}/api/v1/environments/{env_id}")).await;
-    let private_pem = stored["tenants"][0]["binding_key"]
-        .as_str()
-        .expect("private key")
-        .to_string();
-    (env_id, req_id, private_pem)
+    (env_id, req_id)
 }
 
 async fn assert_run_outputs_hide(
@@ -853,7 +829,7 @@ async fn assert_run_outputs_hide(
 }
 
 #[tokio::test]
-async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
+async fn mazbri_full_gm_run_succeeds_and_reports_hide_every_credential() {
     let tmp = TempDir::new("mazbri");
     let gateway = x_loadgen_mockgw::MockGateway::start(
         "127.0.0.1:0",
@@ -863,8 +839,7 @@ async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
     .expect("mock gateway");
     let (base, shutdown) = start_api(&tmp.path).await;
     let http = client();
-    let (env_id, req_id, private_pem) =
-        mazbri_workspace_with_generated_sm2_key(&http, &base, &gateway).await;
+    let (env_id, req_id) = mazbri_workspace_with_gm_suite(&http, &base, &gateway).await;
 
     let requests = 6_u64;
     let (status, profile) = post_json(
@@ -904,11 +879,10 @@ async fn mazbri_full_sm2_run_succeeds_and_reports_hide_every_credential() {
     assert_eq!(counters["failure"], 0, "{counters}");
     let mock = gateway.stats();
     assert_eq!(mock.tokens_issued, 1);
-    assert_eq!(mock.bindings_verified, requests);
     assert_eq!(mock.envelopes_opened, requests);
     assert_eq!(mock.responses_sealed, requests);
 
-    let secrets = [MAZBRI_API_KEY, MAZBRI_TENANT_KEY, private_pem.as_str()];
+    let secrets = [MAZBRI_API_KEY, MAZBRI_TENANT_KEY];
     assert_run_outputs_hide(&http, &base, &id, &detail, &secrets).await;
     gateway.stop().await;
     let _ = shutdown.send(());

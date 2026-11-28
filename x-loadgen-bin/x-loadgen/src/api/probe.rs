@@ -1,12 +1,10 @@
-//! HTTP handlers for interactive single-request `Send` (`POST /api/v1/probe`),
-//! the probe history (`/api/v1/probes`), and stateless Mazbri binding keypair
-//! generation (`POST /api/v1/crypto/binding-keypair`).
+//! HTTP handlers for interactive single-request `Send` (`POST /api/v1/probe`)
+//! and the probe history (`/api/v1/probes`).
 
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::warn;
 
@@ -18,21 +16,8 @@ use crate::db::probes::{
     NewProbe, ProbeRecord, ProbesQuery, clear_probes, delete_probe, get_probe, insert_probe,
     list_probes,
 };
-use crate::db::workspace::{GeneratedBindingKeypair, create_binding_keypair};
 use crate::engine::snapshot::{ExecutionTarget, default_timestamped_title};
 use crate::probe::{ProbeRequest, ProbeResponse, prepare_probe, run_probe};
-
-/// Body for `POST /api/v1/crypto/binding-keypair`.
-#[derive(Debug, Deserialize)]
-pub struct StatelessKeypairRequest {
-    pub alg: String,
-    #[serde(default = "default_kid")]
-    pub kid: String,
-}
-
-fn default_kid() -> String {
-    "k1".to_string()
-}
 
 /// `POST /api/v1/probe`
 ///
@@ -234,22 +219,4 @@ pub async fn clear_probes_handler(
 fn parse_probe_id(raw: &str) -> Result<i64, StoreError> {
     raw.parse()
         .map_err(|_| StoreError::not_found(format!("probe {raw} not found")))
-}
-
-/// `POST /api/v1/crypto/binding-keypair`
-///
-/// Stateless keypair generator for unsaved / inline Mazbri tabs (returns both
-/// `private_key_pem` and `public_key_pem`).
-///
-/// # Errors
-///
-/// Returns 400 for symmetric/unsupported algorithms or empty `kid`, 401/403 when unauthorized.
-pub async fn generate_stateless_binding_keypair(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<StatelessKeypairRequest>,
-) -> Result<Json<GeneratedBindingKeypair>, ApiError> {
-    require_ready_auth(&state, &headers)?;
-    let (_private_pem, out) = create_binding_keypair(&req.alg, &req.kid, true)?;
-    Ok(Json(out))
 }

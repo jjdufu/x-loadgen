@@ -14,7 +14,7 @@
   "tags": [
     {
       "name": "mazbri",
-      "description": "Mazbri 租户密钥池、请求绑定密钥对生成（持久化与无状态）"
+      "description": "Mazbri 租户密钥池管理"
     },
     {
       "name": "meta",
@@ -1433,77 +1433,6 @@
         }
       }
     },
-    "/api/v1/environments/{id}/tenants/{tid}/binding-keypair": {
-      "post": {
-        "summary": "为环境租户生成并持久化非对称请求绑定密钥对",
-        "tags": [
-          "mazbri"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "目标资源唯一 ID"
-          },
-          {
-            "name": "tid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "环境内租户唯一 ID"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BindingKeypairRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "生成成功并返回公钥信息",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "不支持的签名算法或缺少 Key ID",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "目标资源不存在",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "私钥自动安全存入该租户记录，响应仅返回公钥 PEM 以便登记到网关。"
-      }
-    },
     "/api/v1/load-profiles": {
       "get": {
         "summary": "获取可复用负载预设列表",
@@ -1993,47 +1922,6 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/crypto/binding-keypair": {
-      "post": {
-        "summary": "无状态生成非对称请求绑定密钥对（供内联调试使用）",
-        "tags": [
-          "mazbri"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BindingKeypairRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "生成成功并返回公私钥 PEM",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "不支持的签名算法",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "不写入数据库，直接生成并返回非对称签名私钥 PEM 与公钥 PEM。"
       }
     },
     "/api/v1/runs": {
@@ -3530,14 +3418,6 @@
       "KeypairResponse": {
         "type": "object",
         "properties": {
-          "binding_kid": {
-            "type": "string",
-            "nullable": true
-          },
-          "binding_alg": {
-            "type": "string",
-            "nullable": true
-          },
           "public_key_pem": {
             "type": "string"
           }
@@ -4044,9 +3924,6 @@
           "tenant_key_base64": {
             "type": "string"
           },
-          "key_version": {
-            "type": "string"
-          },
           "suite": {
             "type": "string"
           },
@@ -4062,19 +3939,6 @@
           "allow_insecure": {
             "type": "boolean",
             "default": false
-          },
-          "binding_kid": {
-            "type": "string"
-          },
-          "binding_alg": {
-            "type": "string"
-          },
-          "binding_key": {
-            "type": "string",
-            "description": "私钥 PEM 或 HMAC 密钥，导出时默认脱敏"
-          },
-          "binding_public_key": {
-            "type": "string"
           }
         }
       },
@@ -4558,21 +4422,6 @@
           "weight": {
             "type": "integer",
             "default": 1
-          }
-        }
-      },
-      "BindingKeypairRequest": {
-        "type": "object",
-        "required": [
-          "alg"
-        ],
-        "properties": {
-          "alg": {
-            "type": "string",
-            "description": "如 ed25519、sm2-sign、ecdsa-p256-sha256、ecdsa-p384-sha384、rsa-pkcs1v15-sign-sha256/384/512"
-          },
-          "kid": {
-            "type": "string"
           }
         }
       },

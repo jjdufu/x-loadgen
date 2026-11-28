@@ -8,8 +8,8 @@
 use crate::id::AlgorithmId;
 use crate::traits::CryptoError;
 
-/// 租户传输 2026-11 默认命名套件（数据算法 = `aes-256-gcm`）。
-pub const SUITE_TENANT_DEFAULT_2026_11: &str = "suite/tenant-default-2026-11";
+/// 租户传输默认命名套件（数据算法 = `aes-256-gcm`）。
+pub const SUITE_AES_256_GCM: &str = "suite/aes-256-gcm";
 
 /// 国密命名套件：SM4-CBC + HMAC-SM3（**替代**不可用的 SM4-GCM）。
 pub const SUITE_GM_SM4_HMAC_SM3: &str = "suite/gm-sm4-hmac-sm3";
@@ -32,7 +32,7 @@ pub struct SuiteSpec {
 #[must_use]
 pub fn known_suites() -> &'static [&'static str] {
     &[
-        SUITE_TENANT_DEFAULT_2026_11,
+        SUITE_AES_256_GCM,
         SUITE_GM_SM4_HMAC_SM3,
         SUITE_TENANT_CHACHA20,
     ]
@@ -45,8 +45,8 @@ pub fn known_suites() -> &'static [&'static str] {
 /// [`CryptoError::UnknownSuite`]：名称不在闭集。
 pub fn resolve_suite(suite: &str) -> Result<SuiteSpec, CryptoError> {
     match suite {
-        SUITE_TENANT_DEFAULT_2026_11 => Ok(SuiteSpec {
-            name: SUITE_TENANT_DEFAULT_2026_11,
+        SUITE_AES_256_GCM => Ok(SuiteSpec {
+            name: SUITE_AES_256_GCM,
             data_alg: AlgorithmId::Aes256Gcm,
             mac_alg: None,
         }),

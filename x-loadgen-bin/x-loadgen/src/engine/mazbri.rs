@@ -5,18 +5,17 @@
 //! [`GatewaySession`] built from the page-entered settings. Each request:
 //!
 //! 1. renders the request into a [`GatewayRequest`] (with Hoppscotch `<<var>>` / `{{seq}}` interpolation);
-//! 2. seals it (`request` / `full`) and adds `x-mazbri-*` binding headers;
+//! 2. seals it (`request` / `full`) into a mazbri transport envelope;
 //! 3. sends `POST {base}/api/v1/gateway` with `Authorization: Bearer`;
 //! 4. decodes the response (opening the envelope under `full`) and judges the
 //!    decrypted `data`. Latency covers sealing, the call, and decoding.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde_json::Value;
-use x_loadgen_core::crypto::request_binding::unix_now_secs;
 use x_loadgen_sdk::{
     Error as SdkError, GATEWAY_INVOKE_PATH, GatewayRequest, GatewayResponseEnvelope,
     GatewaySession, TOKEN_PATH, parse_token_response, token_request_body,
@@ -37,6 +36,14 @@ use crate::vars::{RuntimeVars, render_str};
 const MIN_TOKEN_LIFETIME: Duration = Duration::from_secs(1);
 /// Upper bound on a cached token lifetime (guards `Instant` overflow).
 const MAX_TOKEN_LIFETIME: Duration = Duration::from_hours(24);
+
+/// Current Unix timestamp in seconds.
+#[must_use]
+pub(crate) fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
 
 /// Credentials and codec for one mazbri tenant against one gateway URL.
 pub struct MazbriTenant {
@@ -269,9 +276,6 @@ impl MazbriTenant {
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(encoded.body);
-        for (name, value) in encoded.headers {
-            request = request.header(name, value);
-        }
         for (name, value) in ids.headers() {
             request = request.header(name, value);
         }
