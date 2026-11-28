@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0](https://github.com/jjdufu/x-loadgen/compare/v0.7.1...v0.8.0) (2026-11-28)
+
+### ⚠ BREAKING CHANGES
+
+* 适配 mazbri v0.7.0 无版本单密钥传输信封并移除请求绑定 ([8cf6ab8](https://github.com/jjdufu/x-loadgen/commit/8cf6ab85a82875c2153f2ddc6f50f14ecf2cc04b))
+
+### Features
+
+* 适配 mazbri v0.7.0 无版本单密钥传输信封并移除请求绑定 ([8cf6ab8](https://github.com/jjdufu/x-loadgen/commit/8cf6ab85a82875c2153f2ddc6f50f14ecf2cc04b))
+
 ## [0.7.1](https://github.com/jjdufu/x-loadgen/compare/v0.7.0...v0.7.1) (2026-11-27)
 
 ### Bug Fixes
